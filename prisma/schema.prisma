@@ -1,11 +1,13 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
 }
 
 model User {
@@ -16,7 +18,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  matters Matter[]
+  matters          Matter[]
+  researchSessions ResearchSession[]
 }
 
 model Matter {
@@ -34,8 +37,10 @@ model Matter {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @default(now()) @updatedAt
 
-  conversations Conversation[]
-  documents     Document[]
+  conversations    Conversation[]
+  documents        Document[]
+  chunks           DocumentChunk[]
+  researchSessions ResearchSession[]
 }
 
 model Conversation {
@@ -47,17 +52,54 @@ model Conversation {
 }
 
 model Document {
-  id              String   @id @default(cuid())
-  matterId        String
-  matter          Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
-  fileName        String
-  storagePath     String?
-  mimeType        String?
-  fileSize        Int?
-  uploadStatus    String   @default("uploaded")
-  indexingStatus  String   @default("pending")
-  retrievalStatus String   @default("pending")
-  uploadedAt      DateTime @default(now())
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @default(now()) @updatedAt
+  id                  String   @id @default(cuid())
+  matterId            String
+  matter              Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  fileName            String
+  storagePath         String?
+  mimeType            String?
+  fileSize            Int?
+  uploadStatus        String   @default("uploaded")
+  indexingStatus      String   @default("pending")
+  retrievalStatus     String   @default("pending")
+  parseStatus         String   @default("pending")
+  parsedText          String?
+  pageCount           Int?
+  chunkCount          Int      @default(0)
+  extractionConf      Float?
+  uploadedAt          DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @default(now()) @updatedAt
+
+  chunks DocumentChunk[]
+}
+
+model DocumentChunk {
+  id          String                      @id @default(cuid())
+  documentId  String
+  document    Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  matterId    String
+  matter      Matter                      @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  content     String
+  chunkIndex  Int
+  tokenCount  Int                         @default(0)
+  embedding   Unsupported("vector(1536)")?
+  pageRef     Int?
+  headingPath String?
+  createdAt   DateTime                    @default(now())
+
+  @@index([documentId])
+  @@index([matterId])
+}
+
+model ResearchSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matterId  String
+  matter    Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  query     String
+  response  String?
+  chunkIds  String[]
+  createdAt DateTime @default(now())
 }

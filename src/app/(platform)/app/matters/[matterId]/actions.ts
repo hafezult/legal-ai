@@ -78,8 +78,9 @@ export async function uploadDocument(
     return { error: `Ingestion failed: ${storageErr.message}` }
   }
 
+  let documentId: string
   try {
-    await prisma.document.create({
+    const created = await prisma.document.create({
       data: {
         matterId,
         fileName: file.name,
@@ -91,12 +92,22 @@ export async function uploadDocument(
         retrievalStatus: "pending",
       },
     })
+    documentId = created.id
   } catch {
     await removeFromStorage(storagePath).catch(() => null)
     return { error: "Document registration failed. Storage entry removed." }
   }
 
   void userId // available for future audit log
+
+  // Fire-and-forget: trigger async indexing pipeline
+  const appUrl =
+    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3001}`
+  void fetch(`${appUrl}/api/index-document/${documentId}`, {
+    method: "POST",
+    headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
+  }).catch(() => null)
+
   revalidatePath(`/app/matters/${matterId}`)
   return { success: true }
 }

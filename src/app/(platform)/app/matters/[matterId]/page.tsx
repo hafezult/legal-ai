@@ -271,9 +271,10 @@ export default async function MatterDetailPage({
 
               {/* Rows */}
               {matter.documents.map((doc) => (
-                <div
+                <Link
                   key={doc.id}
-                  className="flex items-center gap-4 border-t border-white/[0.04] px-4 py-3 first:border-t-0"
+                  href={`/app/matters/${matter.id}/documents/${doc.id}`}
+                  className="flex items-center gap-4 border-t border-white/[0.04] px-4 py-3 transition-colors first:border-t-0 hover:bg-white/[0.02]"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] text-white/75">{doc.fileName}</p>
@@ -293,7 +294,7 @@ export default async function MatterDetailPage({
                   <span className="hidden w-32 shrink-0 text-right text-xs text-white/25 lg:block">
                     {fmtShortDate(doc.uploadedAt)}
                   </span>
-                </div>
+                </Link>
               ))}
             </div>
           </div>
