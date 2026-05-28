@@ -9,15 +9,24 @@ import { cn } from "@/lib/utils"
 
 const STORAGE_KEY = "aether-shell-sidebar-collapsed"
 
-const titles: Record<string, { title: string; subtitle?: string }> = {
+const exactTitles: Record<string, { title: string; subtitle?: string }> = {
   "/app": { title: "Dashboard", subtitle: "Operational overview" },
-  "/app/matters": { title: "Matters", subtitle: "Matter workspaces" },
+  "/app/matters": { title: "Matters", subtitle: "Matter registry" },
+  "/app/matters/new": { title: "Matter intake", subtitle: "Governed initialization" },
   "/app/research": { title: "Research", subtitle: "Authority and retrieval" },
   "/app/drafting": { title: "Drafting", subtitle: "Controlled drafting surface" },
   "/app/documents": { title: "Documents", subtitle: "Intelligence and lineage" },
   "/app/workflows": { title: "Workflows", subtitle: "Orchestration status" },
   "/app/memory": { title: "Memory", subtitle: "Firm and matter memory" },
   "/app/settings": { title: "Settings", subtitle: "Account and workspace" },
+}
+
+function resolveMeta(pathname: string): { title: string; subtitle?: string } {
+  if (exactTitles[pathname]) return exactTitles[pathname]
+  if (pathname.startsWith("/app/matters/")) {
+    return { title: "Matter", subtitle: "Intelligence workspace" }
+  }
+  return { title: "Workspace", subtitle: "Aether" }
 }
 
 export function PlatformShell({ children }: { children: React.ReactNode }) {
@@ -48,7 +57,7 @@ export function PlatformShell({ children }: { children: React.ReactNode }) {
 
   const closeMobile = useCallback(() => setMobileOpen(false), [])
 
-  const meta = titles[pathname] ?? { title: "Workspace", subtitle: "Aether" }
+  const meta = resolveMeta(pathname)
 
   return (
     <div className="flex min-h-screen bg-zinc-950 text-white">
