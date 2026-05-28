@@ -47,10 +47,17 @@ model Conversation {
 }
 
 model Document {
-  id           String   @id @default(cuid())
-  matterId     String
-  matter       Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
-  fileName     String
-  uploadStatus String   @default("pending")
-  createdAt    DateTime @default(now())
+  id              String   @id @default(cuid())
+  matterId        String
+  matter          Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  fileName        String
+  storagePath     String?
+  mimeType        String?
+  fileSize        Int?
+  uploadStatus    String   @default("uploaded")
+  indexingStatus  String   @default("pending")
+  retrievalStatus String   @default("pending")
+  uploadedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
 }
