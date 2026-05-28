@@ -1,13 +1,12 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -46,9 +45,31 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-aether-card: var(--aether-radius-card);
+  --radius-aether-panel: var(--aether-radius-panel);
+  --spacing-section-y: var(--aether-section-y-md);
+  --spacing-section-y-lg: var(--aether-section-y-lg);
 }
 
 :root {
+  /* Aether marketing — glass, radii, section rhythm (dark landing) */
+  --aether-glass-border: oklch(1 0 0 / 0.08);
+  --aether-glass-surface: oklch(1 0 0 / 0.035);
+  --aether-glass-surface-deep: oklch(1 0 0 / 0.02);
+  --aether-glass-blur: 16px;
+  --aether-radius-pill: 9999px;
+  --aether-radius-card: 2rem;
+  --aether-radius-panel: 1rem;
+  --aether-section-y-sm: clamp(4.5rem, 10vw, 6.5rem);
+  --aether-section-y-md: clamp(5.5rem, 12vw, 8rem);
+  --aether-section-y-lg: clamp(6rem, 14vw, 10rem);
+  --aether-hero-scrim: linear-gradient(
+    to top,
+    oklch(0 0 0 / 0.72) 0%,
+    oklch(0 0 0 / 0.28) 42%,
+    oklch(0 0 0 / 0.38) 100%
+  );
+
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -126,5 +147,30 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+@layer utilities {
+  .aether-glass {
+    border: 1px solid var(--aether-glass-border);
+    background-color: var(--aether-glass-surface);
+    backdrop-filter: blur(var(--aether-glass-blur));
+    -webkit-backdrop-filter: blur(var(--aether-glass-blur));
+  }
+  .aether-glass-deep {
+    border: 1px solid color-mix(in oklab, white 6%, transparent);
+    background-color: var(--aether-glass-surface-deep);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+  }
+  .aether-section-y {
+    padding-block: var(--aether-section-y-md);
+  }
+  .aether-text-elegant {
+    text-shadow: 0 2px 48px oklch(0 0 0 / 0.45);
+  }
+  .aether-grain {
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 }
