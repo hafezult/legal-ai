@@ -23,6 +23,12 @@ const exactTitles: Record<string, { title: string; subtitle?: string }> = {
 
 function resolveMeta(pathname: string): { title: string; subtitle?: string } {
   if (exactTitles[pathname]) return exactTitles[pathname]
+  if (pathname.includes("/documents/")) {
+    return { title: "Document", subtitle: "Intelligence workstation" }
+  }
+  if (pathname === "/app/matters/new") {
+    return { title: "Matter intake", subtitle: "Governed initialisation" }
+  }
   if (pathname.startsWith("/app/matters/")) {
     return { title: "Matter", subtitle: "Intelligence workspace" }
   }
