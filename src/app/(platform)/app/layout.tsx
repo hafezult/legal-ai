@@ -1,3 +1,4 @@
+import { ClerkRuntimeProvider } from "@/components/auth/clerk-runtime-provider"
 import { PlatformShell } from "@/components/layout/platform-shell"
 import { ensureAppUser } from "@/lib/auth/ensure-user"
 
@@ -12,5 +13,9 @@ export default async function AppLayout({
     /* Prisma unavailable — layout still renders; sync retries on navigation */
   }
 
-  return <PlatformShell>{children}</PlatformShell>
+  return (
+    <ClerkRuntimeProvider>
+      <PlatformShell>{children}</PlatformShell>
+    </ClerkRuntimeProvider>
+  )
 }
