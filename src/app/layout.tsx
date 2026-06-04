@@ -24,6 +24,8 @@ export const metadata: Metadata = {
     "Workflow orchestration, AI legal reasoning, and enterprise document intelligence for modern law firms.",
 }
 
+const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -35,17 +37,22 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} dark h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-black text-white">
-        <ClerkProvider
-          appearance={{
-            baseTheme: dark,
-            variables: {
-              colorBackground: "#000000",
-              colorInputBackground: "#0a0a0a",
-            },
-          }}
-        >
-          {children}
-        </ClerkProvider>
+        {clerkPublishableKey ? (
+          <ClerkProvider
+            publishableKey={clerkPublishableKey}
+            appearance={{
+              baseTheme: dark,
+              variables: {
+                colorBackground: "#000000",
+                colorInputBackground: "#0a0a0a",
+              },
+            }}
+          >
+            {children}
+          </ClerkProvider>
+        ) : (
+          children
+        )}
       </body>
     </html>
   )
