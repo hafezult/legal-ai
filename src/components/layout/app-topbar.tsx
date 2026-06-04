@@ -3,6 +3,8 @@
 import { UserButton } from "@clerk/nextjs"
 import { Menu } from "lucide-react"
 
+const hasClerkProvider = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY)
+
 type AppTopbarProps = {
   title: string
   subtitle?: string
@@ -29,14 +31,20 @@ export function AppTopbar({ title, subtitle, onOpenSidebar }: AppTopbarProps) {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-3">
-        <UserButton
-          afterSignOutUrl="/"
-          appearance={{
-            elements: {
-              avatarBox: "h-8 w-8 ring-1 ring-white/10",
-            },
-          }}
-        />
+        {hasClerkProvider ? (
+          <UserButton
+            afterSignOutUrl="/"
+            appearance={{
+              elements: {
+                avatarBox: "h-8 w-8 ring-1 ring-white/10",
+              },
+            }}
+          />
+        ) : (
+          <span className="rounded-full border border-amber-400/[0.18] bg-amber-400/[0.04] px-2.5 py-1 text-[10px] uppercase tracking-[0.1em] text-amber-300/68">
+            Auth setup required
+          </span>
+        )}
       </div>
     </header>
   )
