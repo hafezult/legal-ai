@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
+import Link from "next/link"
 
 import { prisma } from "@/lib/prisma"
 
@@ -28,6 +29,15 @@ const statusLabel: Record<SystemLayer["status"], string> = {
   degraded: "Degraded",
 }
 
+function fmtDate(d: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(d)
+}
+
 export default async function DashboardPage() {
   const { userId } = auth()
   if (!userId) {
@@ -36,6 +46,19 @@ export default async function DashboardPage() {
 
   let matterCount = 0
   let documentCount = 0
+  let researchCount = 0
+  let recentMatters: {
+    id: string
+    title: string
+    clientName: string | null
+    updatedAt: Date
+  }[] = []
+  let recentSessions: {
+    id: string
+    query: string
+    createdAt: Date
+    matter: { id: string; title: string }
+  }[] = []
 
   try {
     const user = await prisma.user.findUnique({
@@ -43,10 +66,39 @@ export default async function DashboardPage() {
     })
 
     if (user) {
-      ;[matterCount, documentCount] = await Promise.all([
+      ;[
+        matterCount,
+        documentCount,
+        researchCount,
+        recentMatters,
+        recentSessions,
+      ] = await Promise.all([
         prisma.matter.count({ where: { userId: user.id } }),
         prisma.document.count({
           where: { matter: { userId: user.id } },
+        }),
+        prisma.researchSession.count({ where: { userId: user.id } }),
+        prisma.matter.findMany({
+          where: { userId: user.id },
+          orderBy: { updatedAt: "desc" },
+          take: 3,
+          select: {
+            id: true,
+            title: true,
+            clientName: true,
+            updatedAt: true,
+          },
+        }),
+        prisma.researchSession.findMany({
+          where: { userId: user.id },
+          orderBy: { createdAt: "desc" },
+          take: 3,
+          select: {
+            id: true,
+            query: true,
+            createdAt: true,
+            matter: { select: { id: true, title: true } },
+          },
         }),
       ])
     }
@@ -75,7 +127,7 @@ export default async function DashboardPage() {
         {[
           { label: "Active matters", value: String(matterCount) },
           { label: "Indexed documents", value: String(documentCount) },
-          { label: "Workspace", value: "Live" },
+          { label: "Research sessions", value: String(researchCount) },
         ].map((card) => (
           <div
             key={card.label}
@@ -98,18 +150,35 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             Recent matter activity
           </p>
-          {matterCount === 0 ? (
+          {recentMatters.length === 0 ? (
             <div className="mt-4 space-y-1">
               <p className="font-serif text-base text-white/50">No active matters</p>
               <p className="text-sm leading-relaxed text-white/32">
                 Initialize your first matter workspace to begin tracked work.
                 Matter context grounds all AI outputs to privilege boundaries.
               </p>
+              <Link
+                href="/app/matters/new"
+                className="mt-4 inline-flex text-xs text-white/45 transition-colors hover:text-white/75"
+              >
+                Initialize matter
+              </Link>
             </div>
           ) : (
-            <p className="mt-2 font-serif text-xl text-white/85">
-              {matterCount} active {matterCount === 1 ? "matter" : "matters"}
-            </p>
+            <div className="mt-4 space-y-3">
+              {recentMatters.map((matter) => (
+                <Link
+                  key={matter.id}
+                  href={`/app/matters/${matter.id}`}
+                  className="block rounded-lg border border-white/[0.05] bg-white/[0.015] px-3.5 py-3 transition-colors hover:border-white/[0.1] hover:bg-white/[0.03]"
+                >
+                  <p className="truncate text-sm text-white/72">{matter.title}</p>
+                  <p className="mt-0.5 truncate text-xs text-white/28">
+                    {matter.clientName ?? "No client"} - {fmtDate(matter.updatedAt)}
+                  </p>
+                </Link>
+              ))}
+            </div>
           )}
         </div>
 
@@ -118,14 +187,39 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             AI research sessions
           </p>
-          <div className="mt-4 space-y-1">
-            <p className="font-serif text-base text-white/50">No sessions logged</p>
-            <p className="text-sm leading-relaxed text-white/32">
-              Sessions surface here as your team queries the research layer.
-              Authority tables, citation-grade excerpts, and retrieval traces are
-              preserved per matter.
-            </p>
-          </div>
+          {recentSessions.length === 0 ? (
+            <div className="mt-4 space-y-1">
+              <p className="font-serif text-base text-white/50">No sessions logged</p>
+              <p className="text-sm leading-relaxed text-white/32">
+                Sessions surface here as your team queries the research layer.
+                Authority tables, citation-grade excerpts, and retrieval traces are
+                preserved per matter.
+              </p>
+              <Link
+                href="/app/research"
+                className="mt-4 inline-flex text-xs text-white/45 transition-colors hover:text-white/75"
+              >
+                Open research
+              </Link>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {recentSessions.map((session) => (
+                <Link
+                  key={session.id}
+                  href={`/app/matters/${session.matter.id}`}
+                  className="block rounded-lg border border-white/[0.05] bg-white/[0.015] px-3.5 py-3 transition-colors hover:border-white/[0.1] hover:bg-white/[0.03]"
+                >
+                  <p className="line-clamp-2 text-sm leading-relaxed text-white/72">
+                    {session.query}
+                  </p>
+                  <p className="mt-1.5 text-xs text-white/28">
+                    {session.matter.title} - {fmtDate(session.createdAt)}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

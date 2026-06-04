@@ -100,13 +100,28 @@ export async function uploadDocument(
 
   void userId // available for future audit log
 
-  // Fire-and-forget: trigger async indexing pipeline
+  // Fire-and-forget: trigger async indexing pipeline and mark failures visibly.
   const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3001}`
+    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3000}`
   void fetch(`${appUrl}/api/index-document/${documentId}`, {
     method: "POST",
     headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
-  }).catch(() => null)
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const body = await response.text().catch(() => "")
+        throw new Error(`Indexing trigger failed (${response.status}): ${body}`)
+      }
+    })
+    .catch(async (error) => {
+      console.error(`[uploadDocument] indexing trigger failed for ${documentId}:`, error)
+      await prisma.document
+        .update({
+          where: { id: documentId },
+          data: { indexingStatus: "failed", retrievalStatus: "failed" },
+        })
+        .catch(() => null)
+    })
 
   revalidatePath(`/app/matters/${matterId}`)
   return { success: true }

@@ -97,7 +97,9 @@ export function DocumentUploadZone({ uploadAction }: Props) {
         setPhase("success")
         setFile(null)
         if (inputRef.current) inputRef.current.value = ""
-        router.refresh()
+        ;[0, 2000, 5000, 10000].forEach((delay) => {
+          setTimeout(() => router.refresh(), delay)
+        })
         setTimeout(() => setPhase("idle"), 4000)
       }
     })

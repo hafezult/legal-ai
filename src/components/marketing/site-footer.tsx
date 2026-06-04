@@ -58,18 +58,18 @@ export function SiteFooter({ className }: { className?: string }) {
             title="Company"
             links={[
               { href: "#about", label: "About" },
-              { href: "#", label: "Careers" },
-              { href: "#", label: "Press" },
-              { href: "#", label: "Contact" },
+              { href: "#ecosystem", label: "Ecosystem" },
+              { href: "#trust", label: "Security" },
+              { href: "mailto:hello@aether.legal", label: "Contact" },
             ]}
           />
           <FooterCol
             title="Resources"
             links={[
-              { href: "#", label: "Documentation" },
-              { href: "#", label: "Trust center" },
-              { href: "#", label: "Status" },
-              { href: "#", label: "Blog" },
+              { href: "#platform", label: "Platform overview" },
+              { href: "#showcase", label: "Workspace tour" },
+              { href: "#trust", label: "Trust center" },
+              { href: "/app/research", label: "Research workspace" },
             ]}
           />
           <div className="col-span-2 space-y-4 md:col-span-1">
@@ -85,22 +85,22 @@ export function SiteFooter({ className }: { className?: string }) {
           <div className="text-xs text-white/40">© {new Date().getFullYear()} Aether. All rights reserved.</div>
           <div className="flex flex-wrap gap-6">
             <a
-              href="#"
+              href="#trust"
               className="text-xs text-white/45 underline-offset-4 transition-colors duration-300 hover:text-white/75 hover:underline"
             >
-              Privacy
+              Security
             </a>
             <a
-              href="#"
+              href="#platform"
               className="text-xs text-white/45 underline-offset-4 transition-colors duration-300 hover:text-white/75 hover:underline"
             >
-              Terms
+              Platform
             </a>
             <a
-              href="#"
+              href="mailto:hello@aether.legal"
               className="text-xs text-white/45 underline-offset-4 transition-colors duration-300 hover:text-white/75 hover:underline"
             >
-              Cookies
+              Contact
             </a>
           </div>
         </div>
