@@ -17,7 +17,7 @@ export function SiteHeader({ className }: { className?: string }) {
       )}
     >
       <div
-        className="relative mx-auto flex max-w-6xl items-center justify-between rounded-[var(--aether-radius-pill)] border border-[color:var(--aether-glass-border)] bg-[color:var(--aether-glass-surface-deep)] px-4 py-2 pl-5 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.35),inset_0_1px_0_0_rgba(255,255,255,0.04)] backdrop-blur-md md:px-5 md:py-2.5"
+        className="relative mx-auto flex max-w-6xl items-center justify-between rounded-[var(--aether-radius-pill)] border border-white/[0.1] bg-black/70 px-4 py-2 pl-5 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.55),inset_0_1px_0_0_rgba(255,255,255,0.05)] backdrop-blur-xl md:px-5 md:py-2.5"
         style={{
           backdropFilter: "blur(var(--aether-glass-blur))",
           WebkitBackdropFilter: "blur(var(--aether-glass-blur))",
