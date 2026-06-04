@@ -21,6 +21,7 @@ export type RetrievalResult = {
 export async function retrieveChunks(
   _query: RetrievalQuery
 ): Promise<RetrievalResult[]> {
+  void _query
   return []
 }
 

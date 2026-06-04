@@ -44,6 +44,8 @@ async function voyageEmbed(
   _texts: string[],
   _model: string
 ): Promise<number[][]> {
+  void _texts
+  void _model
   throw new Error("Voyage AI provider not yet implemented.")
 }
 
