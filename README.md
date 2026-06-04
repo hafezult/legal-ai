@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Aether
 
-## Getting Started
+Aether is a Next.js 14 application for AI-native legal workspaces. The current
+platform includes Clerk authentication, matter management, document upload and
+indexing, document chunk inspection, semantic retrieval, and grounded research
+workflows.
 
-First, run the development server:
+## Requirements
+
+- Node.js 20+
+- PostgreSQL with the `vector` extension enabled
+- Clerk application keys
+- Supabase project with a private `legal-documents` storage bucket
+- OpenAI API key for embeddings and AI research answers
+
+The app can still parse and chunk uploaded documents without `OPENAI_API_KEY`,
+but semantic retrieval and generated research answers will be unavailable.
+
+## Environment
+
+Copy the template and fill in real service values:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Required variables:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Prisma pooled/runtime PostgreSQL connection string |
+| `DIRECT_URL` | Direct PostgreSQL connection string for migrations |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk browser key |
+| `CLERK_SECRET_KEY` | Clerk server key |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase service key for storage |
+| `NEXT_PUBLIC_APP_URL` | Public base URL used for server callbacks |
+| `INDEXING_SECRET` | Shared secret for the document indexing API |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Optional variables:
 
-## Learn More
+| Variable | Purpose |
+| --- | --- |
+| `INTERNAL_APP_URL` | Private server-to-server callback base URL. Takes precedence over `NEXT_PUBLIC_APP_URL`. |
+| `OPENAI_API_KEY` | Enables embeddings and grounded AI research responses. |
 
-To learn more about Next.js, take a look at the following resources:
+`INDEXING_SECRET` is optional during local development and required in
+production. If no app URL is configured locally, document uploads trigger the
+indexing callback at `http://localhost:3000`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Database and storage setup
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Enable `pgvector` on the target PostgreSQL database.
+2. Generate the Prisma client:
 
-## Deploy on Vercel
+   ```bash
+   npm run db:generate
+   ```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+3. Apply the schema during development:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+   ```bash
+   npm run db:push
+   ```
+
+4. Create a private Supabase storage bucket named `legal-documents`.
+
+## Development
+
+Install dependencies and start the Next.js dev server:
+
+```bash
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). Authenticated `/app`
+routes require valid Clerk credentials and a signed-in user.
+
+## Validation
+
+Run these checks before submitting changes:
+
+```bash
+npm run lint
+npx prisma validate
+npm run build
+```
+
+For local build validation without external services, dummy values can be used
+for the required environment variables. Runtime testing of authenticated
+workflows still requires real Clerk, Supabase, PostgreSQL, and optionally OpenAI
+credentials.

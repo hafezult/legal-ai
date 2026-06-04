@@ -9,8 +9,15 @@ export async function POST(
   request: Request,
   { params }: { params: { documentId: string } }
 ) {
-  // Validate internal secret (skip check in development if secret not set)
+  // Local development can omit the secret; deployed environments must set it.
   const secret = process.env.INDEXING_SECRET
+  if (!secret && process.env.NODE_ENV === "production") {
+    return NextResponse.json(
+      { error: "INDEXING_SECRET is required in production." },
+      { status: 500 }
+    )
+  }
+
   if (secret) {
     const auth = request.headers.get("x-aether-secret")
     if (auth !== secret) {

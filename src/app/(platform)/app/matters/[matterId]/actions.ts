@@ -3,6 +3,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
+import { getInternalAppUrl } from "@/lib/app-url"
 import { prisma } from "@/lib/prisma"
 import { ensureBucket, removeFromStorage, uploadToStorage } from "@/lib/storage/documents"
 
@@ -101,9 +102,7 @@ export async function uploadDocument(
   void userId // available for future audit log
 
   // Fire-and-forget: trigger async indexing pipeline
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3001}`
-  void fetch(`${appUrl}/api/index-document/${documentId}`, {
+  void fetch(`${getInternalAppUrl()}/api/index-document/${documentId}`, {
     method: "POST",
     headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
   }).catch(() => null)
