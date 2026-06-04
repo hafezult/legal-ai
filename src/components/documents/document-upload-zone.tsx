@@ -38,10 +38,12 @@ export function DocumentUploadZone({ uploadAction }: Props) {
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [successWarning, setSuccessWarning] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const pick = useCallback((f: File) => {
     setError(null)
+    setSuccessWarning(null)
     if (!ALLOWED.includes(f.type)) {
       setError(`Unsupported format. Accepted: ${FORMAT_LABEL}.`)
       setPhase("error")
@@ -78,6 +80,7 @@ export function DocumentUploadZone({ uploadAction }: Props) {
     setFile(null)
     setPhase("idle")
     setError(null)
+    setSuccessWarning(null)
     if (inputRef.current) inputRef.current.value = ""
   }, [])
 
@@ -87,6 +90,7 @@ export function DocumentUploadZone({ uploadAction }: Props) {
     fd.append("file", file)
     setPhase("uploading")
     setError(null)
+    setSuccessWarning(null)
 
     startTransition(async () => {
       const result = await uploadAction({}, fd)
@@ -94,6 +98,7 @@ export function DocumentUploadZone({ uploadAction }: Props) {
         setError(result.error)
         setPhase("error")
       } else {
+        setSuccessWarning(result.warning ?? null)
         setPhase("success")
         setFile(null)
         if (inputRef.current) inputRef.current.value = ""
@@ -110,10 +115,10 @@ export function DocumentUploadZone({ uploadAction }: Props) {
           Ingestion status
         </p>
         <p className="mt-1 text-sm text-white/72">
-          Source ingestion initialized.
+          {successWarning ? "Source uploaded with indexing warning." : "Source ingestion complete."}
         </p>
         <p className="mt-0.5 text-xs text-white/32">
-          Document queued for indexing. Registry updated below.
+          {successWarning ?? "Registry updated below with the latest pipeline status."}
         </p>
       </div>
     )

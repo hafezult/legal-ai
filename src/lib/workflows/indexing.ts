@@ -43,13 +43,19 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   }
 
   // ── 1. Parse ────────────────────────────────────────────────────────────
-  await setStatus(documentId, "parsing", { parseStatus: "parsing" })
+  await setStatus(documentId, "parsing", {
+    parseStatus: "parsing",
+    retrievalStatus: "pending",
+  })
 
   let parsed
   try {
     parsed = await extractText(doc.storagePath, doc.mimeType, doc.fileName)
   } catch (err) {
-    await setStatus(documentId, "failed", { parseStatus: "failed" })
+    await setStatus(documentId, "failed", {
+      parseStatus: "failed",
+      retrievalStatus: "failed",
+    })
     throw err
   }
 
@@ -88,7 +94,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   // ── 3. Embed ────────────────────────────────────────────────────────────
   if (!isEmbeddingConfigured()) {
     // No API key — mark as indexed without semantic retrieval
-    await setStatus(documentId, "indexed")
+    await setStatus(documentId, "indexed", { retrievalStatus: "unavailable" })
     return
   }
 
@@ -97,7 +103,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     embeddings = await generateBatchEmbeddings(chunks.map((c) => c.content))
   } catch (err) {
     // Embedding failure is non-fatal — document is chunked but not retrieval-ready
-    await setStatus(documentId, "indexed")
+    await setStatus(documentId, "indexed", { retrievalStatus: "unavailable" })
     console.error(`[indexing] embedding failed for ${documentId}:`, err)
     return
   }

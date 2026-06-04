@@ -193,7 +193,15 @@ export async function runResearch(
   }
 
   // Grounded LLM response
-  const answer = await generateGroundedResponse(query, chunks)
+  let answer: string
+  try {
+    answer = await generateGroundedResponse(query, chunks)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Analysis failed."
+    answer =
+      "Grounded analysis failed after retrieval completed. " +
+      `Review the retrieved excerpts below and retry the query. (${msg})`
+  }
 
   // Persist research session
   let sessionId = ""

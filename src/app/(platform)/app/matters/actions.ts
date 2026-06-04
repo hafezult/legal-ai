@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 
 import { prisma } from "@/lib/prisma"
+import { ensureAppUser } from "@/lib/auth/ensure-user"
 
 export type MatterFormState = {
   error?: string
@@ -24,11 +25,16 @@ export async function createMatter(
   let user: { id: string } | null = null
   try {
     user = await prisma.user.findUnique({ where: { clerkId } })
+    if (!user) {
+      user = await ensureAppUser()
+    }
   } catch {
     return { error: "Unable to reach the data layer. Please try again." }
   }
 
-  if (!user) redirect("/sign-in")
+  if (!user) {
+    return { error: "Account sync failed. Refresh the page and try again." }
+  }
 
   let matter: { id: string }
   try {

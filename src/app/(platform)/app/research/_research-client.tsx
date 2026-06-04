@@ -243,19 +243,20 @@ export function ResearchClient({ matters }: { matters: Matter[] }) {
               )}
 
               {/* Authority analysis */}
-              {hasAuthorities && (
+              {results.chunks.length > 0 && (
                 <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015] p-5">
                   <p className="mb-4 text-[10px] uppercase tracking-[0.18em] text-white/40">
                     Authority analysis
                   </p>
-                  <div className="space-y-4">
-                    <AuthorityRow label="Cases" items={results.authorities.cases} />
-                    <AuthorityRow label="Legislation" items={results.authorities.statutes} />
-                    <AuthorityRow label="CPR" items={results.authorities.cpr} />
-                    <AuthorityRow label="Practice directions" items={results.authorities.practiceDirs} />
-                    <AuthorityRow label="Statutory instruments" items={results.authorities.statutory} />
-                  </div>
-                  {!hasAuthorities && (
+                  {hasAuthorities ? (
+                    <div className="space-y-4">
+                      <AuthorityRow label="Cases" items={results.authorities.cases} />
+                      <AuthorityRow label="Legislation" items={results.authorities.statutes} />
+                      <AuthorityRow label="CPR" items={results.authorities.cpr} />
+                      <AuthorityRow label="Practice directions" items={results.authorities.practiceDirs} />
+                      <AuthorityRow label="Statutory instruments" items={results.authorities.statutory} />
+                    </div>
+                  ) : (
                     <p className="text-xs text-white/28">
                       No UK legal authorities detected in the retrieved excerpts.
                     </p>

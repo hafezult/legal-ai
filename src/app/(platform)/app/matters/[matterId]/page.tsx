@@ -6,7 +6,7 @@ import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { DocumentUploadZone } from "@/components/documents/document-upload-zone"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import { prisma } from "@/lib/prisma"
-import { uploadDocument } from "./actions"
+import { retryDocumentIndexing, uploadDocument } from "./actions"
 
 export const dynamic = "force-dynamic"
 
@@ -69,15 +69,6 @@ const riskStyle: Record<string, string> = {
   critical: "text-red-400/65",
 }
 
-const systemLayers = [
-  { label: "Authentication layer",  status: "operational" },
-  { label: "Matter context",        status: "active" },
-  { label: "Retrieval system",      status: "pending" },
-  { label: "Embedding index",       status: "awaiting" },
-  { label: "Orchestration layer",   status: "operational" },
-  { label: "Drafting surface",      status: "available" },
-]
-
 const sysStyle: Record<string, string> = {
   operational: "border-white/[0.12] bg-white/[0.03] text-white/58",
   active:      "border-white/[0.16] bg-white/[0.05] text-white/75",
@@ -120,7 +111,7 @@ export default async function MatterDetailPage({
     createdAt: Date
     updatedAt: Date
     documents: Doc[]
-    _count: { documents: number; conversations: number }
+    _count: { documents: number; conversations: number; researchSessions: number }
   }
 
   let matter: MatterData | null = null
@@ -155,7 +146,7 @@ export default async function MatterDetailPage({
               uploadedAt: true,
             },
           },
-          _count: { select: { documents: true, conversations: true } },
+          _count: { select: { documents: true, conversations: true, researchSessions: true } },
         },
       })
     }
@@ -169,13 +160,37 @@ export default async function MatterDetailPage({
   const boundUpload = uploadDocument.bind(null, matter.id)
 
   const hasDocuments = matter.documents.length > 0
+  const readyDocuments = matter.documents.filter(
+    (doc) => doc.retrievalStatus === "ready" || doc.indexingStatus === "retrieval-ready"
+  ).length
+  const indexedDocuments = matter.documents.filter((doc) =>
+    ["indexed", "retrieval-ready"].includes(doc.indexingStatus)
+  ).length
+  const indexingDocuments = matter.documents.filter((doc) =>
+    ["pending", "parsing", "chunking", "embedding"].includes(doc.indexingStatus)
+  ).length
+  const retryableDocuments = matter.documents.filter((doc) =>
+    ["failed", "unavailable"].includes(doc.indexingStatus) ||
+    ["failed", "unavailable"].includes(doc.retrievalStatus)
+  )
+  const hasRetrievalReady = readyDocuments > 0
+  const hasResearchSessions = matter._count.researchSessions > 0
+
+  const systemLayers = [
+    { label: "Authentication layer",  status: "operational" },
+    { label: "Matter context",        status: "active" },
+    { label: "Retrieval system",      status: hasRetrievalReady ? "active" : "pending" },
+    { label: "Embedding index",       status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
+    { label: "Orchestration layer",   status: hasResearchSessions ? "active" : "operational" },
+    { label: "Drafting surface",      status: "available" },
+  ]
 
   const timelineEvents = [
     { label: "Matter initialized",     note: fmtDate(matter.createdAt),       state: "complete"   as const },
     { label: "Workspace provisioned",  note: fmtDate(matter.createdAt),       state: "complete"   as const },
-    { label: "Source ingestion",       note: hasDocuments ? `${matter._count.documents} document${matter._count.documents !== 1 ? "s" : ""} indexed` : "Awaiting first document", state: hasDocuments ? "complete" as const : "pending" as const },
-    { label: "Retrieval layer",        note: "Pending index completion",        state: "pending"    as const },
-    { label: "Authority analysis",     note: "Awaiting retrieval layer",        state: "pending"    as const },
+    { label: "Source ingestion",       note: hasDocuments ? `${indexedDocuments}/${matter._count.documents} document${matter._count.documents !== 1 ? "s" : ""} indexed` : "Awaiting first document", state: hasDocuments && indexingDocuments === 0 ? "complete" as const : "pending" as const },
+    { label: "Retrieval layer",        note: hasRetrievalReady ? `${readyDocuments} retrieval-ready source${readyDocuments !== 1 ? "s" : ""}` : "Pending embedding completion", state: hasRetrievalReady ? "complete" as const : "pending" as const },
+    { label: "Authority analysis",     note: hasResearchSessions ? `${matter._count.researchSessions} research session${matter._count.researchSessions !== 1 ? "s" : ""} logged` : "Awaiting research session", state: hasResearchSessions ? "complete" as const : "pending" as const },
   ]
 
   return (
@@ -297,6 +312,33 @@ export default async function MatterDetailPage({
                 </Link>
               ))}
             </div>
+
+            {retryableDocuments.length > 0 && (
+              <div className="mt-4 rounded-lg border border-amber-400/[0.12] bg-amber-400/[0.03] px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-amber-300/55">
+                  Indexing recovery
+                </p>
+                <div className="mt-3 space-y-2">
+                  {retryableDocuments.map((doc) => (
+                    <form
+                      key={doc.id}
+                      action={retryDocumentIndexing.bind(null, matter.id, doc.id)}
+                      className="flex flex-wrap items-center justify-between gap-3"
+                    >
+                      <p className="min-w-0 flex-1 truncate text-xs text-white/48">
+                        {doc.fileName}
+                      </p>
+                      <button
+                        type="submit"
+                        className="shrink-0 rounded border border-white/[0.1] px-3 py-1 text-[11px] text-white/55 transition-colors hover:border-white/[0.18] hover:text-white/80"
+                      >
+                        Retry indexing
+                      </button>
+                    </form>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           /* Empty state — intelligence readiness */
@@ -330,15 +372,18 @@ export default async function MatterDetailPage({
               AI research operations
             </p>
             <span className="rounded-full border border-white/[0.06] px-2.5 py-0.5 text-[10px] text-white/22">
-              Layer standing by
+              {hasResearchSessions ? "Session history active" : "Layer standing by"}
             </span>
           </div>
           <p className="mt-4 font-serif text-[14px] text-white/42">
-            No active research sessions
+            {hasResearchSessions
+              ? `${matter._count.researchSessions} research session${matter._count.researchSessions !== 1 ? "s" : ""} logged`
+              : "No active research sessions"}
           </p>
           <p className="mt-1.5 text-xs leading-relaxed text-white/25">
-            Citation-grade outputs initialize here after research queries are submitted
-            within this matter context.
+            {hasResearchSessions
+              ? "Citation-grade outputs are preserved against this matter context."
+              : "Citation-grade outputs initialize here after research queries are submitted within this matter context."}
           </p>
           <div className="mt-5 space-y-2">
             {[
@@ -361,21 +406,22 @@ export default async function MatterDetailPage({
             Intelligence readiness
           </p>
           <p className="mt-4 font-serif text-[14px] text-white/42">
-            Grounded intelligence pending
+            {hasRetrievalReady ? "Grounded intelligence active" : "Grounded intelligence pending"}
           </p>
           <p className="mt-1.5 text-xs leading-relaxed text-white/25">
-            Future intelligence surfaces including clause extraction, citation analysis,
-            authority linking, and semantic retrieval initialize here after source indexing.
+            {hasRetrievalReady
+              ? "Semantic retrieval is available for this matter's indexed source set."
+              : "Future intelligence surfaces including clause extraction, citation analysis, authority linking, and semantic retrieval initialize here after source indexing."}
           </p>
 
           <div className="mt-5 space-y-2">
             {[
               { label: "Clause extraction",    status: hasDocuments ? "pending" : "awaiting" },
-              { label: "Citation analysis",    status: "awaiting" },
-              { label: "Authority linking",    status: "awaiting" },
-              { label: "Semantic retrieval",   status: "awaiting" },
-              { label: "Reasoning traces",     status: "awaiting" },
-              { label: "Research sessions",    status: matter._count.conversations > 0 ? "active" : "pending" },
+              { label: "Citation analysis",    status: hasResearchSessions ? "active" : "awaiting" },
+              { label: "Authority linking",    status: hasResearchSessions ? "active" : "awaiting" },
+              { label: "Semantic retrieval",   status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
+              { label: "Reasoning traces",     status: hasResearchSessions ? "active" : "awaiting" },
+              { label: "Research sessions",    status: hasResearchSessions ? "active" : "pending" },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between border-t border-white/[0.04] py-2.5 first:border-t-0">
                 <p className="text-xs text-white/38">{item.label}</p>

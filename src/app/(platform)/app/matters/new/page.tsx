@@ -138,7 +138,7 @@ export default function NewMatterPage() {
               <input
                 type="text"
                 name="jurisdiction"
-                placeholder="e.g. New York, Federal"
+                placeholder="e.g. England and Wales"
                 autoComplete="off"
                 className={inputCls}
               />
@@ -180,7 +180,7 @@ export default function NewMatterPage() {
           {/* Footer */}
           <div className="flex items-center justify-between border-t border-white/[0.06] pt-5">
             <p className="text-[11px] text-white/28">
-              Workspace initializes immediately. Fields may be updated after creation.
+              Workspace initializes immediately with this matter context.
             </p>
             <SubmitButton />
           </div>

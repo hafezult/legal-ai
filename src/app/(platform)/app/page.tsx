@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
+import Link from "next/link"
 
 import { prisma } from "@/lib/prisma"
 
@@ -8,13 +9,6 @@ type SystemLayer = {
   label: string
   status: "operational" | "pending" | "degraded"
 }
-
-const systemLayers: SystemLayer[] = [
-  { label: "Authentication layer", status: "operational" },
-  { label: "Data plane", status: "pending" },
-  { label: "AI orchestration", status: "operational" },
-  { label: "Document index", status: "pending" },
-]
 
 const statusStyle: Record<SystemLayer["status"], string> = {
   operational: "bg-white/20 text-white/70",
@@ -28,6 +22,15 @@ const statusLabel: Record<SystemLayer["status"], string> = {
   degraded: "Degraded",
 }
 
+function fmtShortDate(d: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(d)
+}
+
 export default async function DashboardPage() {
   const { userId } = auth()
   if (!userId) {
@@ -35,24 +38,73 @@ export default async function DashboardPage() {
   }
 
   let matterCount = 0
-  let documentCount = 0
+  let indexedDocumentCount = 0
+  let researchSessionCount = 0
+  let dataLayerAvailable = true
+  let recentMatters: {
+    id: string
+    title: string
+    status: string
+    updatedAt: Date
+  }[] = []
+  let recentResearchSessions: {
+    id: string
+    query: string
+    createdAt: Date
+    matter: { title: string }
+  }[] = []
 
   try {
     const user = await prisma.user.findUnique({
       where: { clerkId: userId },
+      select: { id: true },
     })
 
     if (user) {
-      ;[matterCount, documentCount] = await Promise.all([
-        prisma.matter.count({ where: { userId: user.id } }),
+      ;[
+        matterCount,
+        indexedDocumentCount,
+        researchSessionCount,
+        recentMatters,
+        recentResearchSessions,
+      ] = await Promise.all([
+        prisma.matter.count({ where: { userId: user.id, status: { not: "archived" } } }),
         prisma.document.count({
-          where: { matter: { userId: user.id } },
+          where: {
+            matter: { userId: user.id },
+            OR: [{ retrievalStatus: "ready" }, { indexingStatus: "retrieval-ready" }],
+          },
+        }),
+        prisma.researchSession.count({ where: { userId: user.id } }),
+        prisma.matter.findMany({
+          where: { userId: user.id },
+          orderBy: { updatedAt: "desc" },
+          take: 3,
+          select: { id: true, title: true, status: true, updatedAt: true },
+        }),
+        prisma.researchSession.findMany({
+          where: { userId: user.id },
+          orderBy: { createdAt: "desc" },
+          take: 3,
+          select: {
+            id: true,
+            query: true,
+            createdAt: true,
+            matter: { select: { title: true } },
+          },
         }),
       ])
     }
   } catch {
-    /* Database unavailable in local dev */
+    dataLayerAvailable = false
   }
+
+  const systemLayers: SystemLayer[] = [
+    { label: "Authentication layer", status: "operational" },
+    { label: "Data plane", status: dataLayerAvailable ? "operational" : "degraded" },
+    { label: "AI orchestration", status: process.env.OPENAI_API_KEY ? "operational" : "pending" },
+    { label: "Document index", status: indexedDocumentCount > 0 ? "operational" : "pending" },
+  ]
 
   return (
     <div className="space-y-8">
@@ -74,8 +126,8 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         {[
           { label: "Active matters", value: String(matterCount) },
-          { label: "Indexed documents", value: String(documentCount) },
-          { label: "Workspace", value: "Live" },
+          { label: "Retrieval-ready docs", value: String(indexedDocumentCount) },
+          { label: "Research sessions", value: String(researchSessionCount) },
         ].map((card) => (
           <div
             key={card.label}
@@ -98,7 +150,14 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             Recent matter activity
           </p>
-          {matterCount === 0 ? (
+          {!dataLayerAvailable ? (
+            <div className="mt-4 space-y-1">
+              <p className="font-serif text-base text-red-300/65">Data layer unavailable</p>
+              <p className="text-sm leading-relaxed text-white/32">
+                Connect Postgres to load matter activity.
+              </p>
+            </div>
+          ) : recentMatters.length === 0 ? (
             <div className="mt-4 space-y-1">
               <p className="font-serif text-base text-white/50">No active matters</p>
               <p className="text-sm leading-relaxed text-white/32">
@@ -107,9 +166,23 @@ export default async function DashboardPage() {
               </p>
             </div>
           ) : (
-            <p className="mt-2 font-serif text-xl text-white/85">
-              {matterCount} active {matterCount === 1 ? "matter" : "matters"}
-            </p>
+            <div className="mt-4 space-y-3">
+              {recentMatters.map((matter) => (
+                <Link
+                  key={matter.id}
+                  href={`/app/matters/${matter.id}`}
+                  className="block rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3 transition-colors hover:border-white/[0.08] hover:bg-white/[0.025]"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate font-serif text-sm text-white/72">{matter.title}</p>
+                    <span className="shrink-0 text-[10px] uppercase tracking-[0.12em] text-white/28">
+                      {matter.status.replace(/_/g, " ")}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-white/25">Updated {fmtShortDate(matter.updatedAt)}</p>
+                </Link>
+              ))}
+            </div>
           )}
         </div>
 
@@ -118,14 +191,39 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             AI research sessions
           </p>
-          <div className="mt-4 space-y-1">
-            <p className="font-serif text-base text-white/50">No sessions logged</p>
-            <p className="text-sm leading-relaxed text-white/32">
-              Sessions surface here as your team queries the research layer.
-              Authority tables, citation-grade excerpts, and retrieval traces are
-              preserved per matter.
-            </p>
-          </div>
+          {!dataLayerAvailable ? (
+            <div className="mt-4 space-y-1">
+              <p className="font-serif text-base text-red-300/65">Session history unavailable</p>
+              <p className="text-sm leading-relaxed text-white/32">
+                Research history appears after the data layer reconnects.
+              </p>
+            </div>
+          ) : recentResearchSessions.length === 0 ? (
+            <div className="mt-4 space-y-1">
+              <p className="font-serif text-base text-white/50">No sessions logged</p>
+              <p className="text-sm leading-relaxed text-white/32">
+                Sessions surface here as your team queries the research layer.
+                Authority tables, citation-grade excerpts, and retrieval traces are
+                preserved per matter.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {recentResearchSessions.map((session) => (
+                <div
+                  key={session.id}
+                  className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3"
+                >
+                  <p className="line-clamp-2 text-sm leading-relaxed text-white/62">
+                    {session.query}
+                  </p>
+                  <p className="mt-2 text-xs text-white/25">
+                    {session.matter.title} · {fmtShortDate(session.createdAt)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
