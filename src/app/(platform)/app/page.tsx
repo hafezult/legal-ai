@@ -4,17 +4,12 @@ import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
 
+type SystemLayerStatus = "operational" | "pending" | "degraded"
+
 type SystemLayer = {
   label: string
-  status: "operational" | "pending" | "degraded"
+  status: SystemLayerStatus
 }
-
-const systemLayers: SystemLayer[] = [
-  { label: "Authentication layer", status: "operational" },
-  { label: "Data plane", status: "pending" },
-  { label: "AI orchestration", status: "operational" },
-  { label: "Document index", status: "pending" },
-]
 
 const statusStyle: Record<SystemLayer["status"], string> = {
   operational: "bg-white/20 text-white/70",
@@ -24,7 +19,7 @@ const statusStyle: Record<SystemLayer["status"], string> = {
 
 const statusLabel: Record<SystemLayer["status"], string> = {
   operational: "Operational",
-  pending: "Pending connection",
+  pending: "Awaiting data",
   degraded: "Degraded",
 }
 
@@ -36,11 +31,13 @@ export default async function DashboardPage() {
 
   let matterCount = 0
   let documentCount = 0
+  let dataPlaneConnected = false
 
   try {
     const user = await prisma.user.findUnique({
       where: { clerkId: userId },
     })
+    dataPlaneConnected = true
 
     if (user) {
       ;[matterCount, documentCount] = await Promise.all([
@@ -53,6 +50,16 @@ export default async function DashboardPage() {
   } catch {
     /* Database unavailable in local dev */
   }
+
+  const systemLayers: SystemLayer[] = [
+    { label: "Authentication layer", status: "operational" },
+    { label: "Data plane", status: dataPlaneConnected ? "operational" : "degraded" },
+    {
+      label: "AI orchestration",
+      status: process.env.OPENAI_API_KEY ? "operational" : "pending",
+    },
+    { label: "Document index", status: documentCount > 0 ? "operational" : "pending" },
+  ]
 
   return (
     <div className="space-y-8">

@@ -38,7 +38,7 @@ async function openAIEmbed(
     .map((d) => d.embedding)
 }
 
-// ── Voyage AI (stub — add API key + implement when contracted) ────────────
+// ── Unsupported provider guards ────────────────────────────────────────────
 
 async function voyageEmbed(
   texts: string[],
@@ -46,7 +46,7 @@ async function voyageEmbed(
 ): Promise<number[][]> {
   void texts
   void model
-  throw new Error("Voyage AI provider not yet implemented.")
+  throw new Error("Voyage AI provider is not supported by this deployment.")
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
