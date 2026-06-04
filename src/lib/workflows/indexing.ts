@@ -119,6 +119,6 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   void extractAuthorities(parsed.text) // validated; used downstream in research
 
   await setStatus(documentId, "retrieval-ready", {
-    retrievalStatus: "ready",
+    retrievalStatus: "retrieval-ready",
   })
 }
