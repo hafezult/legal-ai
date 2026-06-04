@@ -7,14 +7,8 @@ export const dynamic = "force-dynamic"
 type SystemLayer = {
   label: string
   status: "operational" | "pending" | "degraded"
+  note: string
 }
-
-const systemLayers: SystemLayer[] = [
-  { label: "Authentication layer", status: "operational" },
-  { label: "Data plane", status: "pending" },
-  { label: "AI orchestration", status: "operational" },
-  { label: "Document index", status: "pending" },
-]
 
 const statusStyle: Record<SystemLayer["status"], string> = {
   operational: "bg-white/20 text-white/70",
@@ -36,6 +30,21 @@ export default async function DashboardPage() {
 
   let matterCount = 0
   let documentCount = 0
+  let indexedDocumentCount = 0
+  let researchSessionCount = 0
+  let dataPlaneAvailable = false
+  let recentMatter: {
+    id: string
+    title: string
+    clientName: string | null
+    updatedAt: Date
+  } | null = null
+  let recentSession: {
+    id: string
+    query: string
+    createdAt: Date
+    matter: { title: string }
+  } | null = null
 
   try {
     const user = await prisma.user.findUnique({
@@ -43,16 +52,76 @@ export default async function DashboardPage() {
     })
 
     if (user) {
-      ;[matterCount, documentCount] = await Promise.all([
-        prisma.matter.count({ where: { userId: user.id } }),
+      dataPlaneAvailable = true
+      ;[
+        matterCount,
+        documentCount,
+        indexedDocumentCount,
+        researchSessionCount,
+        recentMatter,
+        recentSession,
+      ] = await Promise.all([
+        prisma.matter.count({ where: { userId: user.id, status: { not: "archived" } } }),
         prisma.document.count({
           where: { matter: { userId: user.id } },
+        }),
+        prisma.document.count({
+          where: { matter: { userId: user.id }, retrievalStatus: "ready" },
+        }),
+        prisma.researchSession.count({ where: { userId: user.id } }),
+        prisma.matter.findFirst({
+          where: { userId: user.id },
+          orderBy: { updatedAt: "desc" },
+          select: {
+            id: true,
+            title: true,
+            clientName: true,
+            updatedAt: true,
+          },
+        }),
+        prisma.researchSession.findFirst({
+          where: { userId: user.id },
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            query: true,
+            createdAt: true,
+            matter: { select: { title: true } },
+          },
         }),
       ])
     }
   } catch {
     /* Database unavailable in local dev */
   }
+
+  const systemLayers: SystemLayer[] = [
+    {
+      label: "Authentication layer",
+      status: "operational",
+      note: "Clerk session active",
+    },
+    {
+      label: "Data plane",
+      status: dataPlaneAvailable ? "operational" : "degraded",
+      note: dataPlaneAvailable ? "Prisma connected" : "Database unavailable",
+    },
+    {
+      label: "AI orchestration",
+      status: process.env.OPENAI_API_KEY ? "operational" : "pending",
+      note: process.env.OPENAI_API_KEY ? "OpenAI configured" : "Awaiting OPENAI_API_KEY",
+    },
+    {
+      label: "Document index",
+      status: indexedDocumentCount > 0 ? "operational" : documentCount > 0 ? "pending" : "pending",
+      note:
+        indexedDocumentCount > 0
+          ? `${indexedDocumentCount} ready`
+          : documentCount > 0
+            ? "Indexing pending"
+            : "Awaiting sources",
+    },
+  ]
 
   return (
     <div className="space-y-8">
@@ -74,8 +143,8 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         {[
           { label: "Active matters", value: String(matterCount) },
-          { label: "Indexed documents", value: String(documentCount) },
-          { label: "Workspace", value: "Live" },
+          { label: "Indexed documents", value: String(indexedDocumentCount) },
+          { label: "Research sessions", value: String(researchSessionCount) },
         ].map((card) => (
           <div
             key={card.label}
@@ -107,9 +176,24 @@ export default async function DashboardPage() {
               </p>
             </div>
           ) : (
-            <p className="mt-2 font-serif text-xl text-white/85">
-              {matterCount} active {matterCount === 1 ? "matter" : "matters"}
-            </p>
+            <div className="mt-4 space-y-2">
+              <p className="font-serif text-xl text-white/85">
+                {matterCount} active {matterCount === 1 ? "matter" : "matters"}
+              </p>
+              {recentMatter && (
+                <div className="rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-white/28">
+                    Latest update
+                  </p>
+                  <p className="mt-1 truncate text-sm text-white/62">
+                    {recentMatter.title}
+                  </p>
+                  <p className="mt-0.5 text-xs text-white/28">
+                    {recentMatter.clientName ?? "No client recorded"}
+                  </p>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -118,14 +202,32 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             AI research sessions
           </p>
-          <div className="mt-4 space-y-1">
-            <p className="font-serif text-base text-white/50">No sessions logged</p>
-            <p className="text-sm leading-relaxed text-white/32">
-              Sessions surface here as your team queries the research layer.
-              Authority tables, citation-grade excerpts, and retrieval traces are
-              preserved per matter.
-            </p>
-          </div>
+          {researchSessionCount === 0 ? (
+            <div className="mt-4 space-y-1">
+              <p className="font-serif text-base text-white/50">No sessions logged</p>
+              <p className="text-sm leading-relaxed text-white/32">
+                Sessions surface here as your team queries the research layer.
+                Authority tables, citation-grade excerpts, and retrieval traces are
+                preserved per matter.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <p className="font-serif text-xl text-white/85">
+                {researchSessionCount} session{researchSessionCount !== 1 ? "s" : ""}
+              </p>
+              {recentSession && (
+                <div className="rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-white/28">
+                    Latest query · {recentSession.matter.title}
+                  </p>
+                  <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-white/62">
+                    {recentSession.query}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -141,11 +243,14 @@ export default async function DashboardPage() {
               className="flex items-center justify-between gap-3 rounded-lg border border-white/[0.06] bg-black/20 px-4 py-3"
             >
               <p className="text-[12px] text-white/55">{layer.label}</p>
-              <span
-                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${statusStyle[layer.status]}`}
-              >
-                {statusLabel[layer.status]}
-              </span>
+              <div className="text-right">
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${statusStyle[layer.status]}`}
+                >
+                  {statusLabel[layer.status]}
+                </span>
+                <p className="mt-1 text-[10px] text-white/25">{layer.note}</p>
+              </div>
             </div>
           ))}
         </div>
