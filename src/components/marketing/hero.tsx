@@ -19,17 +19,8 @@ const childFade = {
 export function Hero() {
   return (
     <section className="relative z-10 flex h-screen flex-col items-center justify-center overflow-hidden px-8 text-center">
-      {/* Background video */}
-      <video
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="metadata"
-        className="absolute inset-0 h-screen w-full object-cover brightness-[0.82] contrast-[1.02]"
-      >
-        <source src="/videos/hero.mp4" type="video/mp4" />
-      </video>
+      <div className="absolute inset-0 h-screen bg-[linear-gradient(135deg,#050505_0%,#111113_44%,#020202_100%)]" />
+      <div className="absolute inset-0 h-screen bg-[radial-gradient(circle_at_50%_22%,rgba(255,255,255,0.12),transparent_38%),radial-gradient(circle_at_18%_58%,rgba(148,163,184,0.12),transparent_34%),radial-gradient(circle_at_82%_62%,rgba(255,255,255,0.08),transparent_32%)]" />
 
       {/* Base grade + readability */}
       <div className="absolute inset-0 h-screen bg-black/[0.58]" />
