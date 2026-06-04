@@ -68,7 +68,7 @@ async function parsePdf(buffer: Buffer): Promise<ParseResult> {
     version?: string
   }>
 
-  const pdfModule = (await import("pdf-parse")) as { default?: PdfParse } & PdfParse
+  const pdfModule = (await import("pdf-parse")) as unknown as { default?: PdfParse } & PdfParse
   const pdfParse = pdfModule.default ?? pdfModule
   const result = await pdfParse(buffer, {
     // Disable default test-file loading
