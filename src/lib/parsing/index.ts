@@ -58,29 +58,26 @@ export function extractHeadings(text: string): string[] {
 
 async function parsePdf(buffer: Buffer): Promise<ParseResult> {
   // Dynamic import keeps pdf-parse server-side only
-  type PdfParse = (
-    input: Buffer,
-    options?: { max?: number }
-  ) => Promise<{
-    text: string
-    numpages?: number
-    info?: unknown
-    version?: string
-  }>
-  const pdfModule = await import("pdf-parse")
-  const pdfParse = (pdfModule.default ?? pdfModule) as unknown as PdfParse
-  const result = await pdfParse(buffer, {
-    // Disable default test-file loading
-    max: 0,
-  })
-  const text = normalizeText(result.text)
-  return {
-    text,
-    pageCount: result.numpages ?? Math.ceil(text.length / 3000),
-    confidence: text.length > 200 ? 0.9 : 0.5,
-    headings: extractHeadings(text),
-    metadata: { info: result.info ?? {}, version: result.version ?? "" },
-    mimeType: "application/pdf",
+  const { PDFParse } = await import("pdf-parse")
+  const parser = new PDFParse({ data: new Uint8Array(buffer) })
+
+  try {
+    const [textResult, infoResult] = await Promise.all([
+      parser.getText(),
+      parser.getInfo().catch(() => null),
+    ])
+    const text = normalizeText(textResult.text)
+
+    return {
+      text,
+      pageCount: textResult.total || Math.ceil(text.length / 3000),
+      confidence: text.length > 200 ? 0.9 : 0.5,
+      headings: extractHeadings(text),
+      metadata: { info: infoResult?.info ?? {}, fingerprints: infoResult?.fingerprints ?? [] },
+      mimeType: "application/pdf",
+    }
+  } finally {
+    await parser.destroy().catch(() => undefined)
   }
 }
 
