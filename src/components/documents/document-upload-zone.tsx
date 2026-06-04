@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useRef, useState, useTransition } from "react"
+import { useCallback, useEffect, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
 import { cn } from "@/lib/utils"
@@ -20,8 +20,10 @@ const ALLOWED = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "text/plain",
 ]
+const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt"]
 const FORMAT_LABEL = "PDF · DOCX · TXT"
 const MAX_BYTES = 50 * 1024 * 1024
+const REFRESH_DELAYS = [2500, 6000, 12000, 20000]
 
 function fmtBytes(n: number) {
   if (n < 1024) return `${n} B`
@@ -30,6 +32,14 @@ function fmtBytes(n: number) {
 }
 
 type Phase = "idle" | "selected" | "uploading" | "success" | "error"
+
+function hasAcceptedFormat(file: File) {
+  const lowerName = file.name.toLowerCase()
+  return (
+    ALLOWED.includes(file.type) ||
+    ALLOWED_EXTENSIONS.some((extension) => lowerName.endsWith(extension))
+  )
+}
 
 export function DocumentUploadZone({ uploadAction }: Props) {
   const router = useRouter()
@@ -40,9 +50,24 @@ export function DocumentUploadZone({ uploadAction }: Props) {
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  useEffect(() => {
+    if (phase !== "success") return
+
+    router.refresh()
+    const refreshTimers = REFRESH_DELAYS.map((delay) =>
+      window.setTimeout(() => router.refresh(), delay)
+    )
+    const resetTimer = window.setTimeout(() => setPhase("idle"), 4000)
+
+    return () => {
+      refreshTimers.forEach(window.clearTimeout)
+      window.clearTimeout(resetTimer)
+    }
+  }, [phase, router])
+
   const pick = useCallback((f: File) => {
     setError(null)
-    if (!ALLOWED.includes(f.type)) {
+    if (!hasAcceptedFormat(f)) {
       setError(`Unsupported format. Accepted: ${FORMAT_LABEL}.`)
       setPhase("error")
       return
@@ -97,11 +122,9 @@ export function DocumentUploadZone({ uploadAction }: Props) {
         setPhase("success")
         setFile(null)
         if (inputRef.current) inputRef.current.value = ""
-        router.refresh()
-        setTimeout(() => setPhase("idle"), 4000)
       }
     })
-  }, [file, uploadAction, router])
+  }, [file, uploadAction])
 
   if (phase === "success") {
     return (

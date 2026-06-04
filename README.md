@@ -1,36 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Aether
+
+Aether is a Next.js 14 legal AI workspace for matter-scoped document
+intelligence. The MVP flow is:
+
+1. Sign in with Clerk.
+2. Create a matter workspace.
+3. Upload PDF, DOCX, or TXT source documents.
+4. Parse, chunk, and embed matter documents with OpenAI + pgvector.
+5. Run grounded research against indexed matter sources.
+6. Inspect documents in a split-pane workstation with chunks, authorities, and
+   research traces.
 
 ## Getting Started
 
-First, run the development server:
+Install dependencies and copy the environment template:
+
+```bash
+npm install
+cp .env.example .env.local
+```
+
+Configure these services in `.env.local`:
+
+- PostgreSQL with the `vector` extension enabled (`DATABASE_URL`, `DIRECT_URL`)
+- Clerk (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`)
+- Supabase Storage (`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`)
+- OpenAI (`OPENAI_API_KEY`)
+- `INDEXING_SECRET` for protected manual indexing triggers outside local dev
+
+Then generate Prisma Client and sync the database schema:
+
+```bash
+npm run db:generate
+npm run db:push
+```
+
+Run the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Marketing pages render without signing in. Platform routes under `/app` require Clerk.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Validation
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Useful checks:
 
-## Learn More
+```bash
+npm run lint
+npm run build
+```
 
-To learn more about Next.js, take a look at the following resources:
+For build-only validation without real service credentials, provide syntactically
+valid dummy values for the required environment variables. Runtime upload,
+indexing, and research require live Postgres, Supabase, Clerk, and OpenAI
+credentials.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Storage and indexing notes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Uploaded sources are stored in the Supabase `legal-documents` bucket.
+- Upload actions trigger the indexing pipeline directly in the app process.
+- The `/api/index-document/[documentId]` route is retained for manual/internal
+  re-indexing and requires `INDEXING_SECRET` in production.
+- Documents become research-ready after parsing, chunk creation, and embedding
+  writes complete.
 
-## Deploy on Vercel
+## Project structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `src/app/(marketing)` — public marketing site
+- `src/app/(platform)/app` — authenticated matter, document, research, and
+  settings surfaces
+- `src/lib/workflows/indexing.ts` — document parsing/chunking/embedding pipeline
+- `src/lib/retrieval` — chunking and pgvector semantic search
+- `src/lib/legal/authorities.ts` — legal authority extraction helpers
+- `prisma/schema.prisma` — users, matters, documents, chunks, and sessions
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Drafting, workflow orchestration, and long-term firm memory are intentionally
+marked as planned navigation items beyond the current MVP.

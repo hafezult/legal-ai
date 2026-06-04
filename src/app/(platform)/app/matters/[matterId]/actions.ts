@@ -3,8 +3,10 @@
 import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
+import { ensureAppUser } from "@/lib/auth/ensure-user"
 import { prisma } from "@/lib/prisma"
 import { ensureBucket, removeFromStorage, uploadToStorage } from "@/lib/storage/documents"
+import { runIndexingPipeline } from "@/lib/workflows/indexing"
 
 export type DocumentUploadState = {
   error?: string
@@ -17,6 +19,12 @@ const ALLOWED_MIME: Record<string, true> = {
   "text/plain": true,
 }
 
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  txt: "text/plain",
+}
+
 const MAX_BYTES = 50 * 1024 * 1024 // 50 MB
 
 function sanitizeName(name: string): string {
@@ -25,6 +33,13 @@ function sanitizeName(name: string): string {
     .replace(/[^a-z0-9._-]/g, "_")
     .replace(/_+/g, "_")
     .slice(0, 120)
+}
+
+function inferMimeType(file: File): string | null {
+  if (ALLOWED_MIME[file.type]) return file.type
+
+  const ext = file.name.toLowerCase().split(".").pop()
+  return ext ? MIME_BY_EXTENSION[ext] ?? null : null
 }
 
 export async function uploadDocument(
@@ -38,7 +53,8 @@ export async function uploadDocument(
   const file = formData.get("file") as File | null
   if (!file || file.size === 0) return { error: "No file provided." }
 
-  if (!ALLOWED_MIME[file.type]) {
+  const mimeType = inferMimeType(file)
+  if (!mimeType) {
     return { error: "Unsupported format. Accepted: PDF, DOCX, TXT." }
   }
   if (file.size > MAX_BYTES) {
@@ -46,9 +62,8 @@ export async function uploadDocument(
   }
 
   // Validate matter ownership — no client-side trust
-  let userId: string
   try {
-    const user = await prisma.user.findUnique({ where: { clerkId } })
+    const user = await ensureAppUser()
     if (!user) return { error: "Session not found. Please sign in again." }
 
     const matter = await prisma.matter.findFirst({
@@ -56,8 +71,6 @@ export async function uploadDocument(
       select: { id: true },
     })
     if (!matter) return { error: "Matter not found or access denied." }
-
-    userId = user.id
   } catch {
     return { error: "Data layer unreachable. Please try again." }
   }
@@ -73,7 +86,7 @@ export async function uploadDocument(
   const storagePath = `${clerkId}/${matterId}/${Date.now()}-${sanitizeName(file.name)}`
   const buffer = Buffer.from(await file.arrayBuffer())
 
-  const { error: storageErr } = await uploadToStorage(storagePath, buffer, file.type)
+  const { error: storageErr } = await uploadToStorage(storagePath, buffer, mimeType)
   if (storageErr) {
     return { error: `Ingestion failed: ${storageErr.message}` }
   }
@@ -85,7 +98,7 @@ export async function uploadDocument(
         matterId,
         fileName: file.name,
         storagePath,
-        mimeType: file.type,
+        mimeType,
         fileSize: file.size,
         uploadStatus: "uploaded",
         indexingStatus: "pending",
@@ -98,15 +111,10 @@ export async function uploadDocument(
     return { error: "Document registration failed. Storage entry removed." }
   }
 
-  void userId // available for future audit log
-
-  // Fire-and-forget: trigger async indexing pipeline
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3001}`
-  void fetch(`${appUrl}/api/index-document/${documentId}`, {
-    method: "POST",
-    headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
-  }).catch(() => null)
+  // Fire-and-forget local pipeline keeps uploads responsive without relying on an app URL.
+  void runIndexingPipeline(documentId).catch((error) => {
+    console.error(`[indexing:${documentId}]`, error)
+  })
 
   revalidatePath(`/app/matters/${matterId}`)
   return { success: true }

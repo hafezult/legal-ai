@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
+import Link from "next/link"
 
 import { prisma } from "@/lib/prisma"
 
@@ -36,6 +37,13 @@ export default async function DashboardPage() {
 
   let matterCount = 0
   let documentCount = 0
+  let researchCount = 0
+  let recentSessions: {
+    id: string
+    query: string
+    createdAt: Date
+    matter: { title: string }
+  }[] = []
 
   try {
     const user = await prisma.user.findUnique({
@@ -43,10 +51,22 @@ export default async function DashboardPage() {
     })
 
     if (user) {
-      ;[matterCount, documentCount] = await Promise.all([
+      ;[matterCount, documentCount, researchCount, recentSessions] = await Promise.all([
         prisma.matter.count({ where: { userId: user.id } }),
         prisma.document.count({
           where: { matter: { userId: user.id } },
+        }),
+        prisma.researchSession.count({ where: { userId: user.id } }),
+        prisma.researchSession.findMany({
+          where: { userId: user.id },
+          orderBy: { createdAt: "desc" },
+          take: 3,
+          select: {
+            id: true,
+            query: true,
+            createdAt: true,
+            matter: { select: { title: true } },
+          },
         }),
       ])
     }
@@ -73,13 +93,14 @@ export default async function DashboardPage() {
       {/* Primary stat cards */}
       <div className="grid gap-4 sm:grid-cols-3">
         {[
-          { label: "Active matters", value: String(matterCount) },
-          { label: "Indexed documents", value: String(documentCount) },
-          { label: "Workspace", value: "Live" },
+          { label: "Active matters", value: String(matterCount), href: "/app/matters" },
+          { label: "Documents", value: String(documentCount), href: "/app/documents" },
+          { label: "Research sessions", value: String(researchCount), href: "/app/research" },
         ].map((card) => (
-          <div
+          <Link
             key={card.label}
-            className="rounded-[var(--aether-radius-panel)] border border-white/[0.08] bg-white/[0.03] px-5 py-4"
+            href={card.href}
+            className="rounded-[var(--aether-radius-panel)] border border-white/[0.08] bg-white/[0.03] px-5 py-4 transition-colors hover:border-white/[0.14] hover:bg-white/[0.05]"
           >
             <p className="text-[10px] uppercase tracking-[0.18em] text-white/38">
               {card.label}
@@ -87,7 +108,7 @@ export default async function DashboardPage() {
             <p className="mt-2 font-light text-3xl tabular-nums text-white/[0.92]">
               {card.value}
             </p>
-          </div>
+          </Link>
         ))}
       </div>
 
@@ -115,17 +136,40 @@ export default async function DashboardPage() {
 
         {/* AI research sessions */}
         <div className="rounded-[var(--aether-radius-card)] border border-white/[0.08] bg-black/30 p-6">
-          <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
-            AI research sessions
-          </p>
-          <div className="mt-4 space-y-1">
-            <p className="font-serif text-base text-white/50">No sessions logged</p>
-            <p className="text-sm leading-relaxed text-white/32">
-              Sessions surface here as your team queries the research layer.
-              Authority tables, citation-grade excerpts, and retrieval traces are
-              preserved per matter.
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
+              AI research sessions
             </p>
+            <Link
+              href="/app/research"
+              className="text-[11px] text-white/28 transition-colors hover:text-white/52"
+            >
+              Research →
+            </Link>
           </div>
+          {recentSessions.length === 0 ? (
+            <div className="mt-4 space-y-1">
+              <p className="font-serif text-base text-white/50">No sessions logged</p>
+              <p className="text-sm leading-relaxed text-white/32">
+                Sessions surface here as your team queries the research layer.
+                Authority tables, citation-grade excerpts, and retrieval traces are
+                preserved per matter.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {recentSessions.map((session) => (
+                <div key={session.id} className="rounded-lg border border-white/[0.05] bg-white/[0.01] px-4 py-3">
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-white/28">
+                    {session.matter.title}
+                  </p>
+                  <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-white/58">
+                    {session.query}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

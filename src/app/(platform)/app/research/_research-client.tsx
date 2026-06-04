@@ -51,9 +51,18 @@ function AuthorityRow({ label, items }: { label: string; items: string[] }) {
 
 type Matter = { id: string; title: string; _count: { documents: number } }
 
-export function ResearchClient({ matters }: { matters: Matter[] }) {
+export function ResearchClient({
+  matters,
+  initialMatterId,
+}: {
+  matters: Matter[]
+  initialMatterId?: string
+}) {
   const [isPending, startTransition] = useTransition()
-  const [selectedMatter, setSelectedMatter] = useState(matters[0]?.id ?? "")
+  const initialSelection = matters.some((matter) => matter.id === initialMatterId)
+    ? initialMatterId ?? ""
+    : matters[0]?.id ?? ""
+  const [selectedMatter, setSelectedMatter] = useState(initialSelection)
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<ResearchOutput | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)

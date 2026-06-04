@@ -5,7 +5,11 @@ import { ResearchClient } from "./_research-client"
 
 export const dynamic = "force-dynamic"
 
-export default async function ResearchPage() {
+export default async function ResearchPage({
+  searchParams,
+}: {
+  searchParams?: { matterId?: string }
+}) {
   const { userId: clerkId } = auth()
   if (!clerkId) return null
 
@@ -28,5 +32,5 @@ export default async function ResearchPage() {
     /* DB unavailable */
   }
 
-  return <ResearchClient matters={matters} />
+  return <ResearchClient matters={matters} initialMatterId={searchParams?.matterId} />
 }

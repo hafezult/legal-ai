@@ -2,6 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server"
 
+import { ensureAppUser } from "@/lib/auth/ensure-user"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
@@ -102,9 +103,10 @@ export async function runResearch(
   query: string
 ): Promise<ResearchOutput> {
   const { userId: clerkId } = auth()
+  const normalizedQuery = query.trim().slice(0, 4000)
 
   const emptyResult = (error: string): ResearchOutput => ({
-    query,
+    query: normalizedQuery,
     matterId,
     matterTitle: "",
     answer: "",
@@ -118,14 +120,14 @@ export async function runResearch(
   })
 
   if (!clerkId) return emptyResult("Authentication required.")
-  if (!query.trim()) return emptyResult("Research query cannot be empty.")
+  if (!normalizedQuery) return emptyResult("Research query cannot be empty.")
   if (!matterId) return emptyResult("No matter selected.")
 
   // Validate ownership
   let user: { id: string } | null = null
   let matter: { id: string; title: string } | null = null
   try {
-    user = await prisma.user.findUnique({ where: { clerkId } })
+    user = await ensureAppUser()
     if (!user) return emptyResult("User session not found.")
 
     matter = await prisma.matter.findFirst({
@@ -166,7 +168,7 @@ export async function runResearch(
   // Semantic retrieval
   let chunks: ResearchChunk[] = []
   try {
-    const raw = await semanticSearch(query, matterId, { topK: 6 })
+    const raw = await semanticSearch(normalizedQuery, matterId, { topK: 6 })
     chunks = raw.map((c) => ({
       id: c.id,
       content: c.content,
@@ -178,6 +180,17 @@ export async function runResearch(
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Retrieval failed."
     return { ...emptyResult(msg), matterTitle: matter.title, embeddingConfigured }
+  }
+
+  if (chunks.length === 0) {
+    return {
+      ...emptyResult(""),
+      matterTitle: matter.title,
+      answer:
+        "No relevant excerpts were retrieved for this query. Try rephrasing the request or confirm the matter documents have completed retrieval indexing.",
+      indexedChunks,
+      embeddingConfigured,
+    }
   }
 
   // Extract authorities from retrieved excerpts
@@ -193,7 +206,13 @@ export async function runResearch(
   }
 
   // Grounded LLM response
-  const answer = await generateGroundedResponse(query, chunks)
+  let answer: string
+  try {
+    answer = await generateGroundedResponse(normalizedQuery, chunks)
+  } catch {
+    answer =
+      "Retrieved excerpts are displayed above, but grounded AI analysis could not be generated. Verify the OpenAI configuration and retry."
+  }
 
   // Persist research session
   let sessionId = ""
@@ -202,7 +221,7 @@ export async function runResearch(
       data: {
         userId: user.id,
         matterId,
-        query,
+        query: normalizedQuery,
         response: answer,
         chunkIds: chunks.map((c) => c.id),
       },
@@ -213,7 +232,7 @@ export async function runResearch(
   }
 
   return {
-    query,
+    query: normalizedQuery,
     matterId,
     matterTitle: matter.title,
     answer,

@@ -18,14 +18,14 @@ import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 
 const items = [
-  { href: "/app", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/app/matters", label: "Matters", icon: Briefcase },
-  { href: "/app/research", label: "Research", icon: BookOpen },
-  { href: "/app/drafting", label: "Drafting", icon: FileEdit },
-  { href: "/app/documents", label: "Documents", icon: FolderOpen },
-  { href: "/app/workflows", label: "Workflows", icon: Workflow },
-  { href: "/app/memory", label: "Memory", icon: Brain },
-  { href: "/app/settings", label: "Settings", icon: Settings },
+  { href: "/app", label: "Dashboard", icon: LayoutDashboard, disabled: false },
+  { href: "/app/matters", label: "Matters", icon: Briefcase, disabled: false },
+  { href: "/app/research", label: "Research", icon: BookOpen, disabled: false },
+  { href: "/app/documents", label: "Documents", icon: FolderOpen, disabled: false },
+  { href: "/app/drafting", label: "Drafting", icon: FileEdit, disabled: true },
+  { href: "/app/workflows", label: "Workflows", icon: Workflow, disabled: true },
+  { href: "/app/memory", label: "Memory", icon: Brain, disabled: true },
+  { href: "/app/settings", label: "Settings", icon: Settings, disabled: false },
 ] as const
 
 type AppSidebarProps = {
@@ -87,11 +87,33 @@ export function AppSidebar({
       </div>
 
       <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
-        {items.map(({ href, label, icon: Icon }) => {
+        {items.map(({ href, label, icon: Icon, disabled }) => {
           const active =
             href === "/app"
               ? pathname === "/app"
               : pathname === href || pathname.startsWith(`${href}/`)
+
+          if (disabled) {
+            return (
+              <div
+                key={href}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg border border-transparent px-2.5 py-2 text-[13px] text-white/22",
+                  collapsed && "lg:justify-center lg:gap-0"
+                )}
+                title={collapsed ? `${label} · planned` : undefined}
+                aria-disabled="true"
+              >
+                <Icon className="size-4 shrink-0 opacity-60" strokeWidth={1.5} />
+                <span className={cn("flex min-w-0 flex-1 items-center justify-between gap-2", collapsed && "lg:hidden")}>
+                  <span className="truncate">{label}</span>
+                  <span className="rounded-full border border-white/[0.04] px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-white/20">
+                    Next
+                  </span>
+                </span>
+              </div>
+            )
+          }
 
           return (
             <Link
@@ -124,7 +146,7 @@ export function AppSidebar({
           Platform
         </p>
         <p className={cn("mt-1 text-[11px] leading-relaxed text-white/40", collapsed && "lg:hidden")}>
-          Phase 1 · operational shell
+          MVP · matter intelligence
         </p>
       </div>
     </aside>
