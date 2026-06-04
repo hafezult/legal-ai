@@ -19,8 +19,9 @@ export type RetrievalResult = {
 
 /** Vector similarity search against indexed matter documents. Phase 3 implementation pending. */
 export async function retrieveChunks(
-  _query: RetrievalQuery
+  query: RetrievalQuery
 ): Promise<RetrievalResult[]> {
+  void query
   return []
 }
 

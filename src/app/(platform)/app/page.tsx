@@ -64,7 +64,6 @@ export default async function DashboardPage() {
     return null
   }
 
-  let matterCount = 0
   let activeMatterCount = 0
   let documentCount = 0
   let readyDocumentCount = 0
@@ -81,7 +80,6 @@ export default async function DashboardPage() {
 
     if (user) {
       ;[
-        matterCount,
         activeMatterCount,
         documentCount,
         readyDocumentCount,
@@ -90,7 +88,6 @@ export default async function DashboardPage() {
         recentMatters,
         recentResearchSessions,
       ] = await Promise.all([
-        prisma.matter.count({ where: { userId: user.id } }),
         prisma.matter.count({ where: { userId: user.id, status: "active" } }),
         prisma.document.count({
           where: { matter: { userId: user.id } },
