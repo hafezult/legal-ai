@@ -20,11 +20,11 @@ export function Hero() {
   return (
     <section className="relative z-10 flex h-screen flex-col items-center justify-center overflow-hidden px-8 text-center">
       {/* Hero atmosphere */}
-      <div className="absolute inset-0 h-screen bg-[radial-gradient(ellipse_80%_55%_at_50%_18%,rgba(255,255,255,0.12),transparent_62%),linear-gradient(135deg,rgba(24,24,27,0.92),rgba(0,0,0,1)_62%)]" />
-      <div className="absolute inset-0 h-screen bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,0.035)_42%,transparent_70%)]" />
+      <div className="absolute inset-0 h-screen bg-[radial-gradient(ellipse_85%_58%_at_50%_18%,rgba(255,255,255,0.2)_0%,rgba(63,63,70,0.46)_34%,transparent_68%),radial-gradient(circle_at_18%_68%,rgba(148,163,184,0.16),transparent_32%),radial-gradient(circle_at_82%_58%,rgba(255,255,255,0.09),transparent_34%),linear-gradient(135deg,rgba(24,24,27,0.98),rgba(0,0,0,1)_68%)]" />
+      <div className="absolute inset-0 h-screen bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,0.07)_42%,transparent_70%)]" />
 
       {/* Base grade + readability */}
-      <div className="absolute inset-0 h-screen bg-black/[0.58]" />
+      <div className="absolute inset-0 h-screen bg-black/[0.34]" />
       <div className="absolute inset-0 h-screen bg-[radial-gradient(circle_at_50%_18%,rgba(255,255,255,0.06),transparent_52%)]" />
       <div
         className="absolute inset-0 h-screen opacity-95"
