@@ -13,6 +13,18 @@ export type ParseResult = {
 
 export type DocType = "pdf" | "docx" | "txt" | "unknown"
 
+type PdfParseResult = {
+  text: string
+  numpages?: number
+  info?: unknown
+  version?: string
+}
+
+type PdfParse = (
+  buffer: Buffer,
+  options?: { max?: number }
+) => Promise<PdfParseResult>
+
 // ── Utilities ─────────────────────────────────────────────────────────────
 
 export function detectDocumentType(mimeType: string, fileName: string): DocType {
@@ -58,9 +70,10 @@ export function extractHeadings(text: string): string[] {
 
 async function parsePdf(buffer: Buffer): Promise<ParseResult> {
   // Dynamic import keeps pdf-parse server-side only
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pdfModule = await import("pdf-parse") as any
-  const pdfParse = pdfModule.default ?? pdfModule
+  const pdfModule = (await import("pdf-parse")) as unknown as {
+    default?: PdfParse
+  } & PdfParse
+  const pdfParse: PdfParse = pdfModule.default ?? pdfModule
   const result = await pdfParse(buffer, {
     // Disable default test-file loading
     max: 0,
