@@ -19,9 +19,5 @@ export default clerkMiddleware((auth, req) => {
 })
 
 export const config = {
-  matcher: [
-    "/((?!.+\\.[\\w]+$|_next).*)",
-    "/",
-    "/(api|trpc)(.*)",
-  ],
+  matcher: ["/app/:path*", "/sign-in/:path*", "/sign-up/:path*"],
 }
