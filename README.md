@@ -1,36 +1,68 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Aether
 
-## Getting Started
+Aether is a Next.js legal intelligence workspace for matter-scoped document
+ingestion, indexing, and grounded research. The Phase 1 product includes:
 
-First, run the development server:
+- Clerk-protected platform routes under `/app`
+- Matter creation, registry, and detail workspaces
+- Supabase-backed PDF, DOCX, and TXT uploads
+- Prisma/Postgres with pgvector document chunks
+- OpenAI embeddings and grounded research responses
+- Persisted research sessions surfaced on dashboards
+
+## Prerequisites
+
+- Node.js 20+
+- PostgreSQL with the `vector` extension available
+- Clerk application keys
+- Supabase project with service-role storage access
+- OpenAI API key for embeddings and AI answers
+
+## Environment
+
+Copy the example environment and fill in the service credentials:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`NEXT_PUBLIC_APP_URL` is optional in local development and defaults to
+`http://localhost:3000`. Set `INDEXING_SECRET` in shared environments so only
+internal requests can trigger document indexing.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Database
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Generate the Prisma client and apply migrations:
 
-## Learn More
+```bash
+npm run db:generate
+npm run db:migrate
+```
 
-To learn more about Next.js, take a look at the following resources:
+The initial migration creates the pgvector extension, application tables, and
+document chunk indexes used by semantic retrieval.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Development
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Install dependencies and start the app:
 
-## Deploy on Vercel
+```bash
+npm install
+npm run dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Open http://localhost:3000. Authenticated users can create matters, upload
+documents, wait for indexing to complete, and run grounded research from the
+Research workspace.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Validation
+
+Run the core checks before shipping changes:
+
+```bash
+npm run lint
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/DATABASE?schema=public" \
+DIRECT_URL="postgresql://USER:PASSWORD@HOST:5432/DATABASE?schema=public" \
+npx prisma validate
+npm run build
+```

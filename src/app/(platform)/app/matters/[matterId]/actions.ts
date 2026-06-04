@@ -27,6 +27,47 @@ function sanitizeName(name: string): string {
     .slice(0, 120)
 }
 
+function appUrl() {
+  const configured = process.env.NEXT_PUBLIC_APP_URL
+  if (configured) return configured.replace(/\/$/, "")
+
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`
+  }
+
+  return `http://localhost:${process.env.PORT ?? 3000}`
+}
+
+async function markIndexingTriggerFailed(documentId: string) {
+  await prisma.document.update({
+    where: { id: documentId },
+    data: {
+      indexingStatus: "failed",
+      retrievalStatus: "failed",
+    },
+  })
+}
+
+async function triggerIndexing(documentId: string) {
+  try {
+    const response = await fetch(`${appUrl()}/api/index-document/${documentId}`, {
+      method: "POST",
+      headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
+    })
+
+    if (!response.ok) {
+      await markIndexingTriggerFailed(documentId)
+      const body = await response.text().catch(() => "")
+      console.error(
+        `[indexing] trigger failed for ${documentId}: ${response.status} ${body}`
+      )
+    }
+  } catch (error) {
+    await markIndexingTriggerFailed(documentId).catch(() => null)
+    console.error(`[indexing] trigger failed for ${documentId}:`, error)
+  }
+}
+
 export async function uploadDocument(
   matterId: string,
   _prev: DocumentUploadState,
@@ -101,12 +142,7 @@ export async function uploadDocument(
   void userId // available for future audit log
 
   // Fire-and-forget: trigger async indexing pipeline
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3001}`
-  void fetch(`${appUrl}/api/index-document/${documentId}`, {
-    method: "POST",
-    headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
-  }).catch(() => null)
+  void triggerIndexing(documentId)
 
   revalidatePath(`/app/matters/${matterId}`)
   return { success: true }

@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
+import Link from "next/link"
 
 import { prisma } from "@/lib/prisma"
 
@@ -28,25 +29,59 @@ const statusLabel: Record<SystemLayer["status"], string> = {
   degraded: "Degraded",
 }
 
+function formatSessionDate(date: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
 export default async function DashboardPage() {
   const { userId } = auth()
   if (!userId) {
     return null
   }
 
+  type RecentSession = {
+    id: string
+    query: string
+    createdAt: Date
+    matter: { id: string; title: string }
+  }
+
   let matterCount = 0
-  let documentCount = 0
+  let indexedDocumentCount = 0
+  let researchSessionCount = 0
+  let recentSessions: RecentSession[] = []
 
   try {
     const user = await prisma.user.findUnique({
       where: { clerkId: userId },
+      select: { id: true },
     })
 
     if (user) {
-      ;[matterCount, documentCount] = await Promise.all([
+      ;[matterCount, indexedDocumentCount, researchSessionCount, recentSessions] = await Promise.all([
         prisma.matter.count({ where: { userId: user.id } }),
         prisma.document.count({
-          where: { matter: { userId: user.id } },
+          where: {
+            matter: { userId: user.id },
+            indexingStatus: { in: ["indexed", "retrieval-ready"] },
+          },
+        }),
+        prisma.researchSession.count({ where: { userId: user.id } }),
+        prisma.researchSession.findMany({
+          where: { userId: user.id },
+          orderBy: { createdAt: "desc" },
+          take: 3,
+          select: {
+            id: true,
+            query: true,
+            createdAt: true,
+            matter: { select: { id: true, title: true } },
+          },
         }),
       ])
     }
@@ -74,8 +109,8 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         {[
           { label: "Active matters", value: String(matterCount) },
-          { label: "Indexed documents", value: String(documentCount) },
-          { label: "Workspace", value: "Live" },
+          { label: "Indexed documents", value: String(indexedDocumentCount) },
+          { label: "Research sessions", value: String(researchSessionCount) },
         ].map((card) => (
           <div
             key={card.label}
@@ -118,14 +153,33 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             AI research sessions
           </p>
-          <div className="mt-4 space-y-1">
-            <p className="font-serif text-base text-white/50">No sessions logged</p>
-            <p className="text-sm leading-relaxed text-white/32">
-              Sessions surface here as your team queries the research layer.
-              Authority tables, citation-grade excerpts, and retrieval traces are
-              preserved per matter.
-            </p>
-          </div>
+          {recentSessions.length === 0 ? (
+            <div className="mt-4 space-y-1">
+              <p className="font-serif text-base text-white/50">No sessions logged</p>
+              <p className="text-sm leading-relaxed text-white/32">
+                Sessions surface here as your team queries the research layer.
+                Authority tables, citation-grade excerpts, and retrieval traces are
+                preserved per matter.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {recentSessions.map((session) => (
+                <Link
+                  key={session.id}
+                  href={`/app/research?matter=${session.matter.id}`}
+                  className="block rounded-lg border border-white/[0.05] bg-white/[0.015] px-3.5 py-3 transition-colors hover:border-white/[0.1] hover:bg-white/[0.03]"
+                >
+                  <p className="line-clamp-2 text-sm leading-relaxed text-white/68">
+                    {session.query}
+                  </p>
+                  <p className="mt-1.5 text-[11px] text-white/28">
+                    {session.matter.title} · {formatSessionDate(session.createdAt)}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
