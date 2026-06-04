@@ -58,9 +58,17 @@ export function extractHeadings(text: string): string[] {
 
 async function parsePdf(buffer: Buffer): Promise<ParseResult> {
   // Dynamic import keeps pdf-parse server-side only
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pdfModule = await import("pdf-parse") as any
-  const pdfParse = pdfModule.default ?? pdfModule
+  type PdfParse = (
+    input: Buffer,
+    options?: { max?: number }
+  ) => Promise<{
+    text: string
+    numpages?: number
+    info?: unknown
+    version?: string
+  }>
+  const pdfModule = await import("pdf-parse")
+  const pdfParse = (pdfModule.default ?? pdfModule) as unknown as PdfParse
   const result = await pdfParse(buffer, {
     // Disable default test-file loading
     max: 0,
