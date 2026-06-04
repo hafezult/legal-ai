@@ -120,7 +120,12 @@ export default async function MatterDetailPage({
     createdAt: Date
     updatedAt: Date
     documents: Doc[]
-    _count: { documents: number; conversations: number }
+    researchSessions: {
+      id: string
+      query: string
+      createdAt: Date
+    }[]
+    _count: { documents: number; researchSessions: number }
   }
 
   let matter: MatterData | null = null
@@ -155,7 +160,16 @@ export default async function MatterDetailPage({
               uploadedAt: true,
             },
           },
-          _count: { select: { documents: true, conversations: true } },
+          researchSessions: {
+            orderBy: { createdAt: "desc" },
+            take: 3,
+            select: {
+              id: true,
+              query: true,
+              createdAt: true,
+            },
+          },
+          _count: { select: { documents: true, researchSessions: true } },
         },
       })
     }
@@ -169,13 +183,17 @@ export default async function MatterDetailPage({
   const boundUpload = uploadDocument.bind(null, matter.id)
 
   const hasDocuments = matter.documents.length > 0
+  const retrievalReadyDocuments = matter.documents.filter(
+    (doc) => doc.retrievalStatus === "ready"
+  ).length
+  const hasResearchSessions = matter._count.researchSessions > 0
 
   const timelineEvents = [
     { label: "Matter initialized",     note: fmtDate(matter.createdAt),       state: "complete"   as const },
     { label: "Workspace provisioned",  note: fmtDate(matter.createdAt),       state: "complete"   as const },
-    { label: "Source ingestion",       note: hasDocuments ? `${matter._count.documents} document${matter._count.documents !== 1 ? "s" : ""} indexed` : "Awaiting first document", state: hasDocuments ? "complete" as const : "pending" as const },
-    { label: "Retrieval layer",        note: "Pending index completion",        state: "pending"    as const },
-    { label: "Authority analysis",     note: "Awaiting retrieval layer",        state: "pending"    as const },
+    { label: "Source ingestion",       note: hasDocuments ? `${matter._count.documents} document${matter._count.documents !== 1 ? "s" : ""} ingested` : "Awaiting first document", state: hasDocuments ? "complete" as const : "pending" as const },
+    { label: "Retrieval layer",        note: retrievalReadyDocuments > 0 ? `${retrievalReadyDocuments} source${retrievalReadyDocuments !== 1 ? "s" : ""} ready` : "Pending index completion", state: retrievalReadyDocuments > 0 ? "complete" as const : "pending" as const },
+    { label: "Authority analysis",     note: hasResearchSessions ? `${matter._count.researchSessions} research session${matter._count.researchSessions !== 1 ? "s" : ""} logged` : "Awaiting research query", state: hasResearchSessions ? "complete" as const : "pending" as const },
   ]
 
   return (
@@ -330,22 +348,42 @@ export default async function MatterDetailPage({
               AI research operations
             </p>
             <span className="rounded-full border border-white/[0.06] px-2.5 py-0.5 text-[10px] text-white/22">
-              Layer standing by
+              {hasResearchSessions ? "Active" : "Layer standing by"}
             </span>
           </div>
-          <p className="mt-4 font-serif text-[14px] text-white/42">
-            No active research sessions
-          </p>
-          <p className="mt-1.5 text-xs leading-relaxed text-white/25">
-            Citation-grade outputs initialize here after research queries are submitted
-            within this matter context.
-          </p>
+          {hasResearchSessions ? (
+            <div className="mt-4 space-y-3">
+              {matter.researchSessions.map((session) => (
+                <div
+                  key={session.id}
+                  className="rounded-lg border border-white/[0.05] bg-white/[0.015] px-3.5 py-3"
+                >
+                  <p className="line-clamp-2 text-sm leading-relaxed text-white/62">
+                    {session.query}
+                  </p>
+                  <p className="mt-1 text-xs text-white/25">
+                    {fmtShortDate(session.createdAt)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <>
+              <p className="mt-4 font-serif text-[14px] text-white/42">
+                No active research sessions
+              </p>
+              <p className="mt-1.5 text-xs leading-relaxed text-white/25">
+                Citation-grade outputs initialize here after research queries are submitted
+                within this matter context.
+              </p>
+            </>
+          )}
           <div className="mt-5 space-y-2">
             {[
-              { label: "Authority chains",     note: "No chains indexed. Populate after source ingestion." },
-              { label: "Retrieval trace",       note: "No active sessions. Outputs surface after queries." },
-              { label: "Grounded excerpts",     note: "Available after document index is established." },
-              { label: "Jurisdiction analysis", note: "Activates with retrieval pipeline." },
+              { label: "Authority chains",     note: hasResearchSessions ? "Detected authorities are preserved with research outputs." : "Populate after source ingestion and research." },
+              { label: "Retrieval trace",       note: hasResearchSessions ? "Recent queries are logged above for this matter." : "No active sessions. Outputs surface after queries." },
+              { label: "Grounded excerpts",     note: retrievalReadyDocuments > 0 ? "Available through the research workspace." : "Available after document index is established." },
+              { label: "Jurisdiction analysis", note: retrievalReadyDocuments > 0 ? "Ready for matter-scoped research prompts." : "Activates with retrieval pipeline." },
             ].map((r) => (
               <div key={r.label} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3">
                 <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">{r.label}</p>
@@ -373,9 +411,9 @@ export default async function MatterDetailPage({
               { label: "Clause extraction",    status: hasDocuments ? "pending" : "awaiting" },
               { label: "Citation analysis",    status: "awaiting" },
               { label: "Authority linking",    status: "awaiting" },
-              { label: "Semantic retrieval",   status: "awaiting" },
-              { label: "Reasoning traces",     status: "awaiting" },
-              { label: "Research sessions",    status: matter._count.conversations > 0 ? "active" : "pending" },
+              { label: "Semantic retrieval",   status: retrievalReadyDocuments > 0 ? "active" : "awaiting" },
+              { label: "Reasoning traces",     status: hasResearchSessions ? "active" : "awaiting" },
+              { label: "Research sessions",    status: hasResearchSessions ? "active" : "pending" },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between border-t border-white/[0.04] py-2.5 first:border-t-0">
                 <p className="text-xs text-white/38">{item.label}</p>

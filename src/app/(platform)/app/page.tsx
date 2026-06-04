@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 
 import { prisma } from "@/lib/prisma"
+import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
 
 export const dynamic = "force-dynamic"
 
@@ -8,13 +9,6 @@ type SystemLayer = {
   label: string
   status: "operational" | "pending" | "degraded"
 }
-
-const systemLayers: SystemLayer[] = [
-  { label: "Authentication layer", status: "operational" },
-  { label: "Data plane", status: "pending" },
-  { label: "AI orchestration", status: "operational" },
-  { label: "Document index", status: "pending" },
-]
 
 const statusStyle: Record<SystemLayer["status"], string> = {
   operational: "bg-white/20 text-white/70",
@@ -35,24 +29,100 @@ export default async function DashboardPage() {
   }
 
   let matterCount = 0
-  let documentCount = 0
+  let indexedDocumentCount = 0
+  let researchSessionCount = 0
+  let indexedChunkCount = 0
+  let dataPlaneReachable = false
+  let recentMatters: {
+    id: string
+    title: string
+    updatedAt: Date
+    _count: { documents: number; researchSessions: number }
+  }[] = []
+  let recentResearchSessions: {
+    id: string
+    query: string
+    createdAt: Date
+    matter: { title: string }
+  }[] = []
 
   try {
     const user = await prisma.user.findUnique({
       where: { clerkId: userId },
     })
 
+    dataPlaneReachable = true
     if (user) {
-      ;[matterCount, documentCount] = await Promise.all([
+      const [
+        nextMatterCount,
+        nextIndexedDocumentCount,
+        nextResearchSessionCount,
+        indexedChunkRows,
+        nextRecentMatters,
+        nextRecentResearchSessions,
+      ] = await Promise.all([
         prisma.matter.count({ where: { userId: user.id } }),
         prisma.document.count({
-          where: { matter: { userId: user.id } },
+          where: {
+            matter: { userId: user.id },
+            retrievalStatus: "ready",
+          },
+        }),
+        prisma.researchSession.count({ where: { userId: user.id } }),
+        prisma.$queryRaw<[{ count: bigint }]>`
+          SELECT COUNT(*) AS count
+          FROM "DocumentChunk" dc
+          JOIN "Matter" m ON m.id = dc."matterId"
+          WHERE m."userId" = ${user.id}
+            AND dc.embedding IS NOT NULL
+        `,
+        prisma.matter.findMany({
+          where: { userId: user.id },
+          orderBy: { updatedAt: "desc" },
+          take: 3,
+          select: {
+            id: true,
+            title: true,
+            updatedAt: true,
+            _count: { select: { documents: true, researchSessions: true } },
+          },
+        }),
+        prisma.researchSession.findMany({
+          where: { userId: user.id },
+          orderBy: { createdAt: "desc" },
+          take: 3,
+          select: {
+            id: true,
+            query: true,
+            createdAt: true,
+            matter: { select: { title: true } },
+          },
         }),
       ])
+      matterCount = nextMatterCount
+      indexedDocumentCount = nextIndexedDocumentCount
+      researchSessionCount = nextResearchSessionCount
+      indexedChunkCount = Number(indexedChunkRows[0]?.count ?? 0)
+      recentMatters = nextRecentMatters
+      recentResearchSessions = nextRecentResearchSessions
     }
   } catch {
     /* Database unavailable in local dev */
   }
+
+  const embeddingConfigured = isEmbeddingConfigured()
+  const systemLayers: SystemLayer[] = [
+    { label: "Authentication layer", status: "operational" },
+    { label: "Data plane", status: dataPlaneReachable ? "operational" : "degraded" },
+    {
+      label: "AI orchestration",
+      status: embeddingConfigured ? "operational" : "pending",
+    },
+    {
+      label: "Document index",
+      status: indexedChunkCount > 0 ? "operational" : "pending",
+    },
+  ]
 
   return (
     <div className="space-y-8">
@@ -74,8 +144,8 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         {[
           { label: "Active matters", value: String(matterCount) },
-          { label: "Indexed documents", value: String(documentCount) },
-          { label: "Workspace", value: "Live" },
+          { label: "Ready documents", value: String(indexedDocumentCount) },
+          { label: "Research sessions", value: String(researchSessionCount) },
         ].map((card) => (
           <div
             key={card.label}
@@ -98,7 +168,7 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             Recent matter activity
           </p>
-          {matterCount === 0 ? (
+          {recentMatters.length === 0 ? (
             <div className="mt-4 space-y-1">
               <p className="font-serif text-base text-white/50">No active matters</p>
               <p className="text-sm leading-relaxed text-white/32">
@@ -107,9 +177,25 @@ export default async function DashboardPage() {
               </p>
             </div>
           ) : (
-            <p className="mt-2 font-serif text-xl text-white/85">
-              {matterCount} active {matterCount === 1 ? "matter" : "matters"}
-            </p>
+            <div className="mt-4 space-y-3">
+              {recentMatters.map((matter) => (
+                <div
+                  key={matter.id}
+                  className="rounded-lg border border-white/[0.05] bg-white/[0.015] px-3.5 py-3"
+                >
+                  <p className="truncate font-serif text-sm text-white/70">{matter.title}</p>
+                  <p className="mt-1 text-xs text-white/30">
+                    {matter._count.documents} document{matter._count.documents !== 1 ? "s" : ""} ·{" "}
+                    {matter._count.researchSessions} research session
+                    {matter._count.researchSessions !== 1 ? "s" : ""} · updated{" "}
+                    {new Intl.DateTimeFormat("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    }).format(matter.updatedAt)}
+                  </p>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
@@ -118,14 +204,38 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             AI research sessions
           </p>
-          <div className="mt-4 space-y-1">
-            <p className="font-serif text-base text-white/50">No sessions logged</p>
-            <p className="text-sm leading-relaxed text-white/32">
-              Sessions surface here as your team queries the research layer.
-              Authority tables, citation-grade excerpts, and retrieval traces are
-              preserved per matter.
-            </p>
-          </div>
+          {recentResearchSessions.length === 0 ? (
+            <div className="mt-4 space-y-1">
+              <p className="font-serif text-base text-white/50">No sessions logged</p>
+              <p className="text-sm leading-relaxed text-white/32">
+                Sessions surface here as your team queries the research layer.
+                Authority tables, citation-grade excerpts, and retrieval traces are
+                preserved per matter.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {recentResearchSessions.map((session) => (
+                <div
+                  key={session.id}
+                  className="rounded-lg border border-white/[0.05] bg-white/[0.015] px-3.5 py-3"
+                >
+                  <p className="line-clamp-2 text-sm leading-relaxed text-white/68">
+                    {session.query}
+                  </p>
+                  <p className="mt-1 text-xs text-white/28">
+                    {session.matter.title} ·{" "}
+                    {new Intl.DateTimeFormat("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    }).format(session.createdAt)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

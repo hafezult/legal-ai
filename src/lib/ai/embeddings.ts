@@ -1,4 +1,4 @@
-// Embedding layer — provider-abstracted for OpenAI, Voyage AI, Cohere, local models
+// Embedding layer — provider-abstracted for OpenAI with explicit unsupported-provider errors.
 
 export type EmbeddingProvider = "openai" | "voyage" | "cohere"
 
@@ -38,13 +38,12 @@ async function openAIEmbed(
     .map((d) => d.embedding)
 }
 
-// ── Voyage AI (stub — add API key + implement when contracted) ────────────
+// ── Unsupported providers ─────────────────────────────────────────────────
 
-async function voyageEmbed(
-  _texts: string[],
-  _model: string
-): Promise<number[][]> {
-  throw new Error("Voyage AI provider not yet implemented.")
+function unsupportedProvider(provider: Exclude<EmbeddingProvider, "openai">): never {
+  throw new Error(
+    `${provider} embeddings are not configured in this build. Use the default OpenAI provider.`
+  )
 }
 
 // ── Public API ────────────────────────────────────────────────────────────
@@ -75,10 +74,8 @@ export async function generateBatchEmbeddings(
         batchResult = await openAIEmbed(batch, cfg.model)
         break
       case "voyage":
-        batchResult = await voyageEmbed(batch, cfg.model)
-        break
-      default:
-        throw new Error(`Unknown embedding provider: ${cfg.provider}`)
+      case "cohere":
+        unsupportedProvider(cfg.provider)
     }
 
     results.push(...batchResult)

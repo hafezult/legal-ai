@@ -102,7 +102,7 @@ export async function uploadDocument(
 
   // Fire-and-forget: trigger async indexing pipeline
   const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3001}`
+    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3000}`
   void fetch(`${appUrl}/api/index-document/${documentId}`, {
     method: "POST",
     headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },

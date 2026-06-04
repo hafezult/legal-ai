@@ -124,7 +124,7 @@ export function AppSidebar({
           Platform
         </p>
         <p className={cn("mt-1 text-[11px] leading-relaxed text-white/40", collapsed && "lg:hidden")}>
-          Phase 1 · operational shell
+          Phase 1 · operational workspace
         </p>
       </div>
     </aside>
