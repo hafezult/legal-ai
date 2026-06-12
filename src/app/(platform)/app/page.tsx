@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
+import Link from "next/link"
 
 import { prisma } from "@/lib/prisma"
 
@@ -28,6 +29,15 @@ const statusLabel: Record<SystemLayer["status"], string> = {
   degraded: "Degraded",
 }
 
+function formatShortDate(date: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
 export default async function DashboardPage() {
   const { userId } = auth()
   if (!userId) {
@@ -35,7 +45,20 @@ export default async function DashboardPage() {
   }
 
   let matterCount = 0
-  let documentCount = 0
+  let indexedDocumentCount = 0
+  let totalDocumentCount = 0
+  let recentMatters: {
+    id: string
+    title: string
+    status: string
+    updatedAt: Date
+  }[] = []
+  let recentSessions: {
+    id: string
+    query: string
+    createdAt: Date
+    matter: { id: string; title: string }
+  }[] = []
 
   try {
     const user = await prisma.user.findUnique({
@@ -43,10 +66,36 @@ export default async function DashboardPage() {
     })
 
     if (user) {
-      ;[matterCount, documentCount] = await Promise.all([
+      ;[
+        matterCount,
+        indexedDocumentCount,
+        totalDocumentCount,
+        recentMatters,
+        recentSessions,
+      ] = await Promise.all([
         prisma.matter.count({ where: { userId: user.id } }),
         prisma.document.count({
+          where: { matter: { userId: user.id }, retrievalStatus: "ready" },
+        }),
+        prisma.document.count({
           where: { matter: { userId: user.id } },
+        }),
+        prisma.matter.findMany({
+          where: { userId: user.id },
+          orderBy: { updatedAt: "desc" },
+          take: 3,
+          select: { id: true, title: true, status: true, updatedAt: true },
+        }),
+        prisma.researchSession.findMany({
+          where: { userId: user.id },
+          orderBy: { createdAt: "desc" },
+          take: 3,
+          select: {
+            id: true,
+            query: true,
+            createdAt: true,
+            matter: { select: { id: true, title: true } },
+          },
         }),
       ])
     }
@@ -74,7 +123,13 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         {[
           { label: "Active matters", value: String(matterCount) },
-          { label: "Indexed documents", value: String(documentCount) },
+          {
+            label: "Retrieval-ready docs",
+            value:
+              totalDocumentCount > 0
+                ? `${indexedDocumentCount}/${totalDocumentCount}`
+                : "0",
+          },
           { label: "Workspace", value: "Live" },
         ].map((card) => (
           <div
@@ -98,7 +153,7 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             Recent matter activity
           </p>
-          {matterCount === 0 ? (
+          {recentMatters.length === 0 ? (
             <div className="mt-4 space-y-1">
               <p className="font-serif text-base text-white/50">No active matters</p>
               <p className="text-sm leading-relaxed text-white/32">
@@ -107,9 +162,27 @@ export default async function DashboardPage() {
               </p>
             </div>
           ) : (
-            <p className="mt-2 font-serif text-xl text-white/85">
-              {matterCount} active {matterCount === 1 ? "matter" : "matters"}
-            </p>
+            <div className="mt-4 space-y-2">
+              {recentMatters.map((matter) => (
+                <Link
+                  key={matter.id}
+                  href={`/app/matters/${matter.id}`}
+                  className="block rounded-lg border border-white/[0.05] bg-white/[0.015] px-3.5 py-3 transition-colors hover:bg-white/[0.03]"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate font-serif text-sm text-white/72">
+                      {matter.title}
+                    </p>
+                    <span className="shrink-0 text-[10px] uppercase tracking-[0.1em] text-white/28">
+                      {matter.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-white/25">
+                    Updated {formatShortDate(matter.updatedAt)}
+                  </p>
+                </Link>
+              ))}
+            </div>
           )}
         </div>
 
@@ -118,14 +191,38 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             AI research sessions
           </p>
-          <div className="mt-4 space-y-1">
-            <p className="font-serif text-base text-white/50">No sessions logged</p>
-            <p className="text-sm leading-relaxed text-white/32">
-              Sessions surface here as your team queries the research layer.
-              Authority tables, citation-grade excerpts, and retrieval traces are
-              preserved per matter.
-            </p>
-          </div>
+          {recentSessions.length === 0 ? (
+            <div className="mt-4 space-y-1">
+              <p className="font-serif text-base text-white/50">No sessions logged</p>
+              <p className="text-sm leading-relaxed text-white/32">
+                Sessions surface here as your team queries the research layer.
+                Authority tables, citation-grade excerpts, and retrieval traces are
+                preserved per matter.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-2">
+              {recentSessions.map((session) => (
+                <Link
+                  key={session.id}
+                  href="/app/research"
+                  className="block rounded-lg border border-white/[0.05] bg-white/[0.015] px-3.5 py-3 transition-colors hover:bg-white/[0.03]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="line-clamp-2 text-sm leading-relaxed text-white/62">
+                      {session.query}
+                    </p>
+                    <span className="shrink-0 text-[10px] text-white/24">
+                      {formatShortDate(session.createdAt)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-white/28">
+                    {session.matter.title}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

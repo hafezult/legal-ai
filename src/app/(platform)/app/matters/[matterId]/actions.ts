@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache"
 
 import { prisma } from "@/lib/prisma"
 import { ensureBucket, removeFromStorage, uploadToStorage } from "@/lib/storage/documents"
+import { queueDocumentIndexing } from "@/lib/workflows/trigger-indexing"
 
 export type DocumentUploadState = {
   error?: string
@@ -100,14 +101,44 @@ export async function uploadDocument(
 
   void userId // available for future audit log
 
-  // Fire-and-forget: trigger async indexing pipeline
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3001}`
-  void fetch(`${appUrl}/api/index-document/${documentId}`, {
-    method: "POST",
-    headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
-  }).catch(() => null)
+  // Fire-and-forget: trigger async indexing pipeline.
+  queueDocumentIndexing(documentId)
 
   revalidatePath(`/app/matters/${matterId}`)
   return { success: true }
+}
+
+export async function retryDocumentIndexing(matterId: string, documentId: string) {
+  const { userId: clerkId } = auth()
+  if (!clerkId) return
+
+  try {
+    const user = await prisma.user.findUnique({ where: { clerkId } })
+    if (!user) return
+
+    const document = await prisma.document.findFirst({
+      where: {
+        id: documentId,
+        matterId,
+        matter: { userId: user.id },
+      },
+      select: { id: true },
+    })
+    if (!document) return
+
+    await prisma.document.update({
+      where: { id: documentId },
+      data: {
+        indexingStatus: "pending",
+        retrievalStatus: "pending",
+        parseStatus: "pending",
+      },
+    })
+
+    queueDocumentIndexing(documentId)
+    revalidatePath(`/app/matters/${matterId}`)
+    revalidatePath(`/app/matters/${matterId}/documents/${documentId}`)
+  } catch {
+    /* Retry is best-effort from the matter registry. */
+  }
 }
