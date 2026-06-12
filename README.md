@@ -1,36 +1,97 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Aether Legal AI
+
+Aether is a Next.js 14 legal-intelligence workspace for matter-scoped document ingestion,
+semantic retrieval, and grounded research. The Phase 1 product path is:
+
+1. Create a Clerk-authenticated user session.
+2. Create a legal matter.
+3. Upload PDF, DOCX, or TXT source documents to Supabase Storage.
+4. Parse, chunk, and embed documents into Postgres with pgvector.
+5. Run matter-scoped research queries with retrieval traces saved per session.
 
 ## Getting Started
 
-First, run the development server:
+Install dependencies:
+
+```bash
+npm install
+```
+
+Create local environment variables:
+
+```bash
+cp .env.example .env.local
+```
+
+Fill in:
+
+- `DATABASE_URL` and `DIRECT_URL` for a Postgres database with pgvector available.
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`.
+- `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and optionally
+  `SUPABASE_DOCUMENT_BUCKET`.
+- `OPENAI_API_KEY` for embeddings and grounded responses. Without it, documents can parse
+  and chunk but semantic retrieval remains unavailable.
+- `NEXT_PUBLIC_APP_URL`, normally `http://localhost:3000` in local development.
+- `INDEXING_SECRET`, required in production for the internal indexing endpoint.
+
+Initialize the database:
+
+```bash
+npm run db:generate
+npm run db:migrate
+```
+
+Start the app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000>.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Supabase Storage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The app stores uploaded sources in a private bucket. By default the bucket name is
+`legal-documents`; override it with `SUPABASE_DOCUMENT_BUCKET`. The upload path is scoped
+by Clerk user ID and matter ID. Server-side storage access uses the service role key, so do
+not expose `SUPABASE_SERVICE_ROLE_KEY` to the browser.
 
-## Learn More
+## Document indexing
 
-To learn more about Next.js, take a look at the following resources:
+Document uploads create database records and then trigger:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```text
+pending -> parsing -> chunking -> embedding -> retrieval-ready
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+`POST /api/index-document/[documentId]` runs the pipeline. In production this route rejects
+requests unless `INDEXING_SECRET` is configured and supplied through `x-aether-secret`.
+Local development may run without the secret, though using one keeps local behavior close
+to production.
 
-## Deploy on Vercel
+## Validation
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Use these checks before shipping changes:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run lint
+npm run build
+```
+
+Schema-only validation can run with dummy database URLs:
+
+```bash
+DATABASE_URL="postgresql://user:pass@localhost:5432/aether?schema=public" \
+DIRECT_URL="postgresql://user:pass@localhost:5432/aether?schema=public" \
+npx prisma validate
+```
+
+## Runtime smoke test
+
+1. Sign in through Clerk.
+2. Create a matter.
+3. Upload a PDF, DOCX, or TXT document.
+4. Confirm the document reaches `retrieval-ready` or use Retry from the matter page.
+5. Run a research query in `/app/research`.
+6. Confirm the dashboard, matter page, document workstation, and `/app/documents` show the
+   persisted document and research session data.
