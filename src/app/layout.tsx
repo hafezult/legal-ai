@@ -1,5 +1,4 @@
 import { ClerkProvider } from "@clerk/nextjs"
-import { dark } from "@clerk/themes"
 import type { Metadata } from "next"
 import { Inter, JetBrains_Mono } from "next/font/google"
 
@@ -35,16 +34,7 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} dark h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-black text-white">
-        <ClerkProvider
-          appearance={{
-            baseTheme: dark,
-            variables: {
-              colorBackground: "#000000",
-            },
-          }}
-        >
-          {children}
-        </ClerkProvider>
+        <ClerkProvider>{children}</ClerkProvider>
       </body>
     </html>
   )
