@@ -57,22 +57,23 @@ export function extractHeadings(text: string): string[] {
 // ── Parsers ───────────────────────────────────────────────────────────────
 
 async function parsePdf(buffer: Buffer): Promise<ParseResult> {
-  // Dynamic import keeps pdf-parse server-side only
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pdfModule = await import("pdf-parse") as any
-  const pdfParse = pdfModule.default ?? pdfModule
-  const result = await pdfParse(buffer, {
-    // Disable default test-file loading
-    max: 0,
-  })
-  const text = normalizeText(result.text)
-  return {
-    text,
-    pageCount: result.numpages ?? Math.ceil(text.length / 3000),
-    confidence: text.length > 200 ? 0.9 : 0.5,
-    headings: extractHeadings(text),
-    metadata: { info: result.info ?? {}, version: result.version ?? "" },
-    mimeType: "application/pdf",
+  const { PDFParse } = await import("pdf-parse")
+  const parser = new PDFParse({ data: new Uint8Array(buffer) })
+
+  try {
+    const result = await parser.getText()
+    const text = normalizeText(result.text)
+
+    return {
+      text,
+      pageCount: result.total || Math.ceil(text.length / 3000),
+      confidence: text.length > 200 ? 0.9 : 0.5,
+      headings: extractHeadings(text),
+      metadata: { pages: result.pages.length },
+      mimeType: "application/pdf",
+    }
+  } finally {
+    await parser.destroy()
   }
 }
 
