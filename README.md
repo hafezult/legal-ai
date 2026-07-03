@@ -12,7 +12,7 @@ Aether is a Next.js legal intelligence workspace for matter-scoped document inge
 
 ## Tech stack
 
-- Next.js 14 App Router and React 18
+- Next.js 16 App Router and React 18
 - Clerk for authentication
 - Prisma 5 with PostgreSQL and pgvector
 - Supabase Storage for uploaded legal documents
@@ -25,6 +25,8 @@ Install dependencies:
 ```bash
 npm install
 ```
+
+Use Node.js 20.9 or newer; this matches the framework runtime requirement.
 
 Copy environment variables and fill in service credentials:
 
@@ -69,10 +71,11 @@ Open [http://localhost:3000](http://localhost:3000).
 ```bash
 npm run lint
 npx prisma validate
+npm audit --audit-level=high
 npm run build
 ```
 
-For build-only validation without live service credentials, use syntactically valid dummy values for Clerk/Supabase/Postgres and leave `OPENAI_API_KEY` empty. Semantic retrieval requires a real OpenAI key and re-indexed documents.
+For build-only validation without live service credentials, use syntactically valid dummy values for Clerk/Supabase/Postgres and leave `OPENAI_API_KEY` empty. Semantic retrieval requires a real OpenAI key and re-indexed documents. The current Next.js release still reports a moderate nested PostCSS advisory with no available upstream fix; the high-severity audit gate is clean.
 
 ## Database notes
 
