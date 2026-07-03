@@ -28,7 +28,7 @@ function fmtShortDate(d: Date) {
 }
 
 export default async function WorkflowsPage() {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
 
   let documents: WorkflowDocument[] = []

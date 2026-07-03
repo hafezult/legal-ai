@@ -4,8 +4,8 @@ import { NextResponse } from "next/server"
 const isProtectedRoute = createRouteMatcher(["/app(.*)"])
 const isAuthRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"])
 
-export default clerkMiddleware((auth, req) => {
-  const { userId } = auth()
+export default clerkMiddleware(async (auth, req) => {
+  const { userId } = await auth()
 
   // Authenticated users visiting auth pages are sent to the platform
   if (isAuthRoute(req) && userId) {
@@ -14,7 +14,7 @@ export default clerkMiddleware((auth, req) => {
 
   // Unauthenticated users attempting to access the platform are redirected to sign-in
   if (isProtectedRoute(req)) {
-    auth().protect()
+    await auth.protect()
   }
 })
 

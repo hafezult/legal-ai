@@ -14,8 +14,8 @@ const pillClass: Record<"ready" | "missing", string> = {
   missing: "border-amber-400/20 bg-amber-400/10 text-amber-200/70",
 }
 
-export default function SettingsPage() {
-  const { userId: clerkId } = auth()
+export default async function SettingsPage() {
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
 
   const readiness: ReadinessItem[] = [

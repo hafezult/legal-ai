@@ -14,7 +14,7 @@ export default async function DocumentViewerPage({
 }: {
   params: Promise<{ matterId: string; documentId: string }>
 }) {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
   const { matterId, documentId } = await params
 

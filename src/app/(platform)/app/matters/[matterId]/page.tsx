@@ -84,7 +84,7 @@ export default async function MatterDetailPage({
 }: {
   params: Promise<{ matterId: string }>
 }) {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
   const { matterId } = await params
 

@@ -31,7 +31,7 @@ function fmtShortDate(d: Date) {
 }
 
 export default async function DashboardPage() {
-  const { userId } = auth()
+  const { userId } = await auth()
   if (!userId) {
     return null
   }
