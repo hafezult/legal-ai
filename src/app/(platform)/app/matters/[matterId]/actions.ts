@@ -38,7 +38,7 @@ export async function uploadDocument(
   _prev: DocumentUploadState,
   formData: FormData
 ): Promise<DocumentUploadState> {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return { error: "Authentication required." }
 
   const file = formData.get("file") as File | null

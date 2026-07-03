@@ -45,7 +45,7 @@ type DocumentRow = {
 }
 
 export default async function DocumentsPage() {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
 
   let documents: DocumentRow[] = []

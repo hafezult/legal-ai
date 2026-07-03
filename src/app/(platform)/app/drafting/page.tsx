@@ -21,7 +21,7 @@ type DraftingMatter = {
 }
 
 export default async function DraftingPage() {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
 
   let matters: DraftingMatter[] = []
