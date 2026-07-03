@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  serverExternalPackages: ["@prisma/client", "pdf-parse", "mammoth"],
   experimental: {
-    serverComponentsExternalPackages: ["@prisma/client", "pdf-parse", "mammoth"],
     serverActions: {
       bodySizeLimit: "52mb",
     },

@@ -7,7 +7,7 @@ export const maxDuration = 300
 
 export async function POST(
   request: Request,
-  { params }: { params: { documentId: string } }
+  { params }: { params: Promise<{ documentId: string }> }
 ) {
   // Validate internal secret. Local development may omit it, but deployed
   // environments must explicitly configure INDEXING_SECRET.
@@ -23,7 +23,7 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const { documentId } = params
+  const { documentId } = await params
   if (!documentId) {
     return NextResponse.json({ error: "documentId required" }, { status: 400 })
   }
