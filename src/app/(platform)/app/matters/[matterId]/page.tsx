@@ -69,15 +69,6 @@ const riskStyle: Record<string, string> = {
   critical: "text-red-400/65",
 }
 
-const systemLayers = [
-  { label: "Authentication layer",  status: "operational" },
-  { label: "Matter context",        status: "active" },
-  { label: "Retrieval system",      status: "pending" },
-  { label: "Embedding index",       status: "awaiting" },
-  { label: "Orchestration layer",   status: "operational" },
-  { label: "Drafting surface",      status: "available" },
-]
-
 const sysStyle: Record<string, string> = {
   operational: "border-white/[0.12] bg-white/[0.03] text-white/58",
   active:      "border-white/[0.16] bg-white/[0.05] text-white/75",
@@ -91,10 +82,11 @@ const sysStyle: Record<string, string> = {
 export default async function MatterDetailPage({
   params,
 }: {
-  params: { matterId: string }
+  params: Promise<{ matterId: string }>
 }) {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
+  const { matterId } = await params
 
   type Doc = {
     id: string
@@ -105,6 +97,12 @@ export default async function MatterDetailPage({
     retrievalStatus: string
     uploadStatus: string
     uploadedAt: Date
+  }
+
+  type ResearchSessionRow = {
+    id: string
+    query: string
+    createdAt: Date
   }
 
   type MatterData = {
@@ -120,7 +118,8 @@ export default async function MatterDetailPage({
     createdAt: Date
     updatedAt: Date
     documents: Doc[]
-    _count: { documents: number; conversations: number }
+    researchSessions: ResearchSessionRow[]
+    _count: { documents: number; researchSessions: number }
   }
 
   let matter: MatterData | null = null
@@ -129,7 +128,7 @@ export default async function MatterDetailPage({
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
       matter = await prisma.matter.findFirst({
-        where: { id: params.matterId, userId: user.id },
+        where: { id: matterId, userId: user.id },
         select: {
           id: true,
           title: true,
@@ -155,7 +154,16 @@ export default async function MatterDetailPage({
               uploadedAt: true,
             },
           },
-          _count: { select: { documents: true, conversations: true } },
+          researchSessions: {
+            orderBy: { createdAt: "desc" },
+            take: 3,
+            select: {
+              id: true,
+              query: true,
+              createdAt: true,
+            },
+          },
+          _count: { select: { documents: true, researchSessions: true } },
         },
       })
     }
@@ -169,13 +177,43 @@ export default async function MatterDetailPage({
   const boundUpload = uploadDocument.bind(null, matter.id)
 
   const hasDocuments = matter.documents.length > 0
+  const indexedDocuments = matter.documents.filter((doc) =>
+    ["indexed", "retrieval-ready"].includes(doc.indexingStatus)
+  ).length
+  const retrievalReadyDocuments = matter.documents.filter(
+    (doc) => doc.retrievalStatus === "ready" || doc.indexingStatus === "retrieval-ready"
+  ).length
+  const failedDocuments = matter.documents.filter(
+    (doc) => doc.indexingStatus === "failed"
+  ).length
+  const allDocumentsIndexed = hasDocuments && indexedDocuments === matter._count.documents
+  const hasIndexedDocuments = indexedDocuments > 0
+  const hasRetrievalReady = retrievalReadyDocuments > 0
+  const hasResearchSessions = matter._count.researchSessions > 0
+
+  const sourceIngestionNote = !hasDocuments
+    ? "Awaiting first document"
+    : failedDocuments > 0
+      ? `${failedDocuments} document${failedDocuments !== 1 ? "s" : ""} failed indexing`
+      : allDocumentsIndexed
+        ? `${indexedDocuments} document${indexedDocuments !== 1 ? "s" : ""} indexed`
+        : `${indexedDocuments} of ${matter._count.documents} documents indexed`
 
   const timelineEvents = [
     { label: "Matter initialized",     note: fmtDate(matter.createdAt),       state: "complete"   as const },
     { label: "Workspace provisioned",  note: fmtDate(matter.createdAt),       state: "complete"   as const },
-    { label: "Source ingestion",       note: hasDocuments ? `${matter._count.documents} document${matter._count.documents !== 1 ? "s" : ""} indexed` : "Awaiting first document", state: hasDocuments ? "complete" as const : "pending" as const },
-    { label: "Retrieval layer",        note: "Pending index completion",        state: "pending"    as const },
-    { label: "Authority analysis",     note: "Awaiting retrieval layer",        state: "pending"    as const },
+    { label: "Source ingestion",       note: sourceIngestionNote,              state: allDocumentsIndexed ? "complete" as const : "pending" as const },
+    { label: "Retrieval layer",        note: hasRetrievalReady ? `${retrievalReadyDocuments} document${retrievalReadyDocuments !== 1 ? "s" : ""} retrieval-ready` : "Pending index completion", state: hasRetrievalReady ? "complete" as const : "pending" as const },
+    { label: "Authority analysis",     note: hasResearchSessions ? `${matter._count.researchSessions} research session${matter._count.researchSessions !== 1 ? "s" : ""} logged` : "Awaiting research activity", state: hasResearchSessions ? "complete" as const : "pending" as const },
+  ]
+
+  const systemLayers = [
+    { label: "Authentication layer",  status: "operational" },
+    { label: "Matter context",        status: "active" },
+    { label: "Retrieval system",      status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
+    { label: "Embedding index",       status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+    { label: "Orchestration layer",   status: "operational" },
+    { label: "Drafting surface",      status: "available" },
   ]
 
   return (
@@ -330,28 +368,42 @@ export default async function MatterDetailPage({
               AI research operations
             </p>
             <span className="rounded-full border border-white/[0.06] px-2.5 py-0.5 text-[10px] text-white/22">
-              Layer standing by
+              {hasResearchSessions ? "Active" : "Layer standing by"}
             </span>
           </div>
           <p className="mt-4 font-serif text-[14px] text-white/42">
-            No active research sessions
+            {hasResearchSessions
+              ? `${matter._count.researchSessions} research session${matter._count.researchSessions !== 1 ? "s" : ""} logged`
+              : "No active research sessions"}
           </p>
           <p className="mt-1.5 text-xs leading-relaxed text-white/25">
-            Citation-grade outputs initialize here after research queries are submitted
-            within this matter context.
+            {hasResearchSessions
+              ? "Recent grounded outputs are preserved with retrieval traces for this matter."
+              : "Citation-grade outputs initialize here after research queries are submitted within this matter context."}
           </p>
           <div className="mt-5 space-y-2">
-            {[
-              { label: "Authority chains",     note: "No chains indexed. Populate after source ingestion." },
-              { label: "Retrieval trace",       note: "No active sessions. Outputs surface after queries." },
-              { label: "Grounded excerpts",     note: "Available after document index is established." },
-              { label: "Jurisdiction analysis", note: "Activates with retrieval pipeline." },
-            ].map((r) => (
-              <div key={r.label} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3">
-                <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">{r.label}</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-white/18">{r.note}</p>
-              </div>
-            ))}
+            {hasResearchSessions
+              ? matter.researchSessions.map((session) => (
+                  <div key={session.id} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">
+                      {fmtShortDate(session.createdAt)}
+                    </p>
+                    <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/42">
+                      {session.query}
+                    </p>
+                  </div>
+                ))
+              : [
+                  { label: "Authority chains",     note: "No chains indexed. Populate after source ingestion." },
+                  { label: "Retrieval trace",       note: "No active sessions. Outputs surface after queries." },
+                  { label: "Grounded excerpts",     note: "Available after document index is established." },
+                  { label: "Jurisdiction analysis", note: "Activates with retrieval pipeline." },
+                ].map((r) => (
+                  <div key={r.label} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">{r.label}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-white/18">{r.note}</p>
+                  </div>
+                ))}
           </div>
         </div>
 
@@ -361,21 +413,22 @@ export default async function MatterDetailPage({
             Intelligence readiness
           </p>
           <p className="mt-4 font-serif text-[14px] text-white/42">
-            Grounded intelligence pending
+            {hasRetrievalReady ? "Grounded intelligence ready" : "Grounded intelligence pending"}
           </p>
           <p className="mt-1.5 text-xs leading-relaxed text-white/25">
-            Future intelligence surfaces including clause extraction, citation analysis,
-            authority linking, and semantic retrieval initialize here after source indexing.
+            {hasRetrievalReady
+              ? "Semantic retrieval and grounded research can now operate against indexed matter sources."
+              : "Future intelligence surfaces including clause extraction, citation analysis, authority linking, and semantic retrieval initialize here after source indexing."}
           </p>
 
           <div className="mt-5 space-y-2">
             {[
-              { label: "Clause extraction",    status: hasDocuments ? "pending" : "awaiting" },
-              { label: "Citation analysis",    status: "awaiting" },
-              { label: "Authority linking",    status: "awaiting" },
-              { label: "Semantic retrieval",   status: "awaiting" },
-              { label: "Reasoning traces",     status: "awaiting" },
-              { label: "Research sessions",    status: matter._count.conversations > 0 ? "active" : "pending" },
+              { label: "Clause extraction",    status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+              { label: "Citation analysis",    status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+              { label: "Authority linking",    status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+              { label: "Semantic retrieval",   status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
+              { label: "Reasoning traces",     status: hasResearchSessions ? "active" : hasRetrievalReady ? "pending" : "awaiting" },
+              { label: "Research sessions",    status: hasResearchSessions ? "active" : "pending" },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between border-t border-white/[0.04] py-2.5 first:border-t-0">
                 <p className="text-xs text-white/38">{item.label}</p>
