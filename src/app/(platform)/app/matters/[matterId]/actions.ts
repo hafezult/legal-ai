@@ -52,7 +52,6 @@ export async function uploadDocument(
   }
 
   // Validate matter ownership — no client-side trust
-  let userId: string
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (!user) return { error: "Session not found. Please sign in again." }
@@ -62,8 +61,6 @@ export async function uploadDocument(
       select: { id: true },
     })
     if (!matter) return { error: "Matter not found or access denied." }
-
-    userId = user.id
   } catch {
     return { error: "Data layer unreachable. Please try again." }
   }
@@ -103,8 +100,6 @@ export async function uploadDocument(
     await removeFromStorage(storagePath).catch(() => null)
     return { error: "Document registration failed. Storage entry removed." }
   }
-
-  void userId // available for future audit log
 
   // Fire-and-forget: trigger async indexing pipeline.
   void fetch(`${appBaseUrl()}/api/index-document/${documentId}`, {

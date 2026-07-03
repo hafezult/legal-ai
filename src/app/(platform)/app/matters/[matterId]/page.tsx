@@ -418,17 +418,16 @@ export default async function MatterDetailPage({
           <p className="mt-1.5 text-xs leading-relaxed text-white/25">
             {hasRetrievalReady
               ? "Semantic retrieval and grounded research can now operate against indexed matter sources."
-              : "Future intelligence surfaces including clause extraction, citation analysis, authority linking, and semantic retrieval initialize here after source indexing."}
+              : "Parsing, chunking, retrieval, and grounded research readiness update here as matter sources move through indexing."}
           </p>
 
           <div className="mt-5 space-y-2">
             {[
-              { label: "Clause extraction",    status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
-              { label: "Citation analysis",    status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
-              { label: "Authority linking",    status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
-              { label: "Semantic retrieval",   status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
-              { label: "Reasoning traces",     status: hasResearchSessions ? "active" : hasRetrievalReady ? "pending" : "awaiting" },
-              { label: "Research sessions",    status: hasResearchSessions ? "active" : "pending" },
+              { label: "Source parsing", status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+              { label: "Chunk indexing", status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+              { label: "Semantic retrieval", status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
+              { label: "Grounded answers", status: hasResearchSessions ? "active" : hasRetrievalReady ? "pending" : "awaiting" },
+              { label: "Research sessions", status: hasResearchSessions ? "active" : hasRetrievalReady ? "pending" : "awaiting" },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between border-t border-white/[0.04] py-2.5 first:border-t-0">
                 <p className="text-xs text-white/38">{item.label}</p>
