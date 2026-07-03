@@ -12,10 +12,11 @@ export const dynamic = "force-dynamic"
 export default async function DocumentViewerPage({
   params,
 }: {
-  params: { matterId: string; documentId: string }
+  params: Promise<{ matterId: string; documentId: string }>
 }) {
   const { userId: clerkId } = auth()
   if (!clerkId) return null
+  const { matterId, documentId } = await params
 
   let data: WorkstationData | null = null
 
@@ -25,8 +26,8 @@ export default async function DocumentViewerPage({
 
     const doc = await prisma.document.findFirst({
       where: {
-        id: params.documentId,
-        matterId: params.matterId,
+        id: documentId,
+        matterId,
         matter: { userId: user.id },
       },
       select: {
@@ -56,7 +57,7 @@ export default async function DocumentViewerPage({
 
     // Fetch all chunks ordered by index
     const rawChunks = await prisma.documentChunk.findMany({
-      where: { documentId: params.documentId },
+      where: { documentId },
       orderBy: { chunkIndex: "asc" },
       select: {
         id: true,

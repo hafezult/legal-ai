@@ -82,10 +82,11 @@ const sysStyle: Record<string, string> = {
 export default async function MatterDetailPage({
   params,
 }: {
-  params: { matterId: string }
+  params: Promise<{ matterId: string }>
 }) {
   const { userId: clerkId } = auth()
   if (!clerkId) return null
+  const { matterId } = await params
 
   type Doc = {
     id: string
@@ -127,7 +128,7 @@ export default async function MatterDetailPage({
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
       matter = await prisma.matter.findFirst({
-        where: { id: params.matterId, userId: user.id },
+        where: { id: matterId, userId: user.id },
         select: {
           id: true,
           title: true,
