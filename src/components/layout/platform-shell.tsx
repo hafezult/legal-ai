@@ -42,14 +42,18 @@ export function PlatformShell({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
-    try {
-      if (localStorage.getItem(STORAGE_KEY) === "1") {
-        setCollapsed(true)
+    const timer = window.setTimeout(() => {
+      try {
+        if (localStorage.getItem(STORAGE_KEY) === "1") {
+          setCollapsed(true)
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
-    }
-    setHydrated(true)
+      setHydrated(true)
+    }, 0)
+
+    return () => window.clearTimeout(timer)
   }, [])
 
   useEffect(() => {
