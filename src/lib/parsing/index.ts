@@ -1,4 +1,4 @@
-import { getSupabaseAdmin } from "@/lib/storage/client"
+import { STORAGE_BUCKET, getSupabaseAdmin } from "@/lib/storage/client"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -127,7 +127,7 @@ export async function extractText(
 ): Promise<ParseResult> {
   const supabase = getSupabaseAdmin()
   const { data, error } = await supabase.storage
-    .from("legal-documents")
+    .from(STORAGE_BUCKET)
     .download(storagePath)
   if (error) throw new Error(`Storage download failed: ${error.message}`)
   const buffer = Buffer.from(await data.arrayBuffer())
