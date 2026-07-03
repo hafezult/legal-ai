@@ -40,7 +40,6 @@ export default function RootLayout({
             baseTheme: dark,
             variables: {
               colorBackground: "#000000",
-              colorInputBackground: "#0a0a0a",
             },
           }}
         >
