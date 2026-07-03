@@ -27,6 +27,12 @@ function sanitizeName(name: string): string {
     .slice(0, 120)
 }
 
+function appBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
+  return `http://localhost:${process.env.PORT ?? 3000}`
+}
+
 export async function uploadDocument(
   matterId: string,
   _prev: DocumentUploadState,
@@ -100,10 +106,8 @@ export async function uploadDocument(
 
   void userId // available for future audit log
 
-  // Fire-and-forget: trigger async indexing pipeline
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3001}`
-  void fetch(`${appUrl}/api/index-document/${documentId}`, {
+  // Fire-and-forget: trigger async indexing pipeline.
+  void fetch(`${appBaseUrl()}/api/index-document/${documentId}`, {
     method: "POST",
     headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
   }).catch(() => null)
