@@ -19,6 +19,53 @@ const ALLOWED_MIME: Record<string, true> = {
 
 const MAX_BYTES = 50 * 1024 * 1024 // 50 MB
 
+const DOCUMENT_TYPES = {
+  pdf: {
+    extension: ".pdf",
+    mimeType: "application/pdf",
+  },
+  docx: {
+    extension: ".docx",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  },
+  txt: {
+    extension: ".txt",
+    mimeType: "text/plain",
+  },
+} as const
+
+type DocumentType = keyof typeof DOCUMENT_TYPES
+
+function detectAllowedDocument(file: File): { type: DocumentType; mimeType: string } | null {
+  const lowerName = file.name.toLowerCase()
+  const match = Object.entries(DOCUMENT_TYPES).find(([, config]) =>
+    lowerName.endsWith(config.extension)
+  )
+
+  if (!match) return null
+
+  const [type, config] = match as [DocumentType, (typeof DOCUMENT_TYPES)[DocumentType]]
+  if (file.type && file.type !== config.mimeType) return null
+
+  return { type, mimeType: config.mimeType }
+}
+
+function hasExpectedSignature(type: DocumentType, buffer: Buffer): boolean {
+  switch (type) {
+    case "pdf":
+      return buffer.subarray(0, 5).toString("utf8") === "%PDF-"
+    case "docx":
+      return (
+        buffer.length > 4 &&
+        buffer[0] === 0x50 &&
+        buffer[1] === 0x4b &&
+        [0x03, 0x05, 0x07].includes(buffer[2])
+      )
+    case "txt":
+      return !buffer.subarray(0, 1024).includes(0x00)
+  }
+}
+
 function sanitizeName(name: string): string {
   return name
     .toLowerCase()
@@ -27,26 +74,37 @@ function sanitizeName(name: string): string {
     .slice(0, 120)
 }
 
+function appBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
+  return `http://localhost:${process.env.PORT ?? 3000}`
+}
+
 export async function uploadDocument(
   matterId: string,
   _prev: DocumentUploadState,
   formData: FormData
 ): Promise<DocumentUploadState> {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return { error: "Authentication required." }
 
   const file = formData.get("file") as File | null
   if (!file || file.size === 0) return { error: "No file provided." }
 
-  if (!ALLOWED_MIME[file.type]) {
+  const documentType = detectAllowedDocument(file)
+  if (!documentType || !ALLOWED_MIME[documentType.mimeType]) {
     return { error: "Unsupported format. Accepted: PDF, DOCX, TXT." }
   }
   if (file.size > MAX_BYTES) {
     return { error: "File exceeds the 50 MB ingestion limit." }
   }
 
+  const buffer = Buffer.from(await file.arrayBuffer())
+  if (!hasExpectedSignature(documentType.type, buffer)) {
+    return { error: "File contents do not match the selected document format." }
+  }
+
   // Validate matter ownership — no client-side trust
-  let userId: string
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (!user) return { error: "Session not found. Please sign in again." }
@@ -56,8 +114,6 @@ export async function uploadDocument(
       select: { id: true },
     })
     if (!matter) return { error: "Matter not found or access denied." }
-
-    userId = user.id
   } catch {
     return { error: "Data layer unreachable. Please try again." }
   }
@@ -71,9 +127,12 @@ export async function uploadDocument(
   }
 
   const storagePath = `${clerkId}/${matterId}/${Date.now()}-${sanitizeName(file.name)}`
-  const buffer = Buffer.from(await file.arrayBuffer())
 
-  const { error: storageErr } = await uploadToStorage(storagePath, buffer, file.type)
+  const { error: storageErr } = await uploadToStorage(
+    storagePath,
+    buffer,
+    documentType.mimeType
+  )
   if (storageErr) {
     return { error: `Ingestion failed: ${storageErr.message}` }
   }
@@ -85,7 +144,7 @@ export async function uploadDocument(
         matterId,
         fileName: file.name,
         storagePath,
-        mimeType: file.type,
+        mimeType: documentType.mimeType,
         fileSize: file.size,
         uploadStatus: "uploaded",
         indexingStatus: "pending",
@@ -98,12 +157,8 @@ export async function uploadDocument(
     return { error: "Document registration failed. Storage entry removed." }
   }
 
-  void userId // available for future audit log
-
-  // Fire-and-forget: trigger async indexing pipeline
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? `http://localhost:${process.env.PORT ?? 3001}`
-  void fetch(`${appUrl}/api/index-document/${documentId}`, {
+  // Fire-and-forget: trigger async indexing pipeline.
+  void fetch(`${appBaseUrl()}/api/index-document/${documentId}`, {
     method: "POST",
     headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
   }).catch(() => null)
