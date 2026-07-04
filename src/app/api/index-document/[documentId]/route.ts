@@ -7,18 +7,23 @@ export const maxDuration = 300
 
 export async function POST(
   request: Request,
-  { params }: { params: { documentId: string } }
+  { params }: { params: Promise<{ documentId: string }> }
 ) {
-  // Validate internal secret (skip check in development if secret not set)
+  // Validate internal secret. Local development may omit it, but deployed
+  // environments must explicitly configure INDEXING_SECRET.
   const secret = process.env.INDEXING_SECRET
-  if (secret) {
-    const auth = request.headers.get("x-aether-secret")
-    if (auth !== secret) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+  if (!secret && process.env.NODE_ENV !== "development") {
+    return NextResponse.json(
+      { error: "INDEXING_SECRET is not configured" },
+      { status: 503 }
+    )
   }
 
-  const { documentId } = params
+  if (secret && request.headers.get("x-aether-secret") !== secret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const { documentId } = await params
   if (!documentId) {
     return NextResponse.json({ error: "documentId required" }, { status: 400 })
   }
