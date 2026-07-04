@@ -804,14 +804,18 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
 
   // Restore persisted preferences
   useEffect(() => {
-    try {
-      const s = localStorage.getItem(STORAGE_SPLIT)
-      if (s) setSplitPos(Math.max(20, Math.min(80, Number(s))))
-      const t = localStorage.getItem(STORAGE_TAB) as Tab | null
-      if (t && TABS.some((tab) => tab.id === t)) setActiveTab(t)
-    } catch {
-      /* ignore */
-    }
+    const timer = window.setTimeout(() => {
+      try {
+        const s = localStorage.getItem(STORAGE_SPLIT)
+        if (s) setSplitPos(Math.max(20, Math.min(80, Number(s))))
+        const t = localStorage.getItem(STORAGE_TAB) as Tab | null
+        if (t && TABS.some((tab) => tab.id === t)) setActiveTab(t)
+      } catch {
+        /* ignore */
+      }
+    }, 0)
+
+    return () => window.clearTimeout(timer)
   }, [])
 
   // Persist split position
