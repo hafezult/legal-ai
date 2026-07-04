@@ -6,7 +6,7 @@ import { ResearchClient } from "./_research-client"
 export const dynamic = "force-dynamic"
 
 export default async function ResearchPage() {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
 
   let matters: { id: string; title: string; _count: { documents: number } }[] = []
