@@ -11,6 +11,11 @@ export type DocumentUploadState = {
   success?: boolean
 }
 
+export type DocumentIndexState = {
+  error?: string
+  success?: boolean
+}
+
 const ALLOWED_MIME: Record<string, true> = {
   "application/pdf": true,
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
@@ -78,6 +83,31 @@ function appBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
   return `http://localhost:${process.env.PORT ?? 3000}`
+}
+
+async function triggerIndexing(documentId: string): Promise<DocumentIndexState> {
+  try {
+    const response = await fetch(`${appBaseUrl()}/api/index-document/${documentId}`, {
+      method: "POST",
+      headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
+      cache: "no-store",
+    })
+
+    if (!response.ok) {
+      let error = `Indexing request failed with status ${response.status}.`
+      try {
+        const body = (await response.json()) as { error?: unknown }
+        if (typeof body.error === "string") error = body.error
+      } catch {
+        /* non-JSON response */
+      }
+      return { error }
+    }
+
+    return { success: true }
+  } catch {
+    return { error: "Indexing service unreachable. Check NEXT_PUBLIC_APP_URL and retry." }
+  }
 }
 
 export async function uploadDocument(
@@ -158,11 +188,53 @@ export async function uploadDocument(
   }
 
   // Fire-and-forget: trigger async indexing pipeline.
-  void fetch(`${appBaseUrl()}/api/index-document/${documentId}`, {
-    method: "POST",
-    headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
-  }).catch(() => null)
+  void triggerIndexing(documentId)
 
   revalidatePath(`/app/matters/${matterId}`)
   return { success: true }
+}
+
+export async function reindexDocument(
+  matterId: string,
+  documentId: string
+): Promise<DocumentIndexState> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { error: "Authentication required." }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const document = await prisma.document.findFirst({
+      where: {
+        id: documentId,
+        matterId,
+        matter: { userId: user.id },
+      },
+      select: { id: true },
+    })
+    if (!document) return { error: "Document not found or access denied." }
+
+    await prisma.document.update({
+      where: { id: document.id },
+      data: {
+        indexingStatus: "pending",
+        retrievalStatus: "pending",
+        parseStatus: "pending",
+      },
+    })
+  } catch {
+    return { error: "Data layer unreachable. Please try again." }
+  }
+
+  const result = await triggerIndexing(documentId)
+
+  revalidatePath(`/app/matters/${matterId}`)
+  revalidatePath(`/app/matters/${matterId}/documents/${documentId}`)
+  revalidatePath("/app/documents")
+
+  return result
 }

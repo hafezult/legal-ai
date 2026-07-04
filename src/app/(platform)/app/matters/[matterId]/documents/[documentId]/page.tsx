@@ -4,6 +4,7 @@ import { notFound } from "next/navigation"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities } from "@/lib/legal/authorities"
 import { createSignedUrl } from "@/lib/storage/documents"
+import { reindexDocument } from "../../actions"
 import { DocumentWorkstation } from "./_workstation"
 import type { WorkstationData } from "./_workstation"
 
@@ -175,5 +176,7 @@ export default async function DocumentViewerPage({
 
   if (!data) notFound()
 
-  return <DocumentWorkstation data={data} />
+  const boundReindex = reindexDocument.bind(null, matterId, documentId)
+
+  return <DocumentWorkstation data={data} reindexAction={boundReindex} />
 }
