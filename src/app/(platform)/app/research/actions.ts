@@ -101,7 +101,7 @@ export async function runResearch(
   matterId: string,
   query: string
 ): Promise<ResearchOutput> {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
 
   const emptyResult = (error: string): ResearchOutput => ({
     query,
