@@ -45,6 +45,11 @@ function mimeLabel(mime: string | null) {
   return mime.split("/")[1]?.toUpperCase() ?? "—"
 }
 
+function excerpt(text: string, length = 120) {
+  const compact = text.replace(/\s+/g, " ").trim()
+  return compact.length > length ? `${compact.slice(0, length)}...` : compact
+}
+
 function practiceLabel(v: string | null) {
   if (!v) return null
   return v.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
@@ -91,9 +96,10 @@ const sysStyle: Record<string, string> = {
 export default async function MatterDetailPage({
   params,
 }: {
-  params: { matterId: string }
+  params: Promise<{ matterId: string }>
 }) {
-  const { userId: clerkId } = auth()
+  const { matterId } = await params
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
 
   type Doc = {
@@ -105,6 +111,14 @@ export default async function MatterDetailPage({
     retrievalStatus: string
     uploadStatus: string
     uploadedAt: Date
+  }
+
+  type ResearchSessionSummary = {
+    id: string
+    query: string
+    response: string | null
+    chunkIds: string[]
+    createdAt: Date
   }
 
   type MatterData = {
@@ -120,7 +134,8 @@ export default async function MatterDetailPage({
     createdAt: Date
     updatedAt: Date
     documents: Doc[]
-    _count: { documents: number; conversations: number }
+    researchSessions: ResearchSessionSummary[]
+    _count: { documents: number; researchSessions: number }
   }
 
   let matter: MatterData | null = null
@@ -129,7 +144,7 @@ export default async function MatterDetailPage({
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
       matter = await prisma.matter.findFirst({
-        where: { id: params.matterId, userId: user.id },
+        where: { id: matterId, userId: user.id },
         select: {
           id: true,
           title: true,
@@ -155,7 +170,18 @@ export default async function MatterDetailPage({
               uploadedAt: true,
             },
           },
-          _count: { select: { documents: true, conversations: true } },
+          researchSessions: {
+            orderBy: { createdAt: "desc" },
+            take: 5,
+            select: {
+              id: true,
+              query: true,
+              response: true,
+              chunkIds: true,
+              createdAt: true,
+            },
+          },
+          _count: { select: { documents: true, researchSessions: true } },
         },
       })
     }
@@ -169,13 +195,14 @@ export default async function MatterDetailPage({
   const boundUpload = uploadDocument.bind(null, matter.id)
 
   const hasDocuments = matter.documents.length > 0
+  const hasResearchSessions = matter.researchSessions.length > 0
 
   const timelineEvents = [
     { label: "Matter initialized",     note: fmtDate(matter.createdAt),       state: "complete"   as const },
     { label: "Workspace provisioned",  note: fmtDate(matter.createdAt),       state: "complete"   as const },
     { label: "Source ingestion",       note: hasDocuments ? `${matter._count.documents} document${matter._count.documents !== 1 ? "s" : ""} indexed` : "Awaiting first document", state: hasDocuments ? "complete" as const : "pending" as const },
     { label: "Retrieval layer",        note: "Pending index completion",        state: "pending"    as const },
-    { label: "Authority analysis",     note: "Awaiting retrieval layer",        state: "pending"    as const },
+    { label: "Authority analysis",     note: hasResearchSessions ? `${matter._count.researchSessions} research session${matter._count.researchSessions !== 1 ? "s" : ""} logged` : "Awaiting retrieval layer", state: hasResearchSessions ? "complete" as const : "pending" as const },
   ]
 
   return (
@@ -330,29 +357,67 @@ export default async function MatterDetailPage({
               AI research operations
             </p>
             <span className="rounded-full border border-white/[0.06] px-2.5 py-0.5 text-[10px] text-white/22">
-              Layer standing by
+              {hasResearchSessions
+                ? `${matter._count.researchSessions} session${matter._count.researchSessions !== 1 ? "s" : ""}`
+                : "Layer standing by"}
             </span>
           </div>
-          <p className="mt-4 font-serif text-[14px] text-white/42">
-            No active research sessions
-          </p>
-          <p className="mt-1.5 text-xs leading-relaxed text-white/25">
-            Citation-grade outputs initialize here after research queries are submitted
-            within this matter context.
-          </p>
-          <div className="mt-5 space-y-2">
-            {[
-              { label: "Authority chains",     note: "No chains indexed. Populate after source ingestion." },
-              { label: "Retrieval trace",       note: "No active sessions. Outputs surface after queries." },
-              { label: "Grounded excerpts",     note: "Available after document index is established." },
-              { label: "Jurisdiction analysis", note: "Activates with retrieval pipeline." },
-            ].map((r) => (
-              <div key={r.label} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3">
-                <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">{r.label}</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-white/18">{r.note}</p>
+          {hasResearchSessions ? (
+            <div className="mt-5 space-y-3">
+              {matter.researchSessions.map((session) => (
+                <div
+                  key={session.id}
+                  className="rounded-lg border border-white/[0.05] bg-white/[0.015] px-4 py-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-white/30">
+                      {fmtShortDate(session.createdAt)}
+                    </p>
+                    <span className="text-[10px] text-white/22">
+                      {session.chunkIds.length} chunk{session.chunkIds.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed text-white/62">
+                    {excerpt(session.query)}
+                  </p>
+                  <p className="mt-2 text-xs leading-relaxed text-white/24">
+                    {session.response
+                      ? excerpt(session.response, 150)
+                      : "Grounded response was not saved for this session."}
+                  </p>
+                </div>
+              ))}
+              <Link
+                href="/app/research"
+                className="inline-flex text-[11px] text-white/30 transition-colors hover:text-white/55"
+              >
+                Open research workspace →
+              </Link>
+            </div>
+          ) : (
+            <>
+              <p className="mt-4 font-serif text-[14px] text-white/42">
+                No active research sessions
+              </p>
+              <p className="mt-1.5 text-xs leading-relaxed text-white/25">
+                Citation-grade outputs initialize here after research queries are submitted
+                within this matter context.
+              </p>
+              <div className="mt-5 space-y-2">
+                {[
+                  { label: "Authority chains",     note: "No chains indexed. Populate after source ingestion." },
+                  { label: "Retrieval trace",       note: "No active sessions. Outputs surface after queries." },
+                  { label: "Grounded excerpts",     note: "Available after document index is established." },
+                  { label: "Jurisdiction analysis", note: "Activates with retrieval pipeline." },
+                ].map((r) => (
+                  <div key={r.label} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">{r.label}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-white/18">{r.note}</p>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          )}
         </div>
 
         {/* Intelligence Readiness Panel */}
@@ -375,7 +440,7 @@ export default async function MatterDetailPage({
               { label: "Authority linking",    status: "awaiting" },
               { label: "Semantic retrieval",   status: "awaiting" },
               { label: "Reasoning traces",     status: "awaiting" },
-              { label: "Research sessions",    status: matter._count.conversations > 0 ? "active" : "pending" },
+              { label: "Research sessions",    status: matter._count.researchSessions > 0 ? "active" : "pending" },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between border-t border-white/[0.04] py-2.5 first:border-t-0">
                 <p className="text-xs text-white/38">{item.label}</p>

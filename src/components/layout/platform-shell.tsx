@@ -42,14 +42,24 @@ export function PlatformShell({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
-    try {
-      if (localStorage.getItem(STORAGE_KEY) === "1") {
-        setCollapsed(true)
+    let cancelled = false
+
+    queueMicrotask(() => {
+      if (cancelled) return
+
+      try {
+        if (localStorage.getItem(STORAGE_KEY) === "1") {
+          setCollapsed(true)
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
+      setHydrated(true)
+    })
+
+    return () => {
+      cancelled = true
     }
-    setHydrated(true)
   }, [])
 
   useEffect(() => {

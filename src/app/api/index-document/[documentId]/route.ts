@@ -7,7 +7,7 @@ export const maxDuration = 300
 
 export async function POST(
   request: Request,
-  { params }: { params: { documentId: string } }
+  { params }: { params: Promise<{ documentId: string }> }
 ) {
   // Validate internal secret (skip check in development if secret not set)
   const secret = process.env.INDEXING_SECRET
@@ -18,7 +18,7 @@ export async function POST(
     }
   }
 
-  const { documentId } = params
+  const { documentId } = await params
   if (!documentId) {
     return NextResponse.json({ error: "documentId required" }, { status: 400 })
   }
