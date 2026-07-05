@@ -1,8 +1,8 @@
 "use client"
 
-import { useFormState, useFormStatus } from "react-dom"
+import { useState, useTransition } from "react"
 
-import { createMatter } from "../actions"
+import { createMatter, type MatterFormState } from "../actions"
 
 const PRACTICE_AREAS = [
   { value: "", label: "Select practice area" },
@@ -49,8 +49,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-function SubmitButton() {
-  const { pending } = useFormStatus()
+function SubmitButton({ pending }: { pending: boolean }) {
   return (
     <button
       type="submit"
@@ -63,7 +62,19 @@ function SubmitButton() {
 }
 
 export default function NewMatterPage() {
-  const [state, action] = useFormState(createMatter, {})
+  const [state, setState] = useState<MatterFormState>({})
+  const [isPending, startTransition] = useTransition()
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const formData = new FormData(event.currentTarget)
+    setState({})
+
+    startTransition(async () => {
+      const nextState = await createMatter({}, formData)
+      if (nextState?.error) setState(nextState)
+    })
+  }
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
@@ -83,7 +94,7 @@ export default function NewMatterPage() {
 
       {/* Form surface */}
       <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.08] bg-white/[0.015] p-6 sm:p-8">
-        <form action={action} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-6">
           {state?.error && (
             <div className="rounded-lg border border-red-400/[0.18] bg-red-400/[0.05] px-4 py-3">
               <p className="text-sm text-red-400/75">{state.error}</p>
@@ -182,7 +193,7 @@ export default function NewMatterPage() {
             <p className="text-[11px] text-white/28">
               Workspace initializes immediately. Fields may be updated after creation.
             </p>
-            <SubmitButton />
+            <SubmitButton pending={isPending} />
           </div>
         </form>
       </div>
