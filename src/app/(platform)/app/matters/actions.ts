@@ -9,16 +9,54 @@ export type MatterFormState = {
   error?: string
 }
 
+const PRACTICE_AREAS = new Set([
+  "corporate",
+  "litigation",
+  "m_and_a",
+  "real_estate",
+  "finance",
+  "intellectual_property",
+  "tax",
+  "regulatory",
+  "employment",
+  "other",
+])
+
+const RISK_LEVELS = new Set(["low", "medium", "high", "critical"])
+const STATUSES = new Set(["active", "on_hold", "closed", "archived"])
+
+function optionalEnum(value: FormDataEntryValue | null, allowed: Set<string>): string | null {
+  if (typeof value !== "string" || !value) return null
+  return allowed.has(value) ? value : "__invalid__"
+}
+
+function requiredEnum(
+  value: FormDataEntryValue | null,
+  allowed: Set<string>,
+  fallback: string
+): string | null {
+  if (typeof value !== "string" || !value) return fallback
+  return allowed.has(value) ? value : null
+}
+
 export async function createMatter(
   _prev: MatterFormState,
   formData: FormData
 ): Promise<MatterFormState> {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) redirect("/sign-in")
 
   const title = (formData.get("title") as string | null)?.trim()
   if (!title) {
     return { error: "Matter title is required to initialize the workspace." }
+  }
+
+  const practiceArea = optionalEnum(formData.get("practiceArea"), PRACTICE_AREAS)
+  const riskLevel = requiredEnum(formData.get("riskLevel"), RISK_LEVELS, "medium")
+  const status = requiredEnum(formData.get("status"), STATUSES, "active")
+
+  if (practiceArea === "__invalid__" || !riskLevel || !status) {
+    return { error: "Matter metadata contains an unsupported option." }
   }
 
   let user: { id: string } | null = null
@@ -36,11 +74,11 @@ export async function createMatter(
       data: {
         title,
         clientName: (formData.get("clientName") as string | null)?.trim() || null,
-        practiceArea: (formData.get("practiceArea") as string | null) || null,
+        practiceArea,
         jurisdiction: (formData.get("jurisdiction") as string | null)?.trim() || null,
-        riskLevel: (formData.get("riskLevel") as string | null) || "medium",
+        riskLevel,
         billingCode: (formData.get("billingCode") as string | null)?.trim() || null,
-        status: (formData.get("status") as string | null) || "active",
+        status,
         description: (formData.get("description") as string | null)?.trim() || null,
         userId: user.id,
       },
