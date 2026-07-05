@@ -4,6 +4,7 @@ import { notFound } from "next/navigation"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities } from "@/lib/legal/authorities"
 import { createSignedUrl } from "@/lib/storage/documents"
+import { reindexDocument } from "../../actions"
 import { DocumentWorkstation } from "./_workstation"
 import type { WorkstationData } from "./_workstation"
 
@@ -12,10 +13,11 @@ export const dynamic = "force-dynamic"
 export default async function DocumentViewerPage({
   params,
 }: {
-  params: { matterId: string; documentId: string }
+  params: Promise<{ matterId: string; documentId: string }>
 }) {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
+  const { matterId, documentId } = await params
 
   let data: WorkstationData | null = null
 
@@ -25,8 +27,8 @@ export default async function DocumentViewerPage({
 
     const doc = await prisma.document.findFirst({
       where: {
-        id: params.documentId,
-        matterId: params.matterId,
+        id: documentId,
+        matterId,
         matter: { userId: user.id },
       },
       select: {
@@ -56,7 +58,7 @@ export default async function DocumentViewerPage({
 
     // Fetch all chunks ordered by index
     const rawChunks = await prisma.documentChunk.findMany({
-      where: { documentId: params.documentId },
+      where: { documentId },
       orderBy: { chunkIndex: "asc" },
       select: {
         id: true,
@@ -174,5 +176,7 @@ export default async function DocumentViewerPage({
 
   if (!data) notFound()
 
-  return <DocumentWorkstation data={data} />
+  const boundReindex = reindexDocument.bind(null, matterId, documentId)
+
+  return <DocumentWorkstation data={data} reindexAction={boundReindex} />
 }
