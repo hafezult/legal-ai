@@ -15,11 +15,18 @@ type Props = {
   uploadAction: UploadFn
 }
 
-const ALLOWED = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "text/plain",
-]
+const DOCUMENT_TYPES = [
+  { extension: ".pdf", mimeType: "application/pdf" },
+  {
+    extension: ".docx",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  },
+  { extension: ".txt", mimeType: "text/plain" },
+] as const
+const ACCEPTED_FILE_TYPES = DOCUMENT_TYPES.flatMap(({ extension, mimeType }) => [
+  extension,
+  mimeType,
+]).join(",")
 const FORMAT_LABEL = "PDF · DOCX · TXT"
 const MAX_BYTES = 50 * 1024 * 1024
 
@@ -27,6 +34,14 @@ function fmtBytes(n: number) {
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function isAcceptedDocumentFile(file: File) {
+  const lowerName = file.name.toLowerCase()
+  const match = DOCUMENT_TYPES.find(({ extension }) => lowerName.endsWith(extension))
+
+  if (!match) return false
+  return !file.type || file.type === match.mimeType
 }
 
 type Phase = "idle" | "selected" | "uploading" | "success" | "error"
@@ -42,7 +57,7 @@ export function DocumentUploadZone({ uploadAction }: Props) {
 
   const pick = useCallback((f: File) => {
     setError(null)
-    if (!ALLOWED.includes(f.type)) {
+    if (!isAcceptedDocumentFile(f)) {
       setError(`Unsupported format. Accepted: ${FORMAT_LABEL}.`)
       setPhase("error")
       return
@@ -141,7 +156,7 @@ export function DocumentUploadZone({ uploadAction }: Props) {
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+          accept={ACCEPTED_FILE_TYPES}
           onChange={onInputChange}
           className="sr-only"
           tabIndex={-1}
