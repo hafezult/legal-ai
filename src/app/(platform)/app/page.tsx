@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
+import Link from "next/link"
 
 import { prisma } from "@/lib/prisma"
 
@@ -28,14 +29,40 @@ const statusLabel: Record<SystemLayer["status"], string> = {
   degraded: "Degraded",
 }
 
+type RecentResearchSession = {
+  id: string
+  matterId: string
+  matterTitle: string
+  query: string
+  response: string | null
+  chunkCount: number
+  createdAt: Date
+}
+
+function fmtShortDate(d: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(d)
+}
+
+function excerpt(text: string, length = 120) {
+  const compact = text.replace(/\s+/g, " ").trim()
+  return compact.length > length ? `${compact.slice(0, length)}...` : compact
+}
+
 export default async function DashboardPage() {
-  const { userId } = auth()
+  const { userId } = await auth()
   if (!userId) {
     return null
   }
 
   let matterCount = 0
   let documentCount = 0
+  let researchSessionCount = 0
+  let recentResearchSessions: RecentResearchSession[] = []
 
   try {
     const user = await prisma.user.findUnique({
@@ -43,12 +70,44 @@ export default async function DashboardPage() {
     })
 
     if (user) {
-      ;[matterCount, documentCount] = await Promise.all([
+      const [matters, documents, sessions, recentSessions] = await Promise.all([
         prisma.matter.count({ where: { userId: user.id } }),
         prisma.document.count({
           where: { matter: { userId: user.id } },
         }),
+        prisma.researchSession.count({ where: { userId: user.id } }),
+        prisma.researchSession.findMany({
+          where: { userId: user.id },
+          orderBy: { createdAt: "desc" },
+          take: 4,
+          select: {
+            id: true,
+            query: true,
+            response: true,
+            chunkIds: true,
+            createdAt: true,
+            matter: {
+              select: {
+                id: true,
+                title: true,
+              },
+            },
+          },
+        }),
       ])
+
+      matterCount = matters
+      documentCount = documents
+      researchSessionCount = sessions
+      recentResearchSessions = recentSessions.map((session) => ({
+        id: session.id,
+        matterId: session.matter.id,
+        matterTitle: session.matter.title,
+        query: session.query,
+        response: session.response,
+        chunkCount: session.chunkIds.length,
+        createdAt: session.createdAt,
+      }))
     }
   } catch {
     /* Database unavailable in local dev */
@@ -75,7 +134,7 @@ export default async function DashboardPage() {
         {[
           { label: "Active matters", value: String(matterCount) },
           { label: "Indexed documents", value: String(documentCount) },
-          { label: "Workspace", value: "Live" },
+          { label: "Research sessions", value: String(researchSessionCount) },
         ].map((card) => (
           <div
             key={card.label}
@@ -118,14 +177,42 @@ export default async function DashboardPage() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
             AI research sessions
           </p>
-          <div className="mt-4 space-y-1">
-            <p className="font-serif text-base text-white/50">No sessions logged</p>
-            <p className="text-sm leading-relaxed text-white/32">
-              Sessions surface here as your team queries the research layer.
-              Authority tables, citation-grade excerpts, and retrieval traces are
-              preserved per matter.
-            </p>
-          </div>
+          {recentResearchSessions.length === 0 ? (
+            <div className="mt-4 space-y-1">
+              <p className="font-serif text-base text-white/50">No sessions logged</p>
+              <p className="text-sm leading-relaxed text-white/32">
+                Sessions surface here as your team queries the research layer.
+                Authority tables, citation-grade excerpts, and retrieval traces are
+                preserved per matter.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {recentResearchSessions.map((session) => (
+                <Link
+                  key={session.id}
+                  href={`/app/matters/${session.matterId}`}
+                  className="block rounded-lg border border-white/[0.05] bg-white/[0.015] px-4 py-3 transition-colors hover:border-white/[0.1] hover:bg-white/[0.03]"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-white/32">
+                      {session.matterTitle}
+                    </p>
+                    <span className="text-[10px] text-white/24">
+                      {fmtShortDate(session.createdAt)}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed text-white/68">
+                    {excerpt(session.query)}
+                  </p>
+                  <p className="mt-2 text-[10px] text-white/25">
+                    {session.chunkCount} chunk{session.chunkCount !== 1 ? "s" : ""} retrieved
+                    {session.response ? " · grounded response saved" : ""}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

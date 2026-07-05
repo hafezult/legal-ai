@@ -13,7 +13,7 @@ export async function createMatter(
   _prev: MatterFormState,
   formData: FormData
 ): Promise<MatterFormState> {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) redirect("/sign-in")
 
   const title = (formData.get("title") as string | null)?.trim()

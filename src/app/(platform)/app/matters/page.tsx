@@ -20,7 +20,7 @@ function practiceAreaLabel(value: string | null) {
 }
 
 export default async function MattersPage() {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
 
   type MatterRow = {

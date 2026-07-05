@@ -41,9 +41,11 @@ async function openAIEmbed(
 // ── Voyage AI (stub — add API key + implement when contracted) ────────────
 
 async function voyageEmbed(
-  _texts: string[],
-  _model: string
+  texts: string[],
+  model: string
 ): Promise<number[][]> {
+  void texts
+  void model
   throw new Error("Voyage AI provider not yet implemented.")
 }
 

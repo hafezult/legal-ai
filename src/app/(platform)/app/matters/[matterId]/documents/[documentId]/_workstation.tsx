@@ -326,7 +326,11 @@ function TabChunks({ chunks }: { chunks: WorkstationChunk[] }) {
   const toggle = (id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
       return next
     })
   }
@@ -804,13 +808,23 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
 
   // Restore persisted preferences
   useEffect(() => {
-    try {
-      const s = localStorage.getItem(STORAGE_SPLIT)
-      if (s) setSplitPos(Math.max(20, Math.min(80, Number(s))))
-      const t = localStorage.getItem(STORAGE_TAB) as Tab | null
-      if (t && TABS.some((tab) => tab.id === t)) setActiveTab(t)
-    } catch {
-      /* ignore */
+    let cancelled = false
+
+    queueMicrotask(() => {
+      if (cancelled) return
+
+      try {
+        const s = localStorage.getItem(STORAGE_SPLIT)
+        if (s) setSplitPos(Math.max(20, Math.min(80, Number(s))))
+        const t = localStorage.getItem(STORAGE_TAB) as Tab | null
+        if (t && TABS.some((tab) => tab.id === t)) setActiveTab(t)
+      } catch {
+        /* ignore */
+      }
+    })
+
+    return () => {
+      cancelled = true
     }
   }, [])
 
