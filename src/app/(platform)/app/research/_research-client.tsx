@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useCallback, useState, useTransition } from "react"
 
 import { runResearch, type ResearchOutput } from "./actions"
@@ -123,6 +124,20 @@ export function ResearchClient({ matters }: { matters: Matter[] }) {
           <p className="mx-auto mt-2 max-w-sm text-sm text-white/28">
             Create a matter and upload documents before running research queries.
           </p>
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <Link
+              href="/app/matters/new"
+              className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-5 py-2.5 text-sm text-white/62 transition-colors duration-200 hover:border-white/[0.18] hover:bg-white/[0.07] hover:text-white/88"
+            >
+              Initialize matter
+            </Link>
+            <Link
+              href="/app/matters"
+              className="rounded-lg border border-white/[0.07] bg-white/[0.01] px-5 py-2.5 text-sm text-white/45 transition-colors duration-200 hover:border-white/[0.14] hover:text-white/72"
+            >
+              Open matters
+            </Link>
+          </div>
         </div>
       ) : (
         <>
