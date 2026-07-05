@@ -1,6 +1,6 @@
-// Embedding layer — provider-abstracted for OpenAI, Voyage AI, Cohere, local models
+// Embedding layer — OpenAI embeddings for pgvector retrieval
 
-export type EmbeddingProvider = "openai" | "voyage" | "cohere"
+export type EmbeddingProvider = "openai"
 
 export type EmbeddingConfig = {
   provider: EmbeddingProvider
@@ -38,15 +38,6 @@ async function openAIEmbed(
     .map((d) => d.embedding)
 }
 
-// ── Voyage AI (stub — add API key + implement when contracted) ────────────
-
-async function voyageEmbed(
-  _texts: string[],
-  _model: string
-): Promise<number[][]> {
-  throw new Error("Voyage AI provider not yet implemented.")
-}
-
 // ── Public API ────────────────────────────────────────────────────────────
 
 export async function generateEmbedding(
@@ -74,11 +65,6 @@ export async function generateBatchEmbeddings(
       case "openai":
         batchResult = await openAIEmbed(batch, cfg.model)
         break
-      case "voyage":
-        batchResult = await voyageEmbed(batch, cfg.model)
-        break
-      default:
-        throw new Error(`Unknown embedding provider: ${cfg.provider}`)
     }
 
     results.push(...batchResult)
