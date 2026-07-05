@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - cursor/overall-project-finalization-3ff5
+      - cursor/overall-project-finalization-b0a2
 
 jobs:
   validate:
