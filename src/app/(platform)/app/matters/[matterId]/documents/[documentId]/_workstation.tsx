@@ -1,7 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 
 // ── Serialised types (passed from RSC) ────────────────────────────────────
 
@@ -57,6 +58,11 @@ export type WorkstationData = {
   embeddedCount: number
   signedUrl: string | null
 }
+
+export type DocumentIndexAction = () => Promise<{
+  error?: string
+  success?: boolean
+}>
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -788,8 +794,15 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "timeline",    label: "Timeline" },
 ]
 
-export function DocumentWorkstation({ data }: { data: WorkstationData }) {
+export function DocumentWorkstation({
+  data,
+  reindexAction,
+}: {
+  data: WorkstationData
+  reindexAction: DocumentIndexAction
+}) {
   const { doc, chunks, sessions, authorities, embeddedCount, signedUrl } = data
+  const router = useRouter()
 
   // Split pane
   const [splitPos, setSplitPos] = useState(DEFAULT_SPLIT)
@@ -802,16 +815,41 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
   // Mobile view toggle
   const [mobilePanel, setMobilePanel] = useState<"document" | "intelligence">("document")
 
+  const [isReindexing, startReindexTransition] = useTransition()
+  const [reindexMessage, setReindexMessage] = useState<{
+    type: "success" | "error"
+    text: string
+  } | null>(null)
+
+  const runReindex = useCallback(() => {
+    setReindexMessage(null)
+    startReindexTransition(async () => {
+      const result = await reindexAction()
+      if (result.error) {
+        setReindexMessage({ type: "error", text: result.error })
+        router.refresh()
+        return
+      }
+
+      setReindexMessage({ type: "success", text: "Indexing completed." })
+      router.refresh()
+    })
+  }, [reindexAction, router])
+
   // Restore persisted preferences
   useEffect(() => {
-    try {
-      const s = localStorage.getItem(STORAGE_SPLIT)
-      if (s) setSplitPos(Math.max(20, Math.min(80, Number(s))))
-      const t = localStorage.getItem(STORAGE_TAB) as Tab | null
-      if (t && TABS.some((tab) => tab.id === t)) setActiveTab(t)
-    } catch {
-      /* ignore */
-    }
+    const timer = window.setTimeout(() => {
+      try {
+        const s = localStorage.getItem(STORAGE_SPLIT)
+        if (s) setSplitPos(Math.max(20, Math.min(80, Number(s))))
+        const t = localStorage.getItem(STORAGE_TAB) as Tab | null
+        if (t && TABS.some((tab) => tab.id === t)) setActiveTab(t)
+      } catch {
+        /* ignore */
+      }
+    }, 0)
+
+    return () => window.clearTimeout(timer)
   }, [])
 
   // Persist split position
@@ -877,6 +915,13 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
     }
   }, [activeTab, doc, chunks, sessions, authorities, embeddedCount])
 
+  const reindexLabel =
+    doc.indexingStatus === "failed"
+      ? "Retry indexing"
+      : doc.retrievalStatus === "ready"
+        ? "Re-index source"
+        : "Run indexing"
+
   return (
     <div
       className="-mx-4 -my-6 flex flex-col overflow-hidden sm:-mx-6 sm:-my-8"
@@ -928,13 +973,35 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
         >
           {/* Back link + Tab bar */}
           <div className="shrink-0 border-b border-white/[0.06]">
-            <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-0">
+            <div className="flex items-center justify-between gap-3 px-4 pt-3 pb-0">
               <Link
                 href={`/app/matters/${doc.matterId}`}
                 className="text-[10px] text-white/25 transition-colors hover:text-white/52"
               >
                 ← {doc.matterTitle}
               </Link>
+              <div className="flex min-w-0 items-center gap-2">
+                {reindexMessage && (
+                  <p
+                    className={`hidden truncate text-[10px] sm:block ${
+                      reindexMessage.type === "error"
+                        ? "text-red-300/60"
+                        : "text-white/36"
+                    }`}
+                    title={reindexMessage.text}
+                  >
+                    {reindexMessage.text}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={runReindex}
+                  disabled={isReindexing}
+                  className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.02] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/64 disabled:pointer-events-none disabled:opacity-45"
+                >
+                  {isReindexing ? "Indexing..." : reindexLabel}
+                </button>
+              </div>
             </div>
             <div className="flex gap-0 overflow-x-auto px-3 pt-2">
               {TABS.map((tab) => (
