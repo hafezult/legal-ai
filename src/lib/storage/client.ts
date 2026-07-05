@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 
-export const STORAGE_BUCKET = "legal-documents"
+export const STORAGE_BUCKET =
+  process.env.SUPABASE_DOCUMENT_BUCKET?.trim() || "legal-documents"
 
 let _admin: SupabaseClient | null = null
 
