@@ -114,6 +114,7 @@ export default async function MatterDetailPage({
     retrievalStatus: string
     uploadStatus: string
     uploadedAt: Date
+    updatedAt: Date
   }
 
   type ResearchSessionRow = {
@@ -202,6 +203,7 @@ export default async function MatterDetailPage({
               retrievalStatus: true,
               uploadStatus: true,
               uploadedAt: true,
+              updatedAt: true,
             },
           },
           researchSessions: {

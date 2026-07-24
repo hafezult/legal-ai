@@ -46,6 +46,7 @@ type DocumentRow = {
   retrievalStatus: string
   chunkCount: number
   uploadedAt: Date
+  updatedAt: Date
   canWrite: boolean
   matter: {
     id: string
@@ -81,6 +82,7 @@ export default async function DocumentsPage() {
           retrievalStatus: true,
           chunkCount: true,
           uploadedAt: true,
+          updatedAt: true,
           matter: {
             select: {
               id: true,
@@ -100,6 +102,7 @@ export default async function DocumentsPage() {
         retrievalStatus: doc.retrievalStatus,
         chunkCount: doc.chunkCount,
         uploadedAt: doc.uploadedAt,
+        updatedAt: doc.updatedAt,
         canWrite: canWriteListedMatter(doc.matter, user.id, orgCanWrite),
         matter: {
           id: doc.matter.id,

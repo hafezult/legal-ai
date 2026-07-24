@@ -20,6 +20,7 @@ type WorkflowDocument = {
   indexingStatus: string
   retrievalStatus: string
   uploadedAt: Date
+  updatedAt: Date
   canWrite: boolean
   matter: {
     id: string
@@ -62,6 +63,7 @@ export default async function WorkflowsPage() {
           indexingStatus: true,
           retrievalStatus: true,
           uploadedAt: true,
+          updatedAt: true,
           matter: {
             select: {
               id: true,
@@ -78,6 +80,7 @@ export default async function WorkflowsPage() {
         indexingStatus: doc.indexingStatus,
         retrievalStatus: doc.retrievalStatus,
         uploadedAt: doc.uploadedAt,
+        updatedAt: doc.updatedAt,
         canWrite: canWriteListedMatter(doc.matter, user.id, orgCanWrite),
         matter: {
           id: doc.matter.id,

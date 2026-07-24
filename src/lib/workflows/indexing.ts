@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { extractText } from "@/lib/parsing"
 import { chunkDocument } from "@/lib/retrieval/chunking"
 import { generateBatchEmbeddings, isEmbeddingConfigured } from "@/lib/ai/embeddings"
+import { STALE_INDEXING_MS } from "@/lib/documents/status"
 
 export type PipelineStatus =
   | "pending"
@@ -14,6 +15,8 @@ export type PipelineStatus =
   | "retrieval-ready"
   | "failed"
 
+const IN_PROGRESS_STATUSES = ["parsing", "chunking", "embedding"] as const
+
 async function setStatus(
   documentId: string,
   indexingStatus: PipelineStatus,
@@ -23,6 +26,29 @@ async function setStatus(
     where: { id: documentId },
     data: { indexingStatus, ...extra },
   })
+}
+
+/**
+ * Atomically claim a document for indexing so parallel upload/reindex/HTTP
+ * triggers cannot interleave chunk deletes and embedding writes.
+ * Stale in-progress claims (older than STALE_INDEXING_MS) may be reclaimed.
+ */
+async function claimDocumentForIndexing(documentId: string): Promise<boolean> {
+  const staleBefore = new Date(Date.now() - STALE_INDEXING_MS)
+  const claimed = await prisma.document.updateMany({
+    where: {
+      id: documentId,
+      OR: [
+        { indexingStatus: { notIn: [...IN_PROGRESS_STATUSES] } },
+        { updatedAt: { lt: staleBefore } },
+      ],
+    },
+    data: {
+      indexingStatus: "parsing",
+      parseStatus: "parsing",
+    },
+  })
+  return claimed.count === 1
 }
 
 export async function runIndexingPipeline(documentId: string): Promise<void> {
@@ -41,9 +67,14 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     throw new Error(`Document ${documentId}: missing storage path or MIME type.`)
   }
 
-  // ── 1. Parse ────────────────────────────────────────────────────────────
-  await setStatus(documentId, "parsing", { parseStatus: "parsing" })
+  const claimed = await claimDocumentForIndexing(documentId)
+  if (!claimed) {
+    throw new Error(
+      `Document ${documentId}: indexing already in progress. Retry after it finishes or stalls.`
+    )
+  }
 
+  // ── 1. Parse ────────────────────────────────────────────────────────────
   let parsed
   try {
     parsed = await extractText(doc.storagePath, doc.mimeType, doc.fileName)
