@@ -371,7 +371,7 @@ export async function acceptPendingOrganizationInvites(user: {
       select: { id: true, role: true },
     })
 
-    let effectiveRole = role
+    let effectiveRole: OrgRole = role
 
     if (!existing) {
       await prisma.organizationMember.create({
@@ -381,11 +381,10 @@ export async function acceptPendingOrganizationInvites(user: {
           role,
         },
       })
-    } else if (isOrgRole(existing.role) && existing.role === "owner") {
+    } else if (existing.role === "owner") {
       effectiveRole = "owner"
     } else if (
       isOrgRole(existing.role) &&
-      existing.role !== "owner" &&
       roleStrictlyAbove(role, existing.role)
     ) {
       // Re-invite with a higher role upgrades the existing membership.
@@ -531,7 +530,7 @@ export async function acceptOrganizationInviteByToken(
     select: { id: true, role: true },
   })
 
-  let effectiveRole = role
+  let effectiveRole: OrgRole = role
 
   if (!existing) {
     await prisma.organizationMember.create({
@@ -541,7 +540,7 @@ export async function acceptOrganizationInviteByToken(
         role,
       },
     })
-  } else if (isOrgRole(existing.role) && existing.role === "owner") {
+  } else if (existing.role === "owner") {
     effectiveRole = "owner"
   } else if (
     isOrgRole(existing.role) &&
