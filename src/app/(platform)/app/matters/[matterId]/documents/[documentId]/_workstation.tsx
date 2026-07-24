@@ -947,7 +947,7 @@ export function DocumentWorkstation({
   }, [activeTab, doc, chunks, sessions, authorities, embeddedCount])
 
   const reindexLabel =
-    doc.indexingStatus === "failed"
+    doc.indexingStatus === "failed" || doc.retrievalStatus === "failed"
       ? "Retry indexing"
       : doc.retrievalStatus === "ready"
         ? "Re-index source"

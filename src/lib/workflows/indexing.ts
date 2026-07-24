@@ -87,7 +87,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   // ── 3. Embed ────────────────────────────────────────────────────────────
   if (!isEmbeddingConfigured()) {
     // No API key — mark as indexed without semantic retrieval
-    await setStatus(documentId, "indexed")
+    await setStatus(documentId, "indexed", { retrievalStatus: "pending" })
     return
   }
 
@@ -95,9 +95,11 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   try {
     embeddings = await generateBatchEmbeddings(chunks.map((c) => c.content))
   } catch (err) {
-    // Embedding failure is non-fatal — document is chunked but not retrieval-ready
-    await setStatus(documentId, "indexed")
-    console.error(`[indexing] embedding failed for ${documentId}:`, err)
+    // Embedding failure leaves chunks available but retrieval blocked until retry.
+    const message =
+      err instanceof Error ? err.message.slice(0, 240) : "Embedding provider failed"
+    await setStatus(documentId, "indexed", { retrievalStatus: "failed" })
+    console.error(`[indexing] embedding failed for ${documentId}:`, message)
     return
   }
 

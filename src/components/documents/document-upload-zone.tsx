@@ -134,14 +134,20 @@ export function DocumentUploadZone({ uploadAction }: Props) {
     )
   }
 
+  const canPick = phase === "idle" || phase === "error"
+
   return (
     <div className="space-y-3">
       {/* Drop zone surface */}
       <div
-        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        role="region"
+        aria-label="Document upload"
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragging(true)
+        }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        onClick={() => phase === "idle" || phase === "error" ? inputRef.current?.click() : undefined}
         className={cn(
           "relative rounded-lg border transition-colors duration-200",
           phase === "uploading"
@@ -150,20 +156,22 @@ export function DocumentUploadZone({ uploadAction }: Props) {
             ? "cursor-default border-white/[0.12] bg-white/[0.025]"
             : dragging
             ? "cursor-copy border-white/[0.2] bg-white/[0.04]"
-            : "cursor-pointer border-white/[0.07] bg-white/[0.01] hover:border-white/[0.12] hover:bg-white/[0.02]"
+            : "border-white/[0.07] bg-white/[0.01] hover:border-white/[0.12] hover:bg-white/[0.02]"
         )}
       >
         <input
           ref={inputRef}
+          id="matter-document-upload"
           type="file"
           accept={ACCEPTED_FILE_TYPES}
           onChange={onInputChange}
           className="sr-only"
-          tabIndex={-1}
+          disabled={!canPick || isPending}
+          aria-describedby={error ? "matter-document-upload-error" : "matter-document-upload-hint"}
         />
 
         {phase === "uploading" ? (
-          <div className="flex items-center gap-4 px-5 py-4">
+          <div className="flex items-center gap-4 px-5 py-4" aria-live="polite">
             <div className="h-px flex-1 overflow-hidden bg-white/[0.06]">
               <div className="h-full w-2/3 animate-pulse bg-white/[0.18]" />
             </div>
@@ -182,14 +190,17 @@ export function DocumentUploadZone({ uploadAction }: Props) {
             </div>
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); reset() }}
+              onClick={reset}
               className="shrink-0 text-xs text-white/28 transition-colors hover:text-white/55"
             >
               Remove
             </button>
           </div>
         ) : (
-          <div className="flex flex-col items-center px-6 py-10 text-center">
+          <label
+            htmlFor="matter-document-upload"
+            className="flex cursor-pointer flex-col items-center px-6 py-10 text-center focus-within:outline-none"
+          >
             <div className="mb-3 rounded-full border border-white/[0.08] bg-white/[0.02] p-3">
               <ArrowUpIcon />
             </div>
@@ -199,14 +210,20 @@ export function DocumentUploadZone({ uploadAction }: Props) {
                 select file
               </span>
             </p>
-            <p className="mt-1.5 text-xs text-white/28">{FORMAT_LABEL} · max 50 MB</p>
-          </div>
+            <p id="matter-document-upload-hint" className="mt-1.5 text-xs text-white/28">
+              {FORMAT_LABEL} · max 50 MB
+            </p>
+          </label>
         )}
       </div>
 
       {/* Error */}
       {error && (
-        <div className="rounded-lg border border-red-400/[0.15] bg-red-400/[0.04] px-4 py-3">
+        <div
+          id="matter-document-upload-error"
+          role="alert"
+          className="rounded-lg border border-red-400/[0.15] bg-red-400/[0.04] px-4 py-3"
+        >
           <p className="text-sm text-red-400/68">{error}</p>
         </div>
       )}

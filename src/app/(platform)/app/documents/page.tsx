@@ -8,6 +8,7 @@ import {
   matterAccessWhereForActiveOrg,
   roleHasPermission,
 } from "@/lib/auth/rbac"
+import { documentNeedsRetry } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -209,7 +210,7 @@ export default async function DocumentsPage() {
                 <DocumentStatusPill status={doc.retrievalStatus} />
               </div>
               <div className="w-20 shrink-0">
-                {canWrite && doc.indexingStatus === "failed" ? (
+                {canWrite && documentNeedsRetry(doc) ? (
                   <DocumentRetryButton
                     matterId={doc.matter.id}
                     documentId={doc.id}

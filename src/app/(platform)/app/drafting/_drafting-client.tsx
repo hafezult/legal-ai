@@ -5,13 +5,12 @@ import { useRouter } from "next/navigation"
 import { useCallback, useState, useTransition } from "react"
 
 import { downloadMarkdown } from "@/lib/download"
+import { DRAFT_TYPES, type DraftType } from "@/lib/drafting/types"
 import {
-  DRAFT_TYPES,
   deleteDraft,
   generateDraft,
   restoreDraft,
   type DraftOutput,
-  type DraftType,
 } from "./actions"
 
 const DRAFT_TYPE_OPTIONS: { value: DraftType; label: string }[] = [
@@ -117,20 +116,40 @@ export function DraftingClient({
   matters,
   recentDrafts,
   canWrite = true,
+  initialMatterId,
+  initialResults = null,
 }: {
   matters: Matter[]
   recentDrafts: RecentDraft[]
   canWrite?: boolean
+  initialMatterId?: string
+  initialResults?: DraftOutput | null
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [isDeleting, startDeleteTransition] = useTransition()
   const [isRestoring, startRestoreTransition] = useTransition()
-  const [selectedMatter, setSelectedMatter] = useState(matters[0]?.id ?? "")
-  const [draftType, setDraftType] = useState<DraftType>("advice")
-  const [instruction, setInstruction] = useState("")
-  const [results, setResults] = useState<DraftOutput | null>(null)
-  const [localError, setLocalError] = useState<string | null>(null)
+  const initialMatter =
+    initialResults?.matterId ??
+    (initialMatterId && matters.some((matter) => matter.id === initialMatterId)
+      ? initialMatterId
+      : undefined) ??
+    matters[0]?.id ??
+    ""
+  const initialTyped =
+    initialResults &&
+    (DRAFT_TYPES as readonly string[]).includes(initialResults.draftType)
+      ? (initialResults.draftType as DraftType)
+      : "advice"
+  const [selectedMatter, setSelectedMatter] = useState(initialMatter)
+  const [draftType, setDraftType] = useState<DraftType>(initialTyped)
+  const [instruction, setInstruction] = useState(initialResults?.instruction ?? "")
+  const [results, setResults] = useState<DraftOutput | null>(
+    initialResults && !initialResults.error ? initialResults : null
+  )
+  const [localError, setLocalError] = useState<string | null>(
+    initialResults?.error ?? null
+  )
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null)
 
   const matterDrafts = recentDrafts.filter(

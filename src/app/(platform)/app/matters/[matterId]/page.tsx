@@ -7,10 +7,13 @@ import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { DocumentUploadZone } from "@/components/documents/document-upload-zone"
 import { MatterConversationsPanel } from "@/components/matters/matter-conversations-panel"
 import { MatterDeleteControls } from "@/components/matters/matter-delete-controls"
+import { MatterDraftsPanel } from "@/components/matters/matter-drafts-panel"
 import { MatterEditControls } from "@/components/matters/matter-edit-controls"
+import { MatterResearchPanel } from "@/components/matters/matter-research-panel"
 import { MatterStatusControls } from "@/components/matters/matter-status-controls"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import { getMatterAccess, matterAccessWhere, roleHasPermission } from "@/lib/auth/rbac"
+import { documentNeedsRetry } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 import {
   createConversation,
@@ -121,6 +124,13 @@ export default async function MatterDetailPage({
     createdAt: Date
   }
 
+  type DraftRow = {
+    id: string
+    title: string
+    draftType: string
+    createdAt: Date
+  }
+
   type ConversationMessageRow = {
     id: string
     role: string
@@ -150,6 +160,7 @@ export default async function MatterDetailPage({
     updatedAt: Date
     documents: Doc[]
     researchSessions: ResearchSessionRow[]
+    draftDocuments: DraftRow[]
     conversations: ConversationRow[]
     _count: {
       documents: number
@@ -195,12 +206,22 @@ export default async function MatterDetailPage({
           },
           researchSessions: {
             orderBy: { createdAt: "desc" },
-            take: 3,
+            take: 5,
             select: {
               id: true,
               query: true,
               response: true,
               chunkIds: true,
+              createdAt: true,
+            },
+          },
+          draftDocuments: {
+            orderBy: { createdAt: "desc" },
+            take: 5,
+            select: {
+              id: true,
+              title: true,
+              draftType: true,
               createdAt: true,
             },
           },
@@ -262,8 +283,8 @@ export default async function MatterDetailPage({
   const retrievalReadyDocuments = matter.documents.filter(
     (doc) => doc.retrievalStatus === "ready" || doc.indexingStatus === "retrieval-ready"
   ).length
-  const failedDocuments = matter.documents.filter(
-    (doc) => doc.indexingStatus === "failed"
+  const failedDocuments = matter.documents.filter((doc) =>
+    documentNeedsRetry(doc)
   ).length
   const allDocumentsIndexed = hasDocuments && indexedDocuments === matter._count.documents
   const hasIndexedDocuments = indexedDocuments > 0
@@ -450,7 +471,7 @@ export default async function MatterDetailPage({
                   </span>
                   {canWrite ? (
                     <div className="w-16 shrink-0 text-right">
-                      {doc.indexingStatus === "failed" ? (
+                      {documentNeedsRetry(doc) ? (
                         <DocumentRetryButton
                           matterId={matter.id}
                           documentId={doc.id}
@@ -484,73 +505,15 @@ export default async function MatterDetailPage({
         )}
       </div>
 
-      {/* ── Section C — Research Ops / Intelligence Readiness ─────── */}
+      {/* ── Section C — Research Ops / Conversations ─────── */}
       <div className="grid gap-5 lg:grid-cols-2">
-
-        {/* AI Research Operations */}
-        <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-black/20 p-6">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
-              AI research operations
-            </p>
-            <span className="rounded-full border border-white/[0.06] px-2.5 py-0.5 text-[10px] text-white/22">
-              {hasResearchSessions ? "Active" : "Layer standing by"}
-            </span>
-          </div>
-          <p className="mt-4 font-serif text-[14px] text-white/42">
-            {hasResearchSessions
-              ? `${matter._count.researchSessions} research session${matter._count.researchSessions !== 1 ? "s" : ""} logged`
-              : "No active research sessions"}
-          </p>
-          <p className="mt-1.5 text-xs leading-relaxed text-white/25">
-            {hasResearchSessions
-              ? "Recent grounded outputs are preserved with retrieval traces for this matter."
-              : "Citation-grade outputs initialize here after research queries are submitted within this matter context."}
-          </p>
-          <div className="mt-5 space-y-2">
-            {hasResearchSessions
-              ? matter.researchSessions.map((session) => (
-                  <div key={session.id} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">
-                        {fmtShortDate(session.createdAt)}
-                      </p>
-                      <p className="text-[10px] text-white/22">
-                        {session.chunkIds.length} chunk{session.chunkIds.length !== 1 ? "s" : ""}
-                        {session.response ? " · response saved" : ""}
-                      </p>
-                    </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/42">
-                      {session.query}
-                    </p>
-                    {session.response && (
-                      <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-white/26">
-                        {session.response}
-                      </p>
-                    )}
-                  </div>
-                ))
-              : [
-                  { label: "Authority chains",     note: "No chains indexed. Populate after source ingestion." },
-                  { label: "Retrieval trace",       note: "No active sessions. Outputs surface after queries." },
-                  { label: "Grounded excerpts",     note: "Available after document index is established." },
-                  { label: "Jurisdiction analysis", note: "Activates with retrieval pipeline." },
-                ].map((r) => (
-                  <div key={r.label} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">{r.label}</p>
-                    <p className="mt-0.5 text-xs leading-relaxed text-white/18">{r.note}</p>
-                  </div>
-                ))}
-          </div>
-          {hasResearchSessions && (
-            <Link
-              href="/app/research"
-              className="mt-4 inline-flex text-[11px] text-white/30 transition-colors hover:text-white/55"
-            >
-              Open research workspace →
-            </Link>
-          )}
-        </div>
+        <MatterResearchPanel
+          matterId={matter.id}
+          matterTitle={matter.title}
+          sessions={matter.researchSessions}
+          totalCount={matter._count.researchSessions}
+          canWrite={canWrite}
+        />
 
         <MatterConversationsPanel
           conversations={matter.conversations}
@@ -560,6 +523,12 @@ export default async function MatterDetailPage({
           readOnly={!canWrite}
         />
       </div>
+
+      <MatterDraftsPanel
+        matterId={matter.id}
+        drafts={matter.draftDocuments}
+        totalCount={matter._count.draftDocuments}
+      />
 
       {/* ── Section D — Intelligence Readiness ───────────────────── */}
       <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-black/20 p-6">

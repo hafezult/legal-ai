@@ -8,6 +8,7 @@ import {
   matterAccessWhereForActiveOrg,
   roleHasPermission,
 } from "@/lib/auth/rbac"
+import { documentNeedsRetry } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -81,8 +82,8 @@ export default async function WorkflowsPage() {
   const readyCount = documents.filter(
     (doc) => doc.retrievalStatus === "ready" || doc.indexingStatus === "retrieval-ready"
   ).length
-  const failedCount = statusCounts.failed ?? 0
-  const failedDocuments = documents.filter((doc) => doc.indexingStatus === "failed")
+  const failedDocuments = documents.filter((doc) => documentNeedsRetry(doc))
+  const failedCount = failedDocuments.length
 
   return (
     <div className="space-y-8">
@@ -156,10 +157,10 @@ export default async function WorkflowsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-[10px] uppercase tracking-[0.18em] text-amber-200/55">
-                Failed indexing
+                Failed indexing / retrieval
               </p>
               <p className="mt-1.5 text-sm text-white/45">
-                Retry ingestion for sources that did not complete the pipeline.
+                Retry ingestion for sources that failed parsing or embedding.
               </p>
             </div>
             <span className="rounded-full border border-amber-400/20 px-2.5 py-0.5 text-[10px] text-amber-200/60">
@@ -242,7 +243,7 @@ export default async function WorkflowsPage() {
                 <DocumentStatusPill status={doc.retrievalStatus} />
               </div>
               <div className="w-20 shrink-0">
-                {canWrite && doc.indexingStatus === "failed" ? (
+                {canWrite && documentNeedsRetry(doc) ? (
                   <DocumentRetryButton
                     matterId={doc.matter.id}
                     documentId={doc.id}

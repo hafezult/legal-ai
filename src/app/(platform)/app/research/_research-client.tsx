@@ -153,19 +153,34 @@ export function ResearchClient({
   matters,
   recentSessions,
   canWrite = true,
+  initialMatterId,
+  initialResults = null,
 }: {
   matters: Matter[]
   recentSessions: RecentSession[]
   canWrite?: boolean
+  initialMatterId?: string
+  initialResults?: ResearchOutput | null
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [isDeleting, startDeleteTransition] = useTransition()
   const [isRestoring, startRestoreTransition] = useTransition()
-  const [selectedMatter, setSelectedMatter] = useState(matters[0]?.id ?? "")
-  const [query, setQuery] = useState("")
-  const [results, setResults] = useState<ResearchOutput | null>(null)
-  const [localError, setLocalError] = useState<string | null>(null)
+  const initialMatter =
+    initialResults?.matterId ??
+    (initialMatterId && matters.some((matter) => matter.id === initialMatterId)
+      ? initialMatterId
+      : undefined) ??
+    matters[0]?.id ??
+    ""
+  const [selectedMatter, setSelectedMatter] = useState(initialMatter)
+  const [query, setQuery] = useState(initialResults?.query ?? "")
+  const [results, setResults] = useState<ResearchOutput | null>(
+    initialResults && !initialResults.error ? initialResults : null
+  )
+  const [localError, setLocalError] = useState<string | null>(
+    initialResults?.error ?? null
+  )
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
 
   const matterSessions = recentSessions.filter(

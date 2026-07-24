@@ -6,18 +6,14 @@ import { revalidatePath } from "next/cache"
 import { recordAuditEvent } from "@/lib/audit"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
 import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
+import {
+  DRAFT_TYPE_LABELS,
+  DRAFT_TYPES,
+  type DraftType,
+} from "@/lib/drafting/types"
 import { prisma } from "@/lib/prisma"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
-
-export const DRAFT_TYPES = [
-  "advice",
-  "brief",
-  "memo",
-  "clause",
-] as const
-
-export type DraftType = (typeof DRAFT_TYPES)[number]
 
 export type DraftSourceChunk = {
   id: string
@@ -41,13 +37,6 @@ export type DraftOutput = {
   indexedChunks: number
   embeddingConfigured: boolean
   error?: string
-}
-
-const DRAFT_TYPE_LABELS: Record<DraftType, string> = {
-  advice: "Counsel's advice note",
-  brief: "Skeleton / brief outline",
-  memo: "Internal research memo",
-  clause: "Clause analysis note",
 }
 
 function isDraftType(value: string): value is DraftType {

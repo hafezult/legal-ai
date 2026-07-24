@@ -135,8 +135,27 @@ export default async function SettingsPage() {
       select: { id: true },
     })
     if (user) {
+      organizations = await listUserOrganizations(user.id)
+      const active = await getActiveOrganization(user.id)
+
+      const orgMatterIds = active
+        ? (
+            await prisma.matter.findMany({
+              where: { organizationId: active.id },
+              select: { id: true },
+            })
+          ).map((matter) => matter.id)
+        : []
+
       activity = await prisma.auditEvent.findMany({
-        where: { userId: user.id },
+        where: {
+          OR: [
+            { userId: user.id },
+            ...(orgMatterIds.length > 0
+              ? [{ matterId: { in: orgMatterIds } }]
+              : []),
+          ],
+        },
         orderBy: { createdAt: "desc" },
         take: 20,
         select: {
@@ -149,8 +168,6 @@ export default async function SettingsPage() {
         },
       })
 
-      organizations = await listUserOrganizations(user.id)
-      const active = await getActiveOrganization(user.id)
       if (active) {
         const [memberRows, inviteRows] = await Promise.all([
           prisma.organizationMember.findMany({
