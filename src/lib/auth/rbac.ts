@@ -36,11 +36,16 @@ export function roleHasPermission(role: OrgRole, permission: OrgPermission): boo
   return ROLE_PERMISSIONS[role].has(permission)
 }
 
-/** Prisma `where` clause: matters the user owns or can access via org membership. */
+/**
+ * Prisma `where` clause for matters the user may access.
+ * Legacy personal matters (no organizationId) remain creator-scoped.
+ * Organization matters require current membership — creators who are
+ * removed or demoted no longer bypass org RBAC via the userId fallback.
+ */
 export function matterAccessWhere(userId: string) {
   return {
     OR: [
-      { userId },
+      { userId, organizationId: null },
       { organization: { members: { some: { userId } } } },
     ],
   }
@@ -80,8 +85,9 @@ export type MatterAccess = {
 }
 
 /**
- * Resolve matter access for a user. Creators always receive owner-equivalent
- * permissions even if org membership is missing (legacy personal matters).
+ * Resolve matter access for a user.
+ * Legacy personal matters (organizationId null) grant the creator owner-equivalent
+ * permissions. Organization matters always resolve from current membership role.
  */
 export async function getMatterAccess(
   userId: string,
@@ -112,11 +118,15 @@ export async function getMatterAccess(
 
   const isCreator = matter.userId === userId
   const membershipRole = matter.organization?.members[0]?.role
-  const role: OrgRole | null = isCreator
-    ? "owner"
-    : membershipRole && isOrgRole(membershipRole)
-      ? membershipRole
-      : null
+  const membership: OrgRole | null =
+    membershipRole && isOrgRole(membershipRole) ? membershipRole : null
+
+  // Org matters: membership is authoritative. Legacy personal matters: creator owns.
+  const role: OrgRole | null = matter.organizationId
+    ? membership
+    : isCreator
+      ? "owner"
+      : membership
 
   return {
     matterId: matter.id,
