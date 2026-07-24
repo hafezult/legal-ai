@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation"
 import { useCallback, useState, useTransition } from "react"
 
 import { downloadMarkdown } from "@/lib/download"
+import { MAX_RESEARCH_QUERY_CHARS } from "@/lib/research/limits"
 import {
   deleteResearchSession,
   restoreResearchSession,
   runResearch,
-  MAX_RESEARCH_QUERY_CHARS,
   type ResearchOutput,
 } from "./actions"
 

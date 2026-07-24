@@ -13,3 +13,6 @@ export const DRAFT_TYPE_LABELS: Record<DraftType, string> = {
   memo: "Internal research memo",
   clause: "Clause analysis note",
 }
+
+/** Server and client max length for drafting instructions. */
+export const MAX_DRAFT_INSTRUCTION_CHARS = 8_000

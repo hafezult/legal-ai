@@ -10,8 +10,7 @@ import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
-
-export const MAX_RESEARCH_QUERY_CHARS = 8_000
+import { MAX_RESEARCH_QUERY_CHARS } from "@/lib/research/limits"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 

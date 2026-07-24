@@ -5,12 +5,15 @@ import { useRouter } from "next/navigation"
 import { useCallback, useState, useTransition } from "react"
 
 import { downloadMarkdown } from "@/lib/download"
-import { DRAFT_TYPES, type DraftType } from "@/lib/drafting/types"
+import {
+  DRAFT_TYPES,
+  MAX_DRAFT_INSTRUCTION_CHARS,
+  type DraftType,
+} from "@/lib/drafting/types"
 import {
   deleteDraft,
   generateDraft,
   restoreDraft,
-  MAX_DRAFT_INSTRUCTION_CHARS,
   type DraftOutput,
 } from "./actions"
 

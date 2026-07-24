@@ -172,7 +172,7 @@ export default async function WorkflowsPage() {
         </div>
       </div>
 
-      {canWrite && failedDocuments.some((doc) => doc.canWrite) ? (
+      {failedDocuments.some((doc) => doc.canWrite) ? (
         <div className="rounded-[var(--aether-radius-panel)] border border-amber-400/15 bg-amber-400/[0.03] p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -184,11 +184,13 @@ export default async function WorkflowsPage() {
               </p>
             </div>
             <span className="rounded-full border border-amber-400/20 px-2.5 py-0.5 text-[10px] text-amber-200/60">
-              {failedDocuments.length} failed
+              {failedDocuments.filter((doc) => doc.canWrite).length} failed
             </span>
           </div>
           <div className="mt-4 space-y-2">
-            {failedDocuments.map((doc) => (
+            {failedDocuments
+              .filter((doc) => doc.canWrite)
+              .map((doc) => (
               <div
                 key={doc.id}
                 className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/[0.06] bg-black/20 px-4 py-3"

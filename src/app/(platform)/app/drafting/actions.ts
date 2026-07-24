@@ -9,13 +9,12 @@ import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import {
   DRAFT_TYPE_LABELS,
   DRAFT_TYPES,
+  MAX_DRAFT_INSTRUCTION_CHARS,
   type DraftType,
 } from "@/lib/drafting/types"
 import { prisma } from "@/lib/prisma"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
-
-export const MAX_DRAFT_INSTRUCTION_CHARS = 8_000
 
 export type DraftSourceChunk = {
   id: string
