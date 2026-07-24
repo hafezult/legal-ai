@@ -98,12 +98,12 @@ export default async function SettingsPage() {
     {
       label: "Indexing secret",
       configured: Boolean(process.env.INDEXING_SECRET),
-      description: "Internal document indexing endpoint protection.",
+      description: "Optional HTTP indexing route protection (upload/reindex run in-process).",
     },
     {
       label: "App URL",
       configured: Boolean(process.env.NEXT_PUBLIC_APP_URL),
-      description: "Absolute callback URL for upload-triggered indexing.",
+      description: "Absolute origin for invite acceptance links and email copy.",
     },
     {
       label: "Invite email (Resend)",
