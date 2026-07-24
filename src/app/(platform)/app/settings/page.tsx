@@ -1,7 +1,11 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
-import { getPrimaryOrganization, isOrgRole } from "@/lib/auth/rbac"
+import {
+  getActiveOrganization,
+  isOrgRole,
+  listUserOrganizations,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { OrganizationAccessPanel } from "./_organization-panel"
 
@@ -29,6 +33,13 @@ type OrgMemberRow = {
   email: string
   name: string | null
   isSelf: boolean
+}
+
+type OrgInviteRow = {
+  id: string
+  email: string
+  role: string
+  expiresAt: string
 }
 
 const pillClass: Record<"ready" | "missing", string> = {
@@ -96,7 +107,9 @@ export default async function SettingsPage() {
     name: string
     role: string
     members: OrgMemberRow[]
+    invites: OrgInviteRow[]
   } | null = null
+  let organizations: { id: string; name: string; role: string }[] = []
 
   try {
     const user = await prisma.user.findUnique({
@@ -118,22 +131,39 @@ export default async function SettingsPage() {
         },
       })
 
-      const primary = await getPrimaryOrganization(user.id)
-      if (primary) {
-        const memberRows = await prisma.organizationMember.findMany({
-          where: { organizationId: primary.id },
-          orderBy: [{ role: "asc" }, { createdAt: "asc" }],
-          select: {
-            id: true,
-            role: true,
-            userId: true,
-            user: { select: { email: true, name: true } },
-          },
-        })
+      organizations = await listUserOrganizations(user.id)
+      const active = await getActiveOrganization(user.id)
+      if (active) {
+        const [memberRows, inviteRows] = await Promise.all([
+          prisma.organizationMember.findMany({
+            where: { organizationId: active.id },
+            orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+            select: {
+              id: true,
+              role: true,
+              userId: true,
+              user: { select: { email: true, name: true } },
+            },
+          }),
+          prisma.organizationInvite.findMany({
+            where: {
+              organizationId: active.id,
+              acceptedAt: null,
+              expiresAt: { gt: new Date() },
+            },
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              email: true,
+              role: true,
+              expiresAt: true,
+            },
+          }),
+        ])
         organization = {
-          id: primary.id,
-          name: primary.name,
-          role: isOrgRole(primary.role) ? primary.role : "viewer",
+          id: active.id,
+          name: active.name,
+          role: isOrgRole(active.role) ? active.role : "viewer",
           members: memberRows.map((member) => ({
             id: member.id,
             role: member.role,
@@ -141,6 +171,12 @@ export default async function SettingsPage() {
             email: member.user.email,
             name: member.user.name,
             isSelf: member.userId === user.id,
+          })),
+          invites: inviteRows.map((invite) => ({
+            id: invite.id,
+            email: invite.email,
+            role: invite.role,
+            expiresAt: invite.expiresAt.toISOString(),
           })),
         }
       }
@@ -159,8 +195,8 @@ export default async function SettingsPage() {
           Settings
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
-          Runtime readiness, organization roles, integration status, and security
-          posture for the Aether workspace.
+          Runtime readiness, organization roles, invites, integration status, and
+          security posture for the Aether workspace.
         </p>
       </div>
 
@@ -170,6 +206,8 @@ export default async function SettingsPage() {
           organizationName={organization.name}
           actorRole={organization.role}
           members={organization.members}
+          invites={organization.invites}
+          organizations={organizations}
         />
       ) : null}
 
@@ -308,7 +346,7 @@ export default async function SettingsPage() {
           {
             label: "Role controls",
             value:
-              "Owner / admin / member / viewer roles gate write, delete, and membership management.",
+              "Owner / admin / member / viewer roles gate write, delete, and membership management. Active workspace switching and pending invites included.",
           },
         ].map((item) => (
           <div

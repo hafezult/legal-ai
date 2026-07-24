@@ -125,11 +125,20 @@ export async function requireMatterPermission(
   }
 }
 
-/** Primary organization for a user (prefer owned workspace). */
-export async function getPrimaryOrganization(userId: string) {
-  const owned = await prisma.organizationMember.findFirst({
-    where: { userId, role: "owner" },
-    orderBy: { createdAt: "asc" },
+export type OrganizationSummary = {
+  id: string
+  name: string
+  slug: string
+  role: OrgRole
+}
+
+/** All organizations the user belongs to, owners first then join order. */
+export async function listUserOrganizations(
+  userId: string
+): Promise<OrganizationSummary[]> {
+  const memberships = await prisma.organizationMember.findMany({
+    where: { userId },
+    orderBy: [{ createdAt: "asc" }],
     select: {
       role: true,
       organization: {
@@ -141,26 +150,94 @@ export async function getPrimaryOrganization(userId: string) {
       },
     },
   })
-  if (owned) {
-    return { ...owned.organization, role: owned.role as OrgRole }
+
+  const summaries = memberships
+    .filter((membership) => isOrgRole(membership.role))
+    .map((membership) => ({
+      ...membership.organization,
+      role: membership.role as OrgRole,
+    }))
+
+  return summaries.sort((a, b) => {
+    if (a.role === "owner" && b.role !== "owner") return -1
+    if (b.role === "owner" && a.role !== "owner") return 1
+    return a.name.localeCompare(b.name)
+  })
+}
+
+/** Primary organization for a user (prefer owned workspace). */
+export async function getPrimaryOrganization(
+  userId: string
+): Promise<OrganizationSummary | null> {
+  const organizations = await listUserOrganizations(userId)
+  if (organizations.length === 0) return null
+  return organizations.find((org) => org.role === "owner") ?? organizations[0]
+}
+
+/**
+ * Active workspace organization for matter creation and settings.
+ * Falls back to the primary org when the stored selection is missing or stale.
+ */
+export async function getActiveOrganization(
+  userId: string
+): Promise<OrganizationSummary | null> {
+  const organizations = await listUserOrganizations(userId)
+  if (organizations.length === 0) return null
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { activeOrganizationId: true },
+  })
+
+  const active = user?.activeOrganizationId
+    ? organizations.find((org) => org.id === user.activeOrganizationId)
+    : null
+
+  if (active) return active
+
+  const primary = organizations.find((org) => org.role === "owner") ?? organizations[0]
+
+  if (user && user.activeOrganizationId !== primary.id) {
+    try {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { activeOrganizationId: primary.id },
+      })
+    } catch {
+      /* Best-effort persistence of the active workspace */
+    }
   }
 
-  const any = await prisma.organizationMember.findFirst({
-    where: { userId },
-    orderBy: { createdAt: "asc" },
+  return primary
+}
+
+/** Persist the user's active organization when they hold membership. */
+export async function setActiveOrganization(
+  userId: string,
+  organizationId: string
+): Promise<OrganizationSummary | null> {
+  const membership = await prisma.organizationMember.findUnique({
+    where: {
+      organizationId_userId: { organizationId, userId },
+    },
     select: {
       role: true,
       organization: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-        },
+        select: { id: true, name: true, slug: true },
       },
     },
   })
-  if (!any) return null
-  return { ...any.organization, role: any.role as OrgRole }
+  if (!membership || !isOrgRole(membership.role)) return null
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { activeOrganizationId: organizationId },
+  })
+
+  return {
+    ...membership.organization,
+    role: membership.role,
+  }
 }
 
 /**
@@ -175,7 +252,19 @@ export async function ensurePersonalOrganization(user: {
     where: { userId: user.id, role: "owner" },
     select: { organizationId: true },
   })
-  if (existing) return existing.organizationId
+  if (existing) {
+    const current = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { activeOrganizationId: true },
+    })
+    if (!current?.activeOrganizationId) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { activeOrganizationId: existing.organizationId },
+      })
+    }
+    return existing.organizationId
+  }
 
   const baseName = user.name?.trim() || user.email.split("@")[0] || "Workspace"
   const name = `${baseName}'s workspace`
@@ -200,5 +289,72 @@ export async function ensurePersonalOrganization(user: {
     select: { id: true },
   })
 
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { activeOrganizationId: organization.id },
+  })
+
   return organization.id
+}
+
+const INVITE_TTL_MS = 1000 * 60 * 60 * 24 * 14
+
+/** Accept outstanding email invites for a newly synced user. */
+export async function acceptPendingOrganizationInvites(user: {
+  id: string
+  email: string
+}) {
+  if (!user.email) return 0
+
+  const now = new Date()
+  const invites = await prisma.organizationInvite.findMany({
+    where: {
+      email: { equals: user.email, mode: "insensitive" },
+      acceptedAt: null,
+      expiresAt: { gt: now },
+    },
+    select: {
+      id: true,
+      organizationId: true,
+      role: true,
+    },
+  })
+
+  let accepted = 0
+  for (const invite of invites) {
+    const role: OrgRole =
+      invite.role !== "owner" && isOrgRole(invite.role) ? invite.role : "member"
+
+    const existing = await prisma.organizationMember.findUnique({
+      where: {
+        organizationId_userId: {
+          organizationId: invite.organizationId,
+          userId: user.id,
+        },
+      },
+      select: { id: true },
+    })
+
+    if (!existing) {
+      await prisma.organizationMember.create({
+        data: {
+          organizationId: invite.organizationId,
+          userId: user.id,
+          role,
+        },
+      })
+    }
+
+    await prisma.organizationInvite.update({
+      where: { id: invite.id },
+      data: { acceptedAt: now },
+    })
+    accepted += 1
+  }
+
+  return accepted
+}
+
+export function inviteExpiryDate(from: Date = new Date()) {
+  return new Date(from.getTime() + INVITE_TTL_MS)
 }

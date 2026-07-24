@@ -1,13 +1,18 @@
 "use server"
 
+import { randomBytes } from "crypto"
+
 import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import {
+  getActiveOrganization,
+  inviteExpiryDate,
   isOrgRole,
   ORG_ROLES,
   roleAtLeast,
+  setActiveOrganization,
   type OrgRole,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
@@ -15,6 +20,7 @@ import { prisma } from "@/lib/prisma"
 export type OrganizationActionState = {
   error?: string
   success?: boolean
+  inviteCreated?: boolean
 }
 
 async function requireActor() {
@@ -43,6 +49,35 @@ async function requireOrgAdmin(userId: string, organizationId: string) {
     return { error: "Admin role required to manage members." as const }
   }
   return { role: membership.role as OrgRole }
+}
+
+export async function switchActiveOrganization(
+  organizationId: string
+): Promise<OrganizationActionState> {
+  const actor = await requireActor()
+  if ("error" in actor) return { error: actor.error }
+
+  try {
+    const active = await setActiveOrganization(actor.user.id, organizationId)
+    if (!active) {
+      return { error: "Organization not found or access denied." }
+    }
+
+    await recordAuditEvent({
+      userId: actor.user.id,
+      action: "organization.switch",
+      entityType: "organization",
+      entityId: organizationId,
+      summary: `Switched active workspace to “${active.name}”`,
+    })
+  } catch {
+    return { error: "Unable to switch organization. Please try again." }
+  }
+
+  revalidatePath("/app", "layout")
+  revalidatePath("/app/settings")
+  revalidatePath("/app/matters")
+  return { success: true }
 }
 
 export async function renameOrganization(
@@ -80,6 +115,7 @@ export async function renameOrganization(
     return { error: "Unable to rename organization. Please try again." }
   }
 
+  revalidatePath("/app", "layout")
   revalidatePath("/app/settings")
   return { success: true }
 }
@@ -110,47 +146,145 @@ export async function addOrganizationMember(
       where: { email: { equals: emailNormalized, mode: "insensitive" } },
       select: { id: true, email: true, name: true },
     })
-    if (!target) {
-      return {
-        error:
-          "No Aether user found with that email. They must sign in once before being added.",
-      }
-    }
-    if (target.id === actor.user.id) {
-      return { error: "You are already a member of this organization." }
-    }
 
-    const existing = await prisma.organizationMember.findUnique({
-      where: {
-        organizationId_userId: {
+    if (target) {
+      if (target.id === actor.user.id) {
+        return { error: "You are already a member of this organization." }
+      }
+
+      const existing = await prisma.organizationMember.findUnique({
+        where: {
+          organizationId_userId: {
+            organizationId,
+            userId: target.id,
+          },
+        },
+        select: { id: true },
+      })
+      if (existing) {
+        return { error: "That user is already a member of this organization." }
+      }
+
+      await prisma.organizationMember.create({
+        data: {
           organizationId,
           userId: target.id,
+          role,
         },
+      })
+
+      await prisma.organizationInvite.updateMany({
+        where: {
+          organizationId,
+          email: { equals: emailNormalized, mode: "insensitive" },
+          acceptedAt: null,
+        },
+        data: { acceptedAt: new Date() },
+      })
+
+      await recordAuditEvent({
+        userId: actor.user.id,
+        action: "organization.member_add",
+        entityType: "organization_member",
+        entityId: organizationId,
+        summary: `Added ${target.email} as ${role}`,
+        metadata: { targetUserId: target.id, role },
+      })
+
+      revalidatePath("/app/settings")
+      return { success: true }
+    }
+
+    const pending = await prisma.organizationInvite.findFirst({
+      where: {
+        organizationId,
+        email: { equals: emailNormalized, mode: "insensitive" },
+        acceptedAt: null,
+        expiresAt: { gt: new Date() },
       },
       select: { id: true },
     })
-    if (existing) {
-      return { error: "That user is already a member of this organization." }
+    if (pending) {
+      return {
+        error:
+          "An invite is already pending for that email. Revoke it before sending another.",
+      }
     }
 
-    await prisma.organizationMember.create({
-      data: {
+    const token = randomBytes(24).toString("hex")
+    const expiresAt = inviteExpiryDate()
+
+    await prisma.organizationInvite.upsert({
+      where: {
+        organizationId_email: {
+          organizationId,
+          email: emailNormalized,
+        },
+      },
+      create: {
         organizationId,
-        userId: target.id,
+        email: emailNormalized,
         role,
+        token,
+        invitedByUserId: actor.user.id,
+        expiresAt,
+      },
+      update: {
+        role,
+        token,
+        invitedByUserId: actor.user.id,
+        expiresAt,
+        acceptedAt: null,
       },
     })
 
     await recordAuditEvent({
       userId: actor.user.id,
-      action: "organization.member_add",
-      entityType: "organization_member",
+      action: "organization.invite_create",
+      entityType: "organization_invite",
       entityId: organizationId,
-      summary: `Added ${target.email} as ${role}`,
-      metadata: { targetUserId: target.id, role },
+      summary: `Invited ${emailNormalized} as ${role}`,
+      metadata: { role, expiresAt: expiresAt.toISOString() },
     })
   } catch {
-    return { error: "Unable to add member. Please try again." }
+    return { error: "Unable to add member or create invite. Please try again." }
+  }
+
+  revalidatePath("/app/settings")
+  return { success: true, inviteCreated: true }
+}
+
+export async function revokeOrganizationInvite(
+  organizationId: string,
+  inviteId: string
+): Promise<OrganizationActionState> {
+  const actor = await requireActor()
+  if ("error" in actor) return { error: actor.error }
+
+  try {
+    const admin = await requireOrgAdmin(actor.user.id, organizationId)
+    if ("error" in admin) return { error: admin.error }
+
+    const invite = await prisma.organizationInvite.findFirst({
+      where: { id: inviteId, organizationId },
+      select: { id: true, email: true, acceptedAt: true },
+    })
+    if (!invite) return { error: "Invite not found." }
+    if (invite.acceptedAt) {
+      return { error: "That invite was already accepted." }
+    }
+
+    await prisma.organizationInvite.delete({ where: { id: invite.id } })
+
+    await recordAuditEvent({
+      userId: actor.user.id,
+      action: "organization.invite_revoke",
+      entityType: "organization_invite",
+      entityId: invite.id,
+      summary: `Revoked invite for ${invite.email}`,
+    })
+  } catch {
+    return { error: "Unable to revoke invite. Please try again." }
   }
 
   revalidatePath("/app/settings")
@@ -241,6 +375,18 @@ export async function removeOrganizationMember(
     }
 
     await prisma.organizationMember.delete({ where: { id: member.id } })
+
+    const removedUser = await prisma.user.findUnique({
+      where: { id: member.userId },
+      select: { activeOrganizationId: true },
+    })
+    if (removedUser?.activeOrganizationId === organizationId) {
+      const fallback = await getActiveOrganization(member.userId)
+      await prisma.user.update({
+        where: { id: member.userId },
+        data: { activeOrganizationId: fallback?.id ?? null },
+      })
+    }
 
     await recordAuditEvent({
       userId: actor.user.id,
