@@ -11,6 +11,7 @@ import { ensureBucket, removeFromStorage, uploadToStorage } from "@/lib/storage/
 export type DocumentUploadState = {
   error?: string
   success?: boolean
+  warning?: string
 }
 
 export type DocumentIndexState = {
@@ -205,8 +206,8 @@ export async function uploadDocument(
     return { error: "Document registration failed. Storage entry removed." }
   }
 
-  // Fire-and-forget: trigger async indexing pipeline.
-  void triggerIndexing(documentId)
+  // Await indexing trigger so uploaders see immediate failure/retry state.
+  const indexing = await triggerIndexing(documentId)
 
   await recordAuditEvent({
     userId: ownerUserId,
@@ -215,14 +216,23 @@ export async function uploadDocument(
     entityId: documentId,
     matterId,
     summary: `Uploaded document “${file.name}”`,
-    metadata: { mimeType: documentType.mimeType, fileSize: file.size },
+    metadata: {
+      mimeType: documentType.mimeType,
+      fileSize: file.size,
+      indexingTriggered: !indexing.error,
+    },
   })
 
   revalidatePath(`/app/matters/${matterId}`)
   revalidatePath("/app/documents")
   revalidatePath("/app/workflows")
   revalidatePath("/app/settings")
-  return { success: true }
+  return {
+    success: true,
+    warning: indexing.error
+      ? `${indexing.error} The document was saved — use Retry indexing when ready.`
+      : undefined,
+  }
 }
 
 export async function reindexDocument(

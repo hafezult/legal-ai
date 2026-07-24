@@ -297,6 +297,10 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
       .map((document) => document.storagePath)
       .filter((path): path is string => Boolean(path))
 
+    const organizationId = permission.access.organizationId
+
+    // Delete first, then audit without matterId FK (SetNull would still fail
+    // if we pointed at the deleted row). Keep organizationId for org trails.
     await prisma.matter.delete({ where: { id: matter.id } })
 
     await recordAuditEvent({
@@ -304,9 +308,14 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
       action: "matter.delete",
       entityType: "matter",
       entityId: matter.id,
-      matterId: matter.id,
+      matterId: null,
+      organizationId,
       summary: `Deleted matter “${deletedTitle}”`,
-      metadata: { documentCount: matter.documents.length, role: permission.access.role },
+      metadata: {
+        documentCount: matter.documents.length,
+        role: permission.access.role,
+        deletedMatterId: matter.id,
+      },
     })
   } catch {
     return { error: "Unable to delete matter. Please try again." }

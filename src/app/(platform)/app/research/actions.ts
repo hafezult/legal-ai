@@ -7,10 +7,13 @@ import { recordAuditEvent } from "@/lib/audit"
 import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
+import { consumeRateLimit } from "@/lib/rate-limit"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
 import { MAX_RESEARCH_QUERY_CHARS } from "@/lib/research/limits"
+
+const RESEARCH_RATE_LIMIT = { limit: 12, windowMs: 60_000 } as const
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -138,6 +141,14 @@ export async function runResearch(
     user = await prisma.user.findUnique({ where: { clerkId } })
     if (!user) return emptyResult("User session not found.")
 
+    const throttle = consumeRateLimit(`research:${user.id}`, RESEARCH_RATE_LIMIT)
+    if (!throttle.ok) {
+      const seconds = Math.ceil(throttle.retryAfterMs / 1000)
+      return emptyResult(
+        `Research rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`
+      )
+    }
+
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) return emptyResult(permission.error)
 
@@ -220,6 +231,7 @@ export async function runResearch(
 
   // Persist research session and open a matter conversation thread
   let sessionId = ""
+  let persistenceError: string | undefined
   try {
     const session = await prisma.researchSession.create({
       data: {
@@ -267,7 +279,8 @@ export async function runResearch(
       })
     }
   } catch {
-    /* Non-fatal — session persistence failure should not break research */
+    persistenceError =
+      "Research completed, but the session could not be saved to matter history."
   }
 
   revalidatePath(`/app/matters/${matterId}`)
@@ -286,7 +299,7 @@ export async function runResearch(
     retrievalCount: chunks.length,
     indexedChunks,
     embeddingConfigured: true,
-    error: generationError,
+    error: generationError ?? persistenceError,
   }
 }
 

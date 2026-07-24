@@ -17,6 +17,7 @@ import {
   listUserOrganizations,
   ORG_ROLES,
   roleAtLeast,
+  roleStrictlyAbove,
   setActiveOrganization,
   transferOrganizationOwnership,
   type OrgRole,
@@ -270,6 +271,9 @@ export async function addOrganizationMember(
   try {
     const admin = await requireOrgAdmin(actor.user.id, organizationId)
     if ("error" in admin) return { error: admin.error }
+    if (!roleStrictlyAbove(admin.role, role)) {
+      return { error: "You can only assign roles below your own." }
+    }
 
     const target = await prisma.user.findFirst({
       where: { email: { equals: emailNormalized, mode: "insensitive" } },
@@ -392,7 +396,6 @@ export async function addOrganizationMember(
       metadata: {
         role,
         expiresAt: expiresAt.toISOString(),
-        inviteUrl,
         emailSent: emailResult.sent,
         emailReason: emailResult.sent ? undefined : emailResult.reason,
       },
@@ -467,8 +470,12 @@ export async function deleteOrganization(
       action: "organization.delete",
       entityType: "organization",
       entityId: organizationId,
+      organizationId: null,
       summary: `Deleted organization “${result.organizationName}”`,
-      metadata: { matterCount: result.matterCount },
+      metadata: {
+        matterCount: result.matterCount,
+        deletedOrganizationId: organizationId,
+      },
     })
 
     revalidatePath("/app", "layout")
@@ -548,6 +555,12 @@ export async function updateOrganizationMemberRole(
     if (member.role === "owner") {
       return { error: "The organization owner role cannot be changed." }
     }
+    if (!isOrgRole(member.role) || !roleStrictlyAbove(admin.role, member.role)) {
+      return { error: "You can only change roles for members below your own rank." }
+    }
+    if (!roleStrictlyAbove(admin.role, role)) {
+      return { error: "You can only assign roles below your own." }
+    }
     if (member.userId === actor.user.id && admin.role !== "owner") {
       return { error: "Admins cannot change their own role." }
     }
@@ -597,6 +610,9 @@ export async function removeOrganizationMember(
     if (!member) return { error: "Member not found." }
     if (member.role === "owner") {
       return { error: "The organization owner cannot be removed." }
+    }
+    if (!isOrgRole(member.role) || !roleStrictlyAbove(admin.role, member.role)) {
+      return { error: "You can only remove members below your own rank." }
     }
     if (member.userId === actor.user.id) {
       return { error: "Use a different admin account to remove yourself." }

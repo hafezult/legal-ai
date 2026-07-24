@@ -53,10 +53,12 @@ export function DocumentUploadZone({ uploadAction }: Props) {
   const [file, setFile] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const pick = useCallback((f: File) => {
     setError(null)
+    setWarning(null)
     if (!isAcceptedDocumentFile(f)) {
       setError(`Unsupported format. Accepted: ${FORMAT_LABEL}.`)
       setPhase("error")
@@ -93,6 +95,7 @@ export function DocumentUploadZone({ uploadAction }: Props) {
     setFile(null)
     setPhase("idle")
     setError(null)
+    setWarning(null)
     if (inputRef.current) inputRef.current.value = ""
   }, [])
 
@@ -102,6 +105,7 @@ export function DocumentUploadZone({ uploadAction }: Props) {
     fd.append("file", file)
     setPhase("uploading")
     setError(null)
+    setWarning(null)
 
     startTransition(async () => {
       const result = await uploadAction({}, fd)
@@ -109,11 +113,15 @@ export function DocumentUploadZone({ uploadAction }: Props) {
         setError(result.error)
         setPhase("error")
       } else {
+        setWarning(result.warning ?? null)
         setPhase("success")
         setFile(null)
         if (inputRef.current) inputRef.current.value = ""
         router.refresh()
-        setTimeout(() => setPhase("idle"), 4000)
+        setTimeout(() => {
+          setPhase("idle")
+          setWarning(null)
+        }, 5000)
       }
     })
   }, [file, uploadAction, router])
@@ -128,7 +136,9 @@ export function DocumentUploadZone({ uploadAction }: Props) {
           Source ingestion initialized.
         </p>
         <p className="mt-0.5 text-xs text-white/32">
-          Document queued for indexing. Registry updated below.
+          {warning
+            ? warning
+            : "Document queued for indexing. Registry updated below."}
         </p>
       </div>
     )

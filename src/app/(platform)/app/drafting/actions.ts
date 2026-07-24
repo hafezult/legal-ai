@@ -13,8 +13,11 @@ import {
   type DraftType,
 } from "@/lib/drafting/types"
 import { prisma } from "@/lib/prisma"
+import { consumeRateLimit } from "@/lib/rate-limit"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
+
+const DRAFT_RATE_LIMIT = { limit: 12, windowMs: 60_000 } as const
 
 export type DraftSourceChunk = {
   id: string
@@ -165,6 +168,14 @@ export async function generateDraft(
     user = await prisma.user.findUnique({ where: { clerkId }, select: { id: true } })
     if (!user) return emptyResult("User session not found.")
 
+    const throttle = consumeRateLimit(`draft:${user.id}`, DRAFT_RATE_LIMIT)
+    if (!throttle.ok) {
+      const seconds = Math.ceil(throttle.retryAfterMs / 1000)
+      return emptyResult(
+        `Drafting rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`
+      )
+    }
+
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) return emptyResult(permission.error)
 
@@ -234,6 +245,7 @@ export async function generateDraft(
   const title = draftTitle(draftType, instruction)
 
   let draftId = ""
+  let persistenceError: string | undefined
   try {
     const draft = await prisma.draftDocument.create({
       data: {
@@ -264,7 +276,8 @@ export async function generateDraft(
       data: { updatedAt: new Date() },
     })
   } catch {
-    /* Non-fatal — draft persistence failure should not discard generated content */
+    persistenceError =
+      "Draft generated, but it could not be saved to matter history."
   }
 
   revalidatePath("/app/drafting")
@@ -285,7 +298,7 @@ export async function generateDraft(
     retrievalCount: chunks.length,
     indexedChunks,
     embeddingConfigured: true,
-    error: generationError,
+    error: generationError ?? persistenceError,
   }
 }
 

@@ -138,21 +138,42 @@ export default async function SettingsPage() {
     if (user) {
       organizations = await listUserOrganizations(user.id)
       const active = await getActiveOrganization(user.id)
+      const activeRole =
+        active && isOrgRole(active.role) ? active.role : "viewer"
+      const canManageMembers = roleHasPermission(activeRole, "manage_members")
+
+      // Membership/invite events include emails — only owners/admins see them.
+      const memberAdminActions = [
+        "organization.invite_create",
+        "organization.invite_revoke",
+        "organization.invite_accept",
+        "organization.member_add",
+        "organization.member_role",
+        "organization.member_remove",
+        "organization.ownership_transfer",
+      ] as const
 
       // Scope activity via organizationId: active-org events, plus the actor's
       // personal/legacy (organizationId null) trail. Do not leak other orgs.
       activity = await prisma.auditEvent.findMany({
         where: {
-          OR: [
-            ...(active ? [{ organizationId: active.id }] : []),
+          AND: [
             {
-              userId: user.id,
-              organizationId: null,
               OR: [
-                { matterId: null },
-                { matter: { userId: user.id, organizationId: null } },
+                ...(active ? [{ organizationId: active.id }] : []),
+                {
+                  userId: user.id,
+                  organizationId: null,
+                  OR: [
+                    { matterId: null },
+                    { matter: { userId: user.id, organizationId: null } },
+                  ],
+                },
               ],
             },
+            ...(canManageMembers
+              ? []
+              : [{ NOT: { action: { in: [...memberAdminActions] } } }]),
           ],
         },
         orderBy: { createdAt: "desc" },
@@ -168,8 +189,7 @@ export default async function SettingsPage() {
       })
 
       if (active) {
-        const activeRole = isOrgRole(active.role) ? active.role : "viewer"
-        const canManageInvites = roleHasPermission(activeRole, "manage_members")
+        const canManageInvites = canManageMembers
 
         const [memberRows, inviteRows] = await Promise.all([
           prisma.organizationMember.findMany({

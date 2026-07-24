@@ -32,6 +32,11 @@ export function roleAtLeast(role: OrgRole, minimum: OrgRole): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[minimum]
 }
 
+/** True when the actor outranks the target (strictly greater privilege). */
+export function roleStrictlyAbove(actor: OrgRole, target: OrgRole): boolean {
+  return ROLE_RANK[actor] > ROLE_RANK[target]
+}
+
 export function roleHasPermission(role: OrgRole, permission: OrgPermission): boolean {
   return ROLE_PERMISSIONS[role].has(permission)
 }
@@ -384,7 +389,7 @@ export async function acceptPendingOrganizationInvites(user: {
           userId: user.id,
         },
       },
-      select: { id: true },
+      select: { id: true, role: true },
     })
 
     if (!existing) {
@@ -394,6 +399,16 @@ export async function acceptPendingOrganizationInvites(user: {
           userId: user.id,
           role,
         },
+      })
+    } else if (
+      isOrgRole(existing.role) &&
+      existing.role !== "owner" &&
+      roleStrictlyAbove(role, existing.role)
+    ) {
+      // Re-invite with a higher role upgrades the existing membership.
+      await prisma.organizationMember.update({
+        where: { id: existing.id },
+        data: { role },
       })
     }
 
@@ -518,8 +533,10 @@ export async function acceptOrganizationInviteByToken(
         userId: user.id,
       },
     },
-    select: { id: true },
+    select: { id: true, role: true },
   })
+
+  let effectiveRole = role
 
   if (!existing) {
     await prisma.organizationMember.create({
@@ -529,6 +546,18 @@ export async function acceptOrganizationInviteByToken(
         role,
       },
     })
+  } else if (isOrgRole(existing.role) && existing.role === "owner") {
+    effectiveRole = "owner"
+  } else if (
+    isOrgRole(existing.role) &&
+    roleStrictlyAbove(role, existing.role)
+  ) {
+    await prisma.organizationMember.update({
+      where: { id: existing.id },
+      data: { role },
+    })
+  } else if (isOrgRole(existing.role)) {
+    effectiveRole = existing.role
   }
 
   await prisma.organizationInvite.update({
@@ -545,7 +574,7 @@ export async function acceptOrganizationInviteByToken(
     ok: true,
     organizationId: invite.organizationId,
     organizationName: invite.organization.name,
-    role,
+    role: effectiveRole,
   }
 }
 
