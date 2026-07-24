@@ -42,6 +42,13 @@ type OrganizationOption = {
 
 const ROLE_OPTIONS = ["viewer", "member", "admin"] as const
 
+/** Roles the actor may assign (must be strictly below their own rank). */
+function assignableRolesFor(actorRole: string): readonly (typeof ROLE_OPTIONS)[number][] {
+  if (actorRole === "owner") return ROLE_OPTIONS
+  if (actorRole === "admin") return ROLE_OPTIONS.filter((role) => role !== "admin")
+  return []
+}
+
 function fmtExpiry(iso: string) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -99,6 +106,7 @@ export function OrganizationAccessPanel({
   const isOwner = actorRole === "owner"
   const canLeave = actorRole !== "owner"
   const showSwitcher = organizations.length > 1
+  const assignableRoles = assignableRolesFor(actorRole)
   const transferCandidates = members.filter(
     (member) => member.role !== "owner" && !member.isSelf
   )
@@ -280,7 +288,7 @@ export function OrganizationAccessPanel({
                 disabled={isPending}
                 className="rounded-lg border border-white/[0.08] bg-black/25 px-2 py-2 text-sm text-white/70 outline-none"
               >
-                {ROLE_OPTIONS.map((role) => (
+                {assignableRoles.map((role) => (
                   <option key={role} value={role}>
                     {role}
                   </option>
@@ -359,6 +367,15 @@ export function OrganizationAccessPanel({
         </div>
         {members.map((member) => {
           const locked = member.role === "owner"
+          const canEditMember =
+            canManage &&
+            !locked &&
+            (isOwner || assignableRoles.includes(member.role as (typeof ROLE_OPTIONS)[number]))
+          const memberRoleOptions =
+            canEditMember &&
+            !assignableRoles.includes(member.role as (typeof ROLE_OPTIONS)[number])
+              ? ([member.role, ...assignableRoles] as string[])
+              : assignableRoles
           return (
             <div
               key={member.id}
@@ -375,7 +392,7 @@ export function OrganizationAccessPanel({
                 </p>
                 <p className="mt-0.5 truncate text-[11px] text-white/28">{member.email}</p>
               </div>
-              {canManage && !locked ? (
+              {canEditMember ? (
                 <select
                   value={member.role}
                   disabled={isPending}
@@ -392,7 +409,7 @@ export function OrganizationAccessPanel({
                   }
                   className="w-28 shrink-0 rounded-md border border-white/[0.08] bg-black/25 px-2 py-1.5 text-xs text-white/65 outline-none"
                 >
-                  {ROLE_OPTIONS.map((role) => (
+                  {memberRoleOptions.map((role) => (
                     <option key={role} value={role}>
                       {role}
                     </option>
@@ -404,7 +421,7 @@ export function OrganizationAccessPanel({
                 </span>
               )}
               <div className="w-20 shrink-0 text-right">
-                {canManage && !locked && !member.isSelf ? (
+                {canEditMember && !member.isSelf ? (
                   <button
                     type="button"
                     disabled={isPending}

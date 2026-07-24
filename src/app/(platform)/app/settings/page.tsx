@@ -282,8 +282,9 @@ export default async function SettingsPage() {
             </p>
             <p className="mt-1.5 text-sm leading-relaxed text-white/40">
               Secret values are never displayed. Configure missing services in the
-              deployment environment or local `.env.local`. Aggregate live status is
-              also exposed at <code className="text-white/55">/api/health</code>.
+              deployment environment or local `.env.local`. Public{" "}
+              <code className="text-white/55">/api/health</code> is process
+              liveness only; the dependency probes below are Settings-private.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

@@ -55,7 +55,7 @@ export default async function WorkflowsPage() {
       const rows = await prisma.document.findMany({
         where: { matter: matterWhere },
         orderBy: { uploadedAt: "desc" },
-        take: 12,
+        take: 40,
         select: {
           id: true,
           fileName: true,
