@@ -17,6 +17,14 @@ export async function removeFromStorage(path: string) {
   return client.storage.from(STORAGE_BUCKET).remove([path])
 }
 
+export async function removeManyFromStorage(paths: string[]) {
+  const uniquePaths = [...new Set(paths.filter(Boolean))]
+  if (uniquePaths.length === 0) return { data: [], error: null }
+
+  const client = getSupabaseAdmin()
+  return client.storage.from(STORAGE_BUCKET).remove(uniquePaths)
+}
+
 export async function createSignedUrl(path: string, expiresIn = 3600) {
   const client = getSupabaseAdmin()
   return client.storage.from(STORAGE_BUCKET).createSignedUrl(path, expiresIn)
