@@ -1,6 +1,7 @@
 "use server"
 
 import { auth } from "@clerk/nextjs/server"
+import { revalidatePath } from "next/cache"
 
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
@@ -101,7 +102,7 @@ export async function runResearch(
   matterId: string,
   query: string
 ): Promise<ResearchOutput> {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
 
   const emptyResult = (error: string): ResearchOutput => ({
     query,
@@ -224,4 +225,48 @@ export async function runResearch(
     indexedChunks,
     embeddingConfigured: true,
   }
+}
+
+export type ResearchSessionDeleteState = {
+  error?: string
+  success?: boolean
+}
+
+export async function deleteResearchSession(
+  sessionId: string
+): Promise<ResearchSessionDeleteState> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { error: "Authentication required." }
+  if (!sessionId) return { error: "Session id is required." }
+
+  let matterId: string | null = null
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const researchSession = await prisma.researchSession.findFirst({
+      where: { id: sessionId, userId: user.id },
+      select: { id: true, matterId: true },
+    })
+    if (!researchSession) return { error: "Research session not found or access denied." }
+
+    matterId = researchSession.matterId
+    await prisma.researchSession.delete({ where: { id: researchSession.id } })
+  } catch {
+    return { error: "Data layer unreachable. Please try again." }
+  }
+
+  revalidatePath("/app/research")
+  revalidatePath("/app")
+  revalidatePath("/app/memory")
+  revalidatePath("/app/workflows")
+  if (matterId) {
+    revalidatePath(`/app/matters/${matterId}`)
+  }
+
+  return { success: true }
 }
