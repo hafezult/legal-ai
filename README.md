@@ -79,7 +79,7 @@ For build-only validation without live service credentials, use syntactically va
 
 ## Database notes
 
-The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. A later migration adds `ConversationMessage` rows for thread history. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
+The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history and `AuditEvent` rows for ownership-scoped workspace activity. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
 
 ## Security notes
 
@@ -92,5 +92,6 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Matter conversations can be created or deleted with ownership checks; research queries also open a conversation thread automatically.
 - Conversation messages (user/assistant/note) are ownership-scoped through the parent matter and cascade when a conversation is deleted.
 - Research session deletion is ownership-scoped and revalidates matter/research surfaces.
+- Key mutations write ownership-scoped `AuditEvent` records (matter, document, research, conversation). Trail writes are non-fatal and surface on Settings.
 - `/api/index-document/[documentId]` requires `INDEXING_SECRET` outside local development.
 - Retrieval queries are matter-scoped at the SQL layer.

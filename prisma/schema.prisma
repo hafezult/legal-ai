@@ -20,6 +20,7 @@ model User {
 
   matters          Matter[]
   researchSessions ResearchSession[]
+  auditEvents      AuditEvent[]
 }
 
 model Matter {
@@ -115,4 +116,20 @@ model ResearchSession {
   response  String?
   chunkIds  String[]
   createdAt DateTime @default(now())
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action     String
+  entityType String
+  entityId   String?
+  matterId   String?
+  summary    String
+  metadata   String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([matterId])
 }

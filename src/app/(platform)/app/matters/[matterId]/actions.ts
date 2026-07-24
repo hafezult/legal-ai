@@ -3,6 +3,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
+import { recordAuditEvent } from "@/lib/audit"
 import { prisma } from "@/lib/prisma"
 import { ensureBucket, removeFromStorage, uploadToStorage } from "@/lib/storage/documents"
 
@@ -140,9 +141,11 @@ export async function uploadDocument(
   }
 
   // Validate matter ownership — no client-side trust
+  let ownerUserId: string
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (!user) return { error: "Session not found. Please sign in again." }
+    ownerUserId = user.id
 
     const matter = await prisma.matter.findFirst({
       where: { id: matterId, userId: user.id },
@@ -195,7 +198,20 @@ export async function uploadDocument(
   // Fire-and-forget: trigger async indexing pipeline.
   void triggerIndexing(documentId)
 
+  await recordAuditEvent({
+    userId: ownerUserId,
+    action: "document.upload",
+    entityType: "document",
+    entityId: documentId,
+    matterId,
+    summary: `Uploaded document “${file.name}”`,
+    metadata: { mimeType: documentType.mimeType, fileSize: file.size },
+  })
+
   revalidatePath(`/app/matters/${matterId}`)
+  revalidatePath("/app/documents")
+  revalidatePath("/app/workflows")
+  revalidatePath("/app/settings")
   return { success: true }
 }
 
@@ -219,7 +235,7 @@ export async function reindexDocument(
         matterId,
         matter: { userId: user.id },
       },
-      select: { id: true },
+      select: { id: true, fileName: true },
     })
     if (!document) return { error: "Document not found or access denied." }
 
@@ -231,6 +247,15 @@ export async function reindexDocument(
         parseStatus: "pending",
       },
     })
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "document.reindex",
+      entityType: "document",
+      entityId: document.id,
+      matterId,
+      summary: `Reindexed document “${document.fileName}”`,
+    })
   } catch {
     return { error: "Data layer unreachable. Please try again." }
   }
@@ -241,6 +266,7 @@ export async function reindexDocument(
   revalidatePath(`/app/matters/${matterId}/documents/${documentId}`)
   revalidatePath("/app/documents")
   revalidatePath("/app/workflows")
+  revalidatePath("/app/settings")
 
   return result
 }
@@ -267,13 +293,22 @@ export async function deleteDocument(
         matterId,
         matter: { userId: user.id },
       },
-      select: { id: true, storagePath: true },
+      select: { id: true, storagePath: true, fileName: true },
     })
     if (!document) return { error: "Document not found or access denied." }
 
     storagePath = document.storagePath
 
     await prisma.document.delete({ where: { id: document.id } })
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "document.delete",
+      entityType: "document",
+      entityId: document.id,
+      matterId,
+      summary: `Deleted document “${document.fileName}”`,
+    })
   } catch {
     return { error: "Data layer unreachable. Please try again." }
   }
@@ -286,6 +321,7 @@ export async function deleteDocument(
   revalidatePath("/app/documents")
   revalidatePath("/app/workflows")
   revalidatePath("/app/memory")
+  revalidatePath("/app/settings")
   revalidatePath("/app")
 
   return { success: true }

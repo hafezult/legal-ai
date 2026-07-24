@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 
+import { recordAuditEvent } from "@/lib/audit"
 import { prisma } from "@/lib/prisma"
 import { removeManyFromStorage } from "@/lib/storage/documents"
 
@@ -89,6 +90,16 @@ export async function createMatter(
     return { error: "Matter initialization failed. Please try again." }
   }
 
+  await recordAuditEvent({
+    userId: user.id,
+    action: "matter.create",
+    entityType: "matter",
+    entityId: matter.id,
+    matterId: matter.id,
+    summary: `Created matter “${title}”`,
+    metadata: { status, riskLevel, practiceArea },
+  })
+
   redirect(`/app/matters/${matter.id}`)
 }
 
@@ -117,13 +128,23 @@ export async function updateMatterStatus(
 
     const matter = await prisma.matter.findFirst({
       where: { id: matterId, userId: user.id },
-      select: { id: true },
+      select: { id: true, title: true },
     })
     if (!matter) return { error: "Matter not found or access denied." }
 
     await prisma.matter.update({
       where: { id: matter.id },
       data: { status },
+    })
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "matter.status_update",
+      entityType: "matter",
+      entityId: matter.id,
+      matterId: matter.id,
+      summary: `Updated matter “${matter.title}” status to ${status.replace(/_/g, " ")}`,
+      metadata: { status },
     })
   } catch {
     return { error: "Unable to update matter status. Please try again." }
@@ -132,6 +153,7 @@ export async function updateMatterStatus(
   revalidatePath(`/app/matters/${matterId}`)
   revalidatePath("/app/matters")
   revalidatePath("/app/research")
+  revalidatePath("/app/settings")
   revalidatePath("/app")
 
   return { success: true }
@@ -148,6 +170,7 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
   if (!matterId) return { error: "Matter id is required." }
 
   let storagePaths: string[] = []
+  let deletedTitle = "matter"
 
   try {
     const user = await prisma.user.findUnique({
@@ -160,6 +183,7 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
       where: { id: matterId, userId: user.id },
       select: {
         id: true,
+        title: true,
         documents: {
           select: { storagePath: true },
         },
@@ -167,11 +191,22 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
     })
     if (!matter) return { error: "Matter not found or access denied." }
 
+    deletedTitle = matter.title
     storagePaths = matter.documents
       .map((document) => document.storagePath)
       .filter((path): path is string => Boolean(path))
 
     await prisma.matter.delete({ where: { id: matter.id } })
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "matter.delete",
+      entityType: "matter",
+      entityId: matter.id,
+      matterId: matter.id,
+      summary: `Deleted matter “${deletedTitle}”`,
+      metadata: { documentCount: matter.documents.length },
+    })
   } catch {
     return { error: "Unable to delete matter. Please try again." }
   }
@@ -186,6 +221,7 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
   revalidatePath("/app/memory")
   revalidatePath("/app/workflows")
   revalidatePath("/app/drafting")
+  revalidatePath("/app/settings")
   revalidatePath("/app")
 
   return { success: true }
@@ -232,12 +268,21 @@ export async function createConversation(
         title: normalizedTitle,
       },
     })
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "conversation.create",
+      entityType: "conversation",
+      matterId: matter.id,
+      summary: `Opened conversation “${normalizedTitle}”`,
+    })
   } catch {
     return { error: "Unable to create conversation. Please try again." }
   }
 
   revalidatePath(`/app/matters/${matterId}`)
   revalidatePath("/app/memory")
+  revalidatePath("/app/settings")
   revalidatePath("/app")
 
   return { success: true }
@@ -264,12 +309,21 @@ export async function deleteConversation(
         id: conversationId,
         matter: { userId: user.id },
       },
-      select: { id: true, matterId: true },
+      select: { id: true, matterId: true, title: true },
     })
     if (!conversation) return { error: "Conversation not found or access denied." }
 
     matterId = conversation.matterId
     await prisma.conversation.delete({ where: { id: conversation.id } })
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "conversation.delete",
+      entityType: "conversation",
+      entityId: conversation.id,
+      matterId: conversation.matterId,
+      summary: `Deleted conversation “${conversation.title}”`,
+    })
   } catch {
     return { error: "Unable to delete conversation. Please try again." }
   }
@@ -278,6 +332,7 @@ export async function deleteConversation(
     revalidatePath(`/app/matters/${matterId}`)
   }
   revalidatePath("/app/memory")
+  revalidatePath("/app/settings")
   revalidatePath("/app")
 
   return { success: true }
@@ -334,6 +389,16 @@ export async function createConversationMessage(
       where: { id: conversation.matterId },
       data: { updatedAt: new Date() },
     })
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "conversation.message_create",
+      entityType: "conversation_message",
+      entityId: conversation.id,
+      matterId: conversation.matterId,
+      summary: `Added ${normalizedRole} message to conversation`,
+      metadata: { role: normalizedRole, length: normalizedContent.length },
+    })
   } catch {
     return { error: "Unable to add message. Please try again." }
   }
@@ -342,6 +407,7 @@ export async function createConversationMessage(
     revalidatePath(`/app/matters/${matterId}`)
   }
   revalidatePath("/app/memory")
+  revalidatePath("/app/settings")
   revalidatePath("/app")
 
   return { success: true }

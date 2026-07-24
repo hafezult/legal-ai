@@ -3,6 +3,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
+import { recordAuditEvent } from "@/lib/audit"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
@@ -210,6 +211,16 @@ export async function runResearch(
     })
     sessionId = session.id
 
+    await recordAuditEvent({
+      userId: user.id,
+      action: "research.run",
+      entityType: "research_session",
+      entityId: session.id,
+      matterId,
+      summary: `Ran research query on “${matter.title}”`,
+      metadata: { chunkCount: chunks.length, queryLength: query.length },
+    })
+
     const conversationTitle = query.replace(/\s+/g, " ").trim()
     if (conversationTitle) {
       await prisma.conversation.create({
@@ -240,6 +251,7 @@ export async function runResearch(
 
   revalidatePath(`/app/matters/${matterId}`)
   revalidatePath("/app/memory")
+  revalidatePath("/app/settings")
   revalidatePath("/app")
 
   return {
@@ -285,6 +297,15 @@ export async function deleteResearchSession(
 
     matterId = researchSession.matterId
     await prisma.researchSession.delete({ where: { id: researchSession.id } })
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "research.delete",
+      entityType: "research_session",
+      entityId: researchSession.id,
+      matterId: researchSession.matterId,
+      summary: "Deleted research session",
+    })
   } catch {
     return { error: "Data layer unreachable. Please try again." }
   }
@@ -293,6 +314,7 @@ export async function deleteResearchSession(
   revalidatePath("/app")
   revalidatePath("/app/memory")
   revalidatePath("/app/workflows")
+  revalidatePath("/app/settings")
   if (matterId) {
     revalidatePath(`/app/matters/${matterId}`)
   }
