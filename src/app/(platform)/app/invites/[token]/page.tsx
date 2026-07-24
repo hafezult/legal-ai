@@ -75,7 +75,7 @@ export default async function InviteAcceptPage({
     )
   }
 
-  const expired = invite.expiresAt.getTime() <= Date.now()
+  const expired = invite.expiresAt.getTime() <= new Date().getTime()
   const emailMismatch =
     Boolean(user.email) && invite.email.toLowerCase() !== user.email.toLowerCase()
 
