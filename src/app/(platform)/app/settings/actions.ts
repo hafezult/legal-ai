@@ -7,9 +7,13 @@ import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import {
+  acceptOrganizationInviteByToken,
+  buildInviteAcceptUrl,
+  createOwnedOrganization,
   getActiveOrganization,
   inviteExpiryDate,
   isOrgRole,
+  listUserOrganizations,
   ORG_ROLES,
   roleAtLeast,
   setActiveOrganization,
@@ -21,6 +25,8 @@ export type OrganizationActionState = {
   error?: string
   success?: boolean
   inviteCreated?: boolean
+  inviteUrl?: string
+  organizationId?: string
 }
 
 async function requireActor() {
@@ -49,6 +55,120 @@ async function requireOrgAdmin(userId: string, organizationId: string) {
     return { error: "Admin role required to manage members." as const }
   }
   return { role: membership.role as OrgRole }
+}
+
+export async function createOrganization(
+  name: string
+): Promise<OrganizationActionState> {
+  const actor = await requireActor()
+  if ("error" in actor) return { error: actor.error }
+
+  try {
+    const created = await createOwnedOrganization(actor.user.id, name)
+    if ("error" in created) return { error: created.error }
+
+    await recordAuditEvent({
+      userId: actor.user.id,
+      action: "organization.create",
+      entityType: "organization",
+      entityId: created.id,
+      summary: `Created organization “${created.name}”`,
+    })
+
+    revalidatePath("/app", "layout")
+    revalidatePath("/app/settings")
+    revalidatePath("/app/matters")
+    return { success: true, organizationId: created.id }
+  } catch {
+    return { error: "Unable to create organization. Please try again." }
+  }
+}
+
+export async function leaveOrganization(
+  organizationId: string
+): Promise<OrganizationActionState> {
+  const actor = await requireActor()
+  if ("error" in actor) return { error: actor.error }
+
+  try {
+    const membership = await prisma.organizationMember.findUnique({
+      where: {
+        organizationId_userId: {
+          organizationId,
+          userId: actor.user.id,
+        },
+      },
+      select: {
+        id: true,
+        role: true,
+        organization: { select: { name: true } },
+      },
+    })
+    if (!membership) {
+      return { error: "Organization not found or access denied." }
+    }
+    if (membership.role === "owner") {
+      return {
+        error:
+          "Owners cannot leave their organization. Transfer ownership or keep at least one owner workspace.",
+      }
+    }
+
+    await prisma.organizationMember.delete({ where: { id: membership.id } })
+
+    const remaining = await listUserOrganizations(actor.user.id)
+    const nextActive = remaining[0]?.id ?? null
+    await prisma.user.update({
+      where: { id: actor.user.id },
+      data: { activeOrganizationId: nextActive },
+    })
+
+    await recordAuditEvent({
+      userId: actor.user.id,
+      action: "organization.leave",
+      entityType: "organization",
+      entityId: organizationId,
+      summary: `Left organization “${membership.organization.name}”`,
+    })
+  } catch {
+    return { error: "Unable to leave organization. Please try again." }
+  }
+
+  revalidatePath("/app", "layout")
+  revalidatePath("/app/settings")
+  revalidatePath("/app/matters")
+  return { success: true }
+}
+
+export async function acceptInviteByToken(
+  token: string
+): Promise<OrganizationActionState> {
+  const actor = await requireActor()
+  if ("error" in actor) return { error: actor.error }
+
+  const trimmed = token.trim()
+  if (!trimmed) return { error: "Invite token is required." }
+
+  try {
+    const result = await acceptOrganizationInviteByToken(actor.user, trimmed)
+    if (!result.ok) return { error: result.error }
+
+    await recordAuditEvent({
+      userId: actor.user.id,
+      action: "organization.invite_accept",
+      entityType: "organization_invite",
+      entityId: result.organizationId,
+      summary: `Accepted invite to “${result.organizationName}” as ${result.role}`,
+      metadata: { role: result.role },
+    })
+
+    revalidatePath("/app", "layout")
+    revalidatePath("/app/settings")
+    revalidatePath("/app/matters")
+    return { success: true, organizationId: result.organizationId }
+  } catch {
+    return { error: "Unable to accept invite. Please try again." }
+  }
 }
 
 export async function switchActiveOrganization(
@@ -213,6 +333,7 @@ export async function addOrganizationMember(
 
     const token = randomBytes(24).toString("hex")
     const expiresAt = inviteExpiryDate()
+    const inviteUrl = buildInviteAcceptUrl(token)
 
     await prisma.organizationInvite.upsert({
       where: {
@@ -244,14 +365,14 @@ export async function addOrganizationMember(
       entityType: "organization_invite",
       entityId: organizationId,
       summary: `Invited ${emailNormalized} as ${role}`,
-      metadata: { role, expiresAt: expiresAt.toISOString() },
+      metadata: { role, expiresAt: expiresAt.toISOString(), inviteUrl },
     })
+
+    revalidatePath("/app/settings")
+    return { success: true, inviteCreated: true, inviteUrl }
   } catch {
     return { error: "Unable to add member or create invite. Please try again." }
   }
-
-  revalidatePath("/app/settings")
-  return { success: true, inviteCreated: true }
 }
 
 export async function revokeOrganizationInvite(

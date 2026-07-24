@@ -358,3 +358,150 @@ export async function acceptPendingOrganizationInvites(user: {
 export function inviteExpiryDate(from: Date = new Date()) {
   return new Date(from.getTime() + INVITE_TTL_MS)
 }
+
+function slugifyOrganizationName(name: string, salt: string) {
+  const slugBase =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 40) || "workspace"
+  return `${slugBase}-${salt}`
+}
+
+/**
+ * Create an additional organization owned by the user and switch it active.
+ */
+export async function createOwnedOrganization(
+  userId: string,
+  nameInput: string
+): Promise<OrganizationSummary | { error: string }> {
+  const name = nameInput.replace(/\s+/g, " ").trim()
+  if (!name || name.length < 2) {
+    return { error: "Organization name must be at least 2 characters." }
+  }
+  if (name.length > 80) {
+    return { error: "Organization name must be 80 characters or fewer." }
+  }
+
+  const slug = slugifyOrganizationName(name, `${userId.slice(-4)}${Date.now().toString(36).slice(-4)}`)
+
+  try {
+    const organization = await prisma.organization.create({
+      data: {
+        name,
+        slug,
+        members: {
+          create: {
+            userId,
+            role: "owner",
+          },
+        },
+      },
+      select: { id: true, name: true, slug: true },
+    })
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { activeOrganizationId: organization.id },
+    })
+
+    return {
+      id: organization.id,
+      name: organization.name,
+      slug: organization.slug,
+      role: "owner",
+    }
+  } catch {
+    return { error: "Unable to create organization. Please try a different name." }
+  }
+}
+
+/**
+ * Accept a pending invite by opaque token when the signed-in user's email matches.
+ */
+export async function acceptOrganizationInviteByToken(
+  user: { id: string; email: string },
+  token: string
+): Promise<
+  | { ok: true; organizationId: string; organizationName: string; role: OrgRole }
+  | { ok: false; error: string }
+> {
+  const invite = await prisma.organizationInvite.findUnique({
+    where: { token },
+    select: {
+      id: true,
+      email: true,
+      role: true,
+      acceptedAt: true,
+      expiresAt: true,
+      organizationId: true,
+      organization: { select: { name: true } },
+    },
+  })
+
+  if (!invite) {
+    return { ok: false, error: "Invite not found or link is invalid." }
+  }
+  if (invite.acceptedAt) {
+    return { ok: false, error: "This invite was already accepted." }
+  }
+  if (invite.expiresAt.getTime() <= Date.now()) {
+    return { ok: false, error: "This invite has expired." }
+  }
+  if (!user.email || invite.email.toLowerCase() !== user.email.toLowerCase()) {
+    return {
+      ok: false,
+      error: `Sign in with ${invite.email} to accept this invite.`,
+    }
+  }
+
+  const role: OrgRole =
+    invite.role !== "owner" && isOrgRole(invite.role) ? invite.role : "member"
+
+  const existing = await prisma.organizationMember.findUnique({
+    where: {
+      organizationId_userId: {
+        organizationId: invite.organizationId,
+        userId: user.id,
+      },
+    },
+    select: { id: true },
+  })
+
+  if (!existing) {
+    await prisma.organizationMember.create({
+      data: {
+        organizationId: invite.organizationId,
+        userId: user.id,
+        role,
+      },
+    })
+  }
+
+  await prisma.organizationInvite.update({
+    where: { id: invite.id },
+    data: { acceptedAt: new Date() },
+  })
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { activeOrganizationId: invite.organizationId },
+  })
+
+  return {
+    ok: true,
+    organizationId: invite.organizationId,
+    organizationName: invite.organization.name,
+    role,
+  }
+}
+
+/** Absolute invite acceptance URL for sharing / mailto delivery. */
+export function buildInviteAcceptUrl(token: string) {
+  const base = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(
+    /\/$/,
+    ""
+  )
+  return `${base}/app/invites/${token}`
+}

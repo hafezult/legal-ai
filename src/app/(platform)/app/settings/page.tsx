@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import {
+  buildInviteAcceptUrl,
   getActiveOrganization,
   isOrgRole,
   listUserOrganizations,
@@ -40,6 +41,7 @@ type OrgInviteRow = {
   email: string
   role: string
   expiresAt: string
+  inviteUrl: string
 }
 
 const pillClass: Record<"ready" | "missing", string> = {
@@ -157,6 +159,7 @@ export default async function SettingsPage() {
               email: true,
               role: true,
               expiresAt: true,
+              token: true,
             },
           }),
         ])
@@ -177,6 +180,7 @@ export default async function SettingsPage() {
             email: invite.email,
             role: invite.role,
             expiresAt: invite.expiresAt.toISOString(),
+            inviteUrl: buildInviteAcceptUrl(invite.token),
           })),
         }
       }
@@ -195,8 +199,8 @@ export default async function SettingsPage() {
           Settings
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
-          Runtime readiness, organization roles, invites, integration status, and
-          security posture for the Aether workspace.
+          Runtime readiness, organization creation, roles, invite delivery,
+          integration status, and security posture for the Aether workspace.
         </p>
       </div>
 
@@ -346,7 +350,7 @@ export default async function SettingsPage() {
           {
             label: "Role controls",
             value:
-              "Owner / admin / member / viewer roles gate write, delete, and membership management. Active workspace switching and pending invites included.",
+              "Owner / admin / member / viewer roles gate write, delete, and membership management. Create additional organizations, switch the active workspace, leave non-owned orgs, and deliver pending invites via copyable links or mailto.",
           },
         ].map((item) => (
           <div
