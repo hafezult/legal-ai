@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
+import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
 
@@ -168,8 +169,11 @@ export async function generateDraft(
     user = await prisma.user.findUnique({ where: { clerkId }, select: { id: true } })
     if (!user) return emptyResult("User session not found.")
 
-    matter = await prisma.matter.findFirst({
-      where: { id: matterId, userId: user.id },
+    const permission = await requireMatterPermission(user.id, matterId, "write")
+    if (!permission.ok) return emptyResult(permission.error)
+
+    matter = await prisma.matter.findUnique({
+      where: { id: matterId },
       select: { id: true, title: true },
     })
     if (!matter) return emptyResult("Matter not found or access denied.")
@@ -299,10 +303,16 @@ export async function deleteDraft(draftId: string): Promise<DraftDeleteState> {
     if (!user) return { error: "Session not found. Please sign in again." }
 
     const draft = await prisma.draftDocument.findFirst({
-      where: { id: draftId, userId: user.id },
+      where: {
+        id: draftId,
+        OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }],
+      },
       select: { id: true, matterId: true, title: true },
     })
     if (!draft) return { error: "Draft not found or access denied." }
+
+    const permission = await requireMatterPermission(user.id, draft.matterId, "write")
+    if (!permission.ok) return { error: permission.error }
 
     matterId = draft.matterId
     await prisma.draftDocument.delete({ where: { id: draft.id } })

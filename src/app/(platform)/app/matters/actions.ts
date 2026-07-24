@@ -5,6 +5,11 @@ import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 
 import { recordAuditEvent } from "@/lib/audit"
+import {
+  getPrimaryOrganization,
+  matterAccessWhere,
+  requireMatterPermission,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { removeManyFromStorage } from "@/lib/storage/documents"
 
@@ -73,6 +78,7 @@ export async function createMatter(
 
   let matter: { id: string }
   try {
+    const organization = await getPrimaryOrganization(user.id)
     matter = await prisma.matter.create({
       data: {
         title,
@@ -84,6 +90,7 @@ export async function createMatter(
         status,
         description: (formData.get("description") as string | null)?.trim() || null,
         userId: user.id,
+        organizationId: organization?.id ?? null,
       },
     })
   } catch {
@@ -126,8 +133,11 @@ export async function updateMatterStatus(
     })
     if (!user) return { error: "Session not found. Please sign in again." }
 
-    const matter = await prisma.matter.findFirst({
-      where: { id: matterId, userId: user.id },
+    const permission = await requireMatterPermission(user.id, matterId, "write")
+    if (!permission.ok) return { error: permission.error }
+
+    const matter = await prisma.matter.findUnique({
+      where: { id: matterId },
       select: { id: true, title: true },
     })
     if (!matter) return { error: "Matter not found or access denied." }
@@ -144,7 +154,7 @@ export async function updateMatterStatus(
       entityId: matter.id,
       matterId: matter.id,
       summary: `Updated matter “${matter.title}” status to ${status.replace(/_/g, " ")}`,
-      metadata: { status },
+      metadata: { status, role: permission.access.role },
     })
   } catch {
     return { error: "Unable to update matter status. Please try again." }
@@ -179,8 +189,11 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
     })
     if (!user) return { error: "Session not found. Please sign in again." }
 
-    const matter = await prisma.matter.findFirst({
-      where: { id: matterId, userId: user.id },
+    const permission = await requireMatterPermission(user.id, matterId, "delete")
+    if (!permission.ok) return { error: permission.error }
+
+    const matter = await prisma.matter.findUnique({
+      where: { id: matterId },
       select: {
         id: true,
         title: true,
@@ -205,7 +218,7 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
       entityId: matter.id,
       matterId: matter.id,
       summary: `Deleted matter “${deletedTitle}”`,
-      metadata: { documentCount: matter.documents.length },
+      metadata: { documentCount: matter.documents.length, role: permission.access.role },
     })
   } catch {
     return { error: "Unable to delete matter. Please try again." }
@@ -256,15 +269,12 @@ export async function createConversation(
     })
     if (!user) return { error: "Session not found. Please sign in again." }
 
-    const matter = await prisma.matter.findFirst({
-      where: { id: matterId, userId: user.id },
-      select: { id: true },
-    })
-    if (!matter) return { error: "Matter not found or access denied." }
+    const permission = await requireMatterPermission(user.id, matterId, "write")
+    if (!permission.ok) return { error: permission.error }
 
     const conversation = await prisma.conversation.create({
       data: {
-        matterId: matter.id,
+        matterId: permission.access.matterId,
         title: normalizedTitle,
       },
       select: { id: true },
@@ -275,7 +285,7 @@ export async function createConversation(
       action: "conversation.create",
       entityType: "conversation",
       entityId: conversation.id,
-      matterId: matter.id,
+      matterId: permission.access.matterId,
       summary: `Opened conversation “${normalizedTitle}”`,
     })
   } catch {
@@ -309,11 +319,18 @@ export async function deleteConversation(
     const conversation = await prisma.conversation.findFirst({
       where: {
         id: conversationId,
-        matter: { userId: user.id },
+        matter: matterAccessWhere(user.id),
       },
       select: { id: true, matterId: true, title: true },
     })
     if (!conversation) return { error: "Conversation not found or access denied." }
+
+    const permission = await requireMatterPermission(
+      user.id,
+      conversation.matterId,
+      "write"
+    )
+    if (!permission.ok) return { error: permission.error }
 
     matterId = conversation.matterId
     await prisma.conversation.delete({ where: { id: conversation.id } })
@@ -373,11 +390,18 @@ export async function createConversationMessage(
     const conversation = await prisma.conversation.findFirst({
       where: {
         id: conversationId,
-        matter: { userId: user.id },
+        matter: matterAccessWhere(user.id),
       },
       select: { id: true, matterId: true },
     })
     if (!conversation) return { error: "Conversation not found or access denied." }
+
+    const permission = await requireMatterPermission(
+      user.id,
+      conversation.matterId,
+      "write"
+    )
+    if (!permission.ok) return { error: permission.error }
 
     matterId = conversation.matterId
     const message = await prisma.conversationMessage.create({

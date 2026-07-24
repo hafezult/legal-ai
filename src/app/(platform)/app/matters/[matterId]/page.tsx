@@ -8,6 +8,7 @@ import { MatterConversationsPanel } from "@/components/matters/matter-conversati
 import { MatterDeleteControls } from "@/components/matters/matter-delete-controls"
 import { MatterStatusControls } from "@/components/matters/matter-status-controls"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
+import { getMatterAccess, matterAccessWhere, roleHasPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import {
   createConversation,
@@ -156,12 +157,14 @@ export default async function MatterDetailPage({
   }
 
   let matter: MatterData | null = null
+  let canWrite = false
+  let canDelete = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
       matter = await prisma.matter.findFirst({
-        where: { id: matterId, userId: user.id },
+        where: { id: matterId, ...matterAccessWhere(user.id) },
         select: {
           id: true,
           title: true,
@@ -228,6 +231,11 @@ export default async function MatterDetailPage({
           },
         },
       })
+      if (matter) {
+        const access = await getMatterAccess(user.id, matter.id)
+        canWrite = Boolean(access?.role && roleHasPermission(access.role, "write"))
+        canDelete = Boolean(access?.role && roleHasPermission(access.role, "delete"))
+      }
     }
   } catch {
     /* DB unavailable */
@@ -301,14 +309,18 @@ export default async function MatterDetailPage({
           </div>
           <div className="flex shrink-0 flex-col items-end gap-3">
             <MatterStatusPill status={matter.status} className="mt-1" />
-            <MatterStatusControls
-              currentStatus={matter.status}
-              updateAction={boundStatusUpdate}
-            />
-            <MatterDeleteControls
-              matterTitle={matter.title}
-              deleteAction={boundDeleteMatter}
-            />
+            {canWrite ? (
+              <MatterStatusControls
+                currentStatus={matter.status}
+                updateAction={boundStatusUpdate}
+              />
+            ) : null}
+            {canDelete ? (
+              <MatterDeleteControls
+                matterTitle={matter.title}
+                deleteAction={boundDeleteMatter}
+              />
+            ) : null}
           </div>
         </div>
 
@@ -354,7 +366,7 @@ export default async function MatterDetailPage({
         </div>
 
         {/* Upload zone — client component; action bound server-side */}
-        <DocumentUploadZone uploadAction={boundUpload} />
+        {canWrite ? <DocumentUploadZone uploadAction={boundUpload} /> : null}
 
         {/* Document registry */}
         {hasDocuments ? (
@@ -510,6 +522,7 @@ export default async function MatterDetailPage({
           createAction={boundCreateConversation}
           deleteAction={boundDeleteConversation}
           createMessageAction={boundCreateConversationMessage}
+          readOnly={!canWrite}
         />
       </div>
 

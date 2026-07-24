@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { notFound } from "next/navigation"
 
+import { matterAccessWhere } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities } from "@/lib/legal/authorities"
 import { createSignedUrl } from "@/lib/storage/documents"
@@ -29,7 +30,7 @@ export default async function DocumentViewerPage({
       where: {
         id: documentId,
         matterId,
-        matter: { userId: user.id },
+        matter: matterAccessWhere(user.id),
       },
       select: {
         id: true,

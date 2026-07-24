@@ -80,20 +80,23 @@ For build-only validation without live service credentials, use syntactically va
 
 ## Database notes
 
-The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history, `AuditEvent` rows for ownership-scoped workspace activity, and `DraftDocument` rows for grounded drafting outputs. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
+The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history, `AuditEvent` rows for ownership-scoped workspace activity, `DraftDocument` rows for grounded drafting outputs, and `Organization` / `OrganizationMember` tables for role-based workspace sharing. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
 
 ## Security notes
 
 - Platform routes are protected by Clerk via `src/proxy.ts`.
-- Data access is scoped through the authenticated user's persisted app row.
-- Document upload validates matter ownership server-side.
-- Document deletion removes storage objects and cascaded chunks after ownership checks.
-- Matter status updates (active / on hold / closed / archived) are ownership-scoped.
-- Matter deletion removes cascaded documents, chunks, conversations, and research sessions after ownership checks, then cleans Supabase storage objects.
-- Matter conversations can be created or deleted with ownership checks; research queries also open a conversation thread automatically.
-- Conversation messages (user/assistant/note) are ownership-scoped through the parent matter and cascade when a conversation is deleted.
-- Research session deletion is ownership-scoped and revalidates matter/research surfaces.
-- Key mutations write ownership-scoped `AuditEvent` records (matter, document, research, conversation, draft). Trail writes are non-fatal and surface on Settings.
-- Draft generation and deletion are ownership-scoped; drafts persist instruction, type, content, and retrieved chunk ids.
+- Data access is scoped through the authenticated user's persisted app row and organization membership.
+- Each signed-in user receives a personal organization (owner role). Matters created afterward attach to that organization.
+- Organization roles (`owner`, `admin`, `member`, `viewer`) gate read, write, delete, and membership management.
+- Document upload validates matter write access server-side.
+- Document deletion removes storage objects and cascaded chunks after delete-permission checks.
+- Matter status updates (active / on hold / closed / archived) require write permission.
+- Matter deletion removes cascaded documents, chunks, conversations, and research sessions after delete-permission checks, then cleans Supabase storage objects.
+- Matter conversations can be created or deleted with write permission; research queries also open a conversation thread automatically.
+- Conversation messages (user/assistant/note) are permission-scoped through the parent matter and cascade when a conversation is deleted.
+- Research session deletion requires write permission on the parent matter and revalidates matter/research surfaces.
+- Key mutations write ownership-scoped `AuditEvent` records (matter, document, research, conversation, draft, organization). Trail writes are non-fatal and surface on Settings.
+- Draft generation and deletion require write permission; drafts persist instruction, type, content, and retrieved chunk ids.
+- Settings exposes organization roster controls for owners/admins (rename, add by email, role update, remove).
 - `/api/index-document/[documentId]` requires `INDEXING_SECRET` outside local development.
 - Retrieval queries are matter-scoped at the SQL layer.

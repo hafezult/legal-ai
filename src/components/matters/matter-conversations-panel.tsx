@@ -59,11 +59,13 @@ export function MatterConversationsPanel({
   createAction,
   deleteAction,
   createMessageAction,
+  readOnly = false,
 }: {
   conversations: ConversationRow[]
   createAction: ConversationCreateAction
   deleteAction: ConversationDeleteAction
   createMessageAction: ConversationMessageCreateAction
+  readOnly?: boolean
 }) {
   const router = useRouter()
   const [title, setTitle] = useState("")
@@ -170,30 +172,37 @@ export function MatterConversationsPanel({
         conversation and persist the question and grounded answer as messages.
       </p>
 
-      <form
-        className="mt-5 flex flex-col gap-2 sm:flex-row"
-        onSubmit={(event) => {
-          event.preventDefault()
-          runCreate()
-        }}
-      >
-        <input
-          type="text"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="e.g. Disclosure obligations thread"
-          maxLength={120}
-          disabled={isPending}
-          className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-sm text-white/80 placeholder:text-white/22 focus:border-white/[0.16] focus:outline-none disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={isPending || !title.trim()}
-          className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-4 py-2 text-[12px] text-white/65 transition-colors hover:border-white/[0.18] hover:text-white/88 disabled:opacity-45"
+      {readOnly ? (
+        <p className="mt-5 text-xs leading-relaxed text-white/28">
+          Your organization role is read-only for this matter. Conversation history
+          remains visible.
+        </p>
+      ) : (
+        <form
+          className="mt-5 flex flex-col gap-2 sm:flex-row"
+          onSubmit={(event) => {
+            event.preventDefault()
+            runCreate()
+          }}
         >
-          {isPending && !deletingId && !postingId ? "Saving..." : "Create thread"}
-        </button>
-      </form>
+          <input
+            type="text"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="e.g. Disclosure obligations thread"
+            maxLength={120}
+            disabled={isPending}
+            className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-sm text-white/80 placeholder:text-white/22 focus:border-white/[0.16] focus:outline-none disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={isPending || !title.trim()}
+            className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-4 py-2 text-[12px] text-white/65 transition-colors hover:border-white/[0.18] hover:text-white/88 disabled:opacity-45"
+          >
+            {isPending && !deletingId && !postingId ? "Saving..." : "Create thread"}
+          </button>
+        </form>
+      )}
 
       {message ? (
         <p
@@ -241,14 +250,16 @@ export function MatterConversationsPanel({
                       {conversation._count.messages === 1 ? "" : "s"}
                     </p>
                   </button>
-                  <button
-                    type="button"
-                    disabled={isPending}
-                    onClick={() => runDelete(conversation.id)}
-                    className="shrink-0 rounded border border-white/[0.08] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/25 hover:text-red-200/70 disabled:opacity-45"
-                  >
-                    {deletingId === conversation.id ? "..." : "Delete"}
-                  </button>
+                  {!readOnly ? (
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => runDelete(conversation.id)}
+                      className="shrink-0 rounded border border-white/[0.08] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/25 hover:text-red-200/70 disabled:opacity-45"
+                    >
+                      {deletingId === conversation.id ? "..." : "Delete"}
+                    </button>
+                  ) : null}
                 </div>
 
                 {isExpanded ? (
@@ -281,37 +292,39 @@ export function MatterConversationsPanel({
                       </div>
                     )}
 
-                    <form
-                      className="mt-3 flex flex-col gap-2"
-                      onSubmit={(event) => {
-                        event.preventDefault()
-                        runAddMessage(conversation.id)
-                      }}
-                    >
-                      <textarea
-                        value={draft}
-                        onChange={(event) =>
-                          setDraftById((prev) => ({
-                            ...prev,
-                            [conversation.id]: event.target.value,
-                          }))
-                        }
-                        rows={3}
-                        maxLength={8000}
-                        disabled={isPending}
-                        placeholder="Add a working note to this thread…"
-                        className="w-full resize-y rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-sm text-white/80 placeholder:text-white/22 focus:border-white/[0.16] focus:outline-none disabled:opacity-50"
-                      />
-                      <div className="flex justify-end">
-                        <button
-                          type="submit"
-                          disabled={isPending || !draft.trim()}
-                          className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-1.5 text-[11px] text-white/65 transition-colors hover:border-white/[0.18] hover:text-white/88 disabled:opacity-45"
-                        >
-                          {postingId === conversation.id ? "Saving..." : "Add note"}
-                        </button>
-                      </div>
-                    </form>
+                    {!readOnly ? (
+                      <form
+                        className="mt-3 flex flex-col gap-2"
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          runAddMessage(conversation.id)
+                        }}
+                      >
+                        <textarea
+                          value={draft}
+                          onChange={(event) =>
+                            setDraftById((prev) => ({
+                              ...prev,
+                              [conversation.id]: event.target.value,
+                            }))
+                          }
+                          rows={3}
+                          maxLength={8000}
+                          disabled={isPending}
+                          placeholder="Add a working note to this thread…"
+                          className="w-full resize-y rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-sm text-white/80 placeholder:text-white/22 focus:border-white/[0.16] focus:outline-none disabled:opacity-50"
+                        />
+                        <div className="flex justify-end">
+                          <button
+                            type="submit"
+                            disabled={isPending || !draft.trim()}
+                            className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-1.5 text-[11px] text-white/65 transition-colors hover:border-white/[0.18] hover:text-white/88 disabled:opacity-45"
+                          >
+                            {postingId === conversation.id ? "Saving..." : "Add note"}
+                          </button>
+                        </div>
+                      </form>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server"
 
+import { matterAccessWhere } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { ResearchClient } from "./_research-client"
 
@@ -25,7 +26,7 @@ export default async function ResearchPage() {
     if (user) {
       const [matterRows, sessionRows] = await Promise.all([
         prisma.matter.findMany({
-          where: { userId: user.id, status: { not: "archived" } },
+          where: { AND: [matterAccessWhere(user.id), { status: { not: "archived" } }] },
           orderBy: { updatedAt: "desc" },
           select: {
             id: true,
@@ -34,7 +35,7 @@ export default async function ResearchPage() {
           },
         }),
         prisma.researchSession.findMany({
-          where: { userId: user.id },
+          where: { OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }] },
           orderBy: { createdAt: "desc" },
           take: 8,
           select: {

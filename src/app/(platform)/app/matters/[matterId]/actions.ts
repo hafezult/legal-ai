@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
+import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { ensureBucket, removeFromStorage, uploadToStorage } from "@/lib/storage/documents"
 
@@ -140,18 +141,15 @@ export async function uploadDocument(
     return { error: "File contents do not match the selected document format." }
   }
 
-  // Validate matter ownership — no client-side trust
+  // Validate matter write access — no client-side trust
   let ownerUserId: string
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (!user) return { error: "Session not found. Please sign in again." }
     ownerUserId = user.id
 
-    const matter = await prisma.matter.findFirst({
-      where: { id: matterId, userId: user.id },
-      select: { id: true },
-    })
-    if (!matter) return { error: "Matter not found or access denied." }
+    const permission = await requireMatterPermission(user.id, matterId, "write")
+    if (!permission.ok) return { error: permission.error }
   } catch {
     return { error: "Data layer unreachable. Please try again." }
   }
@@ -229,11 +227,14 @@ export async function reindexDocument(
     })
     if (!user) return { error: "Session not found. Please sign in again." }
 
+    const permission = await requireMatterPermission(user.id, matterId, "write")
+    if (!permission.ok) return { error: permission.error }
+
     const document = await prisma.document.findFirst({
       where: {
         id: documentId,
         matterId,
-        matter: { userId: user.id },
+        matter: matterAccessWhere(user.id),
       },
       select: { id: true, fileName: true },
     })
@@ -287,11 +288,14 @@ export async function deleteDocument(
     })
     if (!user) return { error: "Session not found. Please sign in again." }
 
+    const permission = await requireMatterPermission(user.id, matterId, "delete")
+    if (!permission.ok) return { error: permission.error }
+
     const document = await prisma.document.findFirst({
       where: {
         id: documentId,
         matterId,
-        matter: { userId: user.id },
+        matter: matterAccessWhere(user.id),
       },
       select: { id: true, storagePath: true, fileName: true },
     })

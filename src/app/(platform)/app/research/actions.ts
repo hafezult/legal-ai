@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
+import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
@@ -123,15 +124,18 @@ export async function runResearch(
   if (!query.trim()) return emptyResult("Research query cannot be empty.")
   if (!matterId) return emptyResult("No matter selected.")
 
-  // Validate ownership
+  // Validate write access
   let user: { id: string } | null = null
   let matter: { id: string; title: string } | null = null
   try {
     user = await prisma.user.findUnique({ where: { clerkId } })
     if (!user) return emptyResult("User session not found.")
 
-    matter = await prisma.matter.findFirst({
-      where: { id: matterId, userId: user.id },
+    const permission = await requireMatterPermission(user.id, matterId, "write")
+    if (!permission.ok) return emptyResult(permission.error)
+
+    matter = await prisma.matter.findUnique({
+      where: { id: matterId },
       select: { id: true, title: true },
     })
     if (!matter) return emptyResult("Matter not found or access denied.")
@@ -290,10 +294,20 @@ export async function deleteResearchSession(
     if (!user) return { error: "Session not found. Please sign in again." }
 
     const researchSession = await prisma.researchSession.findFirst({
-      where: { id: sessionId, userId: user.id },
+      where: {
+        id: sessionId,
+        OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }],
+      },
       select: { id: true, matterId: true },
     })
     if (!researchSession) return { error: "Research session not found or access denied." }
+
+    const permission = await requireMatterPermission(
+      user.id,
+      researchSession.matterId,
+      "write"
+    )
+    if (!permission.ok) return { error: permission.error }
 
     matterId = researchSession.matterId
     await prisma.researchSession.delete({ where: { id: researchSession.id } })

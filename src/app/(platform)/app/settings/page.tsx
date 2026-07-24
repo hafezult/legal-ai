@@ -1,7 +1,9 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
+import { getPrimaryOrganization, isOrgRole } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
+import { OrganizationAccessPanel } from "./_organization-panel"
 
 export const dynamic = "force-dynamic"
 
@@ -18,6 +20,15 @@ type ActivityEvent = {
   summary: string
   matterId: string | null
   createdAt: Date
+}
+
+type OrgMemberRow = {
+  id: string
+  role: string
+  userId: string
+  email: string
+  name: string | null
+  isSelf: boolean
 }
 
 const pillClass: Record<"ready" | "missing", string> = {
@@ -80,6 +91,12 @@ export default async function SettingsPage() {
   ]
 
   let activity: ActivityEvent[] = []
+  let organization: {
+    id: string
+    name: string
+    role: string
+    members: OrgMemberRow[]
+  } | null = null
 
   try {
     const user = await prisma.user.findUnique({
@@ -100,6 +117,33 @@ export default async function SettingsPage() {
           createdAt: true,
         },
       })
+
+      const primary = await getPrimaryOrganization(user.id)
+      if (primary) {
+        const memberRows = await prisma.organizationMember.findMany({
+          where: { organizationId: primary.id },
+          orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+          select: {
+            id: true,
+            role: true,
+            userId: true,
+            user: { select: { email: true, name: true } },
+          },
+        })
+        organization = {
+          id: primary.id,
+          name: primary.name,
+          role: isOrgRole(primary.role) ? primary.role : "viewer",
+          members: memberRows.map((member) => ({
+            id: member.id,
+            role: member.role,
+            userId: member.userId,
+            email: member.user.email,
+            name: member.user.name,
+            isSelf: member.userId === user.id,
+          })),
+        }
+      }
     }
   } catch {
     /* DB unavailable */
@@ -115,10 +159,19 @@ export default async function SettingsPage() {
           Settings
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
-          Runtime readiness, integration status, and security posture for the Aether
-          workspace.
+          Runtime readiness, organization roles, integration status, and security
+          posture for the Aether workspace.
         </p>
       </div>
+
+      {organization ? (
+        <OrganizationAccessPanel
+          organizationId={organization.id}
+          organizationName={organization.name}
+          actorRole={organization.role}
+          members={organization.members}
+        />
+      ) : null}
 
       <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015] p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -173,8 +226,8 @@ export default async function SettingsPage() {
               Activity trail
             </p>
             <p className="mt-1.5 text-sm leading-relaxed text-white/40">
-              Ownership-scoped audit events for matter, document, research, and
-              conversation mutations.
+              Ownership-scoped audit events for matter, document, research,
+              conversation, draft, and organization mutations.
             </p>
           </div>
           <p className="text-xs tabular-nums text-white/28">
@@ -245,15 +298,17 @@ export default async function SettingsPage() {
         {[
           {
             label: "Authentication boundary",
-            value: "Clerk-protected platform routes with user-scoped data access.",
+            value: "Clerk-protected platform routes with organization-aware data access.",
           },
           {
             label: "Matter isolation",
-            value: "Documents, chunks, and research sessions query through owned matters.",
+            value:
+              "Documents, chunks, and research sessions query through owned or shared organization matters.",
           },
           {
-            label: "Indexing controls",
-            value: "Production indexing callbacks require the shared internal secret.",
+            label: "Role controls",
+            value:
+              "Owner / admin / member / viewer roles gate write, delete, and membership management.",
           },
         ].map((item) => (
           <div

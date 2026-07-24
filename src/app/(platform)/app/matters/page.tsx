@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
+import { matterAccessWhere } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -39,7 +40,7 @@ export default async function MattersPage() {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
       matters = await prisma.matter.findMany({
-        where: { userId: user.id },
+        where: matterAccessWhere(user.id),
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,

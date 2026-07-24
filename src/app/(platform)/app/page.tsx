@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
+import { matterAccessWhere } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -67,19 +68,19 @@ export default async function DashboardPage() {
       dataAvailable = true
       ;[matterCount, retrievalReadyCount, researchSessionCount, recentSessions, recentMatters] =
         await Promise.all([
-          prisma.matter.count({ where: { userId: user.id } }),
+          prisma.matter.count({ where: matterAccessWhere(user.id) }),
           prisma.document.count({
             where: {
-              matter: { userId: user.id },
+              matter: matterAccessWhere(user.id),
               OR: [
                 { retrievalStatus: "ready" },
                 { indexingStatus: "retrieval-ready" },
               ],
             },
           }),
-          prisma.researchSession.count({ where: { userId: user.id } }),
+          prisma.researchSession.count({ where: { OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }] } }),
           prisma.researchSession.findMany({
-            where: { userId: user.id },
+            where: { OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }] },
             orderBy: { createdAt: "desc" },
             take: 5,
             select: {
@@ -92,7 +93,7 @@ export default async function DashboardPage() {
             },
           }),
           prisma.matter.findMany({
-            where: { userId: user.id },
+            where: matterAccessWhere(user.id),
             orderBy: { updatedAt: "desc" },
             take: 5,
             select: {
