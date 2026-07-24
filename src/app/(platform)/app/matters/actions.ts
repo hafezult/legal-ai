@@ -78,6 +78,7 @@ export async function createMatter(
   if (!user) redirect("/sign-in")
 
   let matter: { id: string }
+  let organizationId: string | null = null
   try {
     const organization = await getActiveOrganization(user.id)
     if (organization && !roleHasPermission(organization.role, "write")) {
@@ -86,6 +87,7 @@ export async function createMatter(
           "Your organization role is read-only. Ask an admin to grant write access before creating matters.",
       }
     }
+    organizationId = organization?.id ?? null
     matter = await prisma.matter.create({
       data: {
         title,
@@ -97,7 +99,7 @@ export async function createMatter(
         status,
         description: (formData.get("description") as string | null)?.trim() || null,
         userId: user.id,
-        organizationId: organization?.id ?? null,
+        organizationId,
       },
     })
   } catch {
@@ -110,7 +112,7 @@ export async function createMatter(
     entityType: "matter",
     entityId: matter.id,
     matterId: matter.id,
-    organizationId: matter.organizationId,
+    organizationId,
     summary: `Created matter “${title}”`,
     metadata: { status, riskLevel, practiceArea },
   })
