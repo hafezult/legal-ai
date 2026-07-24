@@ -30,8 +30,7 @@ type ConversationDeleteAction = (conversationId: string) => Promise<{
 
 type ConversationMessageCreateAction = (
   conversationId: string,
-  content: string,
-  role?: string
+  content: string
 ) => Promise<{
   error?: string
   success?: boolean
@@ -133,7 +132,7 @@ export function MatterConversationsPanel({
       setMessage(null)
       setPostingId(conversationId)
       startTransition(async () => {
-        const result = await createMessageAction(conversationId, content, "note")
+        const result = await createMessageAction(conversationId, content)
         setPostingId(null)
         if (result.error) {
           setMessage({ type: "error", text: result.error })

@@ -3,6 +3,13 @@
 import { useState, useTransition } from "react"
 
 import { createMatter, type MatterFormState } from "../actions"
+import {
+  MAX_MATTER_BILLING_CHARS,
+  MAX_MATTER_CLIENT_CHARS,
+  MAX_MATTER_DESCRIPTION_CHARS,
+  MAX_MATTER_JURISDICTION_CHARS,
+  MAX_MATTER_TITLE_CHARS,
+} from "@/lib/matters/limits"
 
 const PRACTICE_AREAS = [
   { value: "", label: "Select practice area" },
@@ -106,6 +113,7 @@ export function NewMatterForm() {
             <input
               type="text"
               name="title"
+              maxLength={MAX_MATTER_TITLE_CHARS}
               placeholder="e.g. Henderson Trust — Estate Administration"
               autoComplete="off"
               className={inputCls}
@@ -118,6 +126,7 @@ export function NewMatterForm() {
               <input
                 type="text"
                 name="clientName"
+                maxLength={MAX_MATTER_CLIENT_CHARS}
                 placeholder="Client or organization"
                 autoComplete="off"
                 className={inputCls}
@@ -127,6 +136,7 @@ export function NewMatterForm() {
               <input
                 type="text"
                 name="billingCode"
+                maxLength={MAX_MATTER_BILLING_CHARS}
                 placeholder="e.g. EST-2024-001"
                 autoComplete="off"
                 className={inputCls}
@@ -149,6 +159,7 @@ export function NewMatterForm() {
               <input
                 type="text"
                 name="jurisdiction"
+                maxLength={MAX_MATTER_JURISDICTION_CHARS}
                 placeholder="e.g. New York, Federal"
                 autoComplete="off"
                 className={inputCls}
@@ -183,6 +194,7 @@ export function NewMatterForm() {
             <textarea
               name="description"
               rows={4}
+              maxLength={MAX_MATTER_DESCRIPTION_CHARS}
               placeholder="Operational scope, key issues, and context relevant to AI research and document intelligence..."
               className={`${inputCls} resize-none leading-relaxed`}
             />

@@ -24,6 +24,19 @@ import {
 } from "@/lib/auth/rbac"
 import { sendOrganizationInviteEmail } from "@/lib/email/invite"
 import { prisma } from "@/lib/prisma"
+import { consumeRateLimit } from "@/lib/rate-limit"
+
+const INVITE_RATE_LIMIT = { limit: 10, windowMs: 60_000 } as const
+const MAX_INVITE_EMAIL_CHARS = 320
+const INVITE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function isValidInviteEmail(email: string): boolean {
+  return (
+    email.length > 0 &&
+    email.length <= MAX_INVITE_EMAIL_CHARS &&
+    INVITE_EMAIL_RE.test(email)
+  )
+}
 
 export type OrganizationActionState = {
   error?: string
@@ -259,13 +272,24 @@ export async function addOrganizationMember(
   if ("error" in actor) return { error: actor.error }
 
   const emailNormalized = email.trim().toLowerCase()
-  if (!emailNormalized || !emailNormalized.includes("@")) {
+  if (!isValidInviteEmail(emailNormalized)) {
     return { error: "A valid member email is required." }
   }
 
   const role: OrgRole = isOrgRole(roleInput) ? roleInput : "member"
   if (role === "owner") {
     return { error: "Owner role cannot be assigned when adding members." }
+  }
+
+  const throttle = consumeRateLimit(
+    `invite:${actor.user.id}:${organizationId}`,
+    INVITE_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    const seconds = Math.ceil(throttle.retryAfterMs / 1000)
+    return {
+      error: `Invite rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`,
+    }
   }
 
   try {

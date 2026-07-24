@@ -7,7 +7,11 @@ export const runtime = "nodejs"
 
 export async function GET() {
   const payload = await getHealthReport()
-  return NextResponse.json(payload, {
-    status: payload.status === "ok" ? 200 : 503,
-  })
+  // Public probe returns aggregate status only — detailed probes stay on Settings.
+  return NextResponse.json(
+    { status: payload.status, checkedAt: payload.checkedAt },
+    {
+      status: payload.status === "ok" ? 200 : 503,
+    }
+  )
 }

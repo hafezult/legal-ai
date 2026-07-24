@@ -106,12 +106,12 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   try {
     embeddings = await generateBatchEmbeddings(chunks.map((c) => c.content))
   } catch (err) {
-    // Embedding failure leaves chunks available but retrieval blocked until retry.
+    // Chunks remain for retry, but surface the failure to upload/reindex callers.
     const message =
       err instanceof Error ? err.message.slice(0, 240) : "Embedding provider failed"
     await setStatus(documentId, "indexed", { retrievalStatus: "failed" })
     console.error(`[indexing] embedding failed for ${documentId}:`, message)
-    return
+    throw new Error(`Embedding failed: ${message}`)
   }
 
   // ── 4. Store embeddings (pgvector, raw SQL) ─────────────────────────────

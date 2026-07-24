@@ -11,6 +11,13 @@ import {
   requireMatterPermission,
   roleHasPermission,
 } from "@/lib/auth/rbac"
+import {
+  MAX_MATTER_BILLING_CHARS,
+  MAX_MATTER_CLIENT_CHARS,
+  MAX_MATTER_DESCRIPTION_CHARS,
+  MAX_MATTER_JURISDICTION_CHARS,
+  MAX_MATTER_TITLE_CHARS,
+} from "@/lib/matters/limits"
 import { prisma } from "@/lib/prisma"
 import { removeManyFromStorage } from "@/lib/storage/documents"
 
@@ -48,6 +55,76 @@ function requiredEnum(
   return allowed.has(value) ? value : null
 }
 
+function optionalField(
+  value: FormDataEntryValue | null,
+  maxChars: number
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (typeof value !== "string") return { ok: true, value: null }
+  const trimmed = value.trim()
+  if (!trimmed) return { ok: true, value: null }
+  if (trimmed.length > maxChars) {
+    return {
+      ok: false,
+      error: `Field exceeds the ${maxChars.toLocaleString()} character limit.`,
+    }
+  }
+  return { ok: true, value: trimmed }
+}
+
+function requiredTitle(
+  value: FormDataEntryValue | null
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof value !== "string" || !value.trim()) {
+    return { ok: false, error: "Matter title is required to initialize the workspace." }
+  }
+  const title = value.trim()
+  if (title.length > MAX_MATTER_TITLE_CHARS) {
+    return {
+      ok: false,
+      error: `Matter title exceeds the ${MAX_MATTER_TITLE_CHARS} character limit.`,
+    }
+  }
+  return { ok: true, value: title }
+}
+
+function parseMatterFields(formData: FormData, titleRequiredMessage?: string) {
+  const titleResult = requiredTitle(formData.get("title"))
+  if (!titleResult.ok) {
+    return {
+      error:
+        titleRequiredMessage && titleResult.error.includes("required")
+          ? titleRequiredMessage
+          : titleResult.error,
+    } as const
+  }
+
+  const clientName = optionalField(formData.get("clientName"), MAX_MATTER_CLIENT_CHARS)
+  if (!clientName.ok) return { error: `Client name: ${clientName.error}` } as const
+
+  const jurisdiction = optionalField(
+    formData.get("jurisdiction"),
+    MAX_MATTER_JURISDICTION_CHARS
+  )
+  if (!jurisdiction.ok) return { error: `Jurisdiction: ${jurisdiction.error}` } as const
+
+  const billingCode = optionalField(formData.get("billingCode"), MAX_MATTER_BILLING_CHARS)
+  if (!billingCode.ok) return { error: `Billing code: ${billingCode.error}` } as const
+
+  const description = optionalField(
+    formData.get("description"),
+    MAX_MATTER_DESCRIPTION_CHARS
+  )
+  if (!description.ok) return { error: `Description: ${description.error}` } as const
+
+  return {
+    title: titleResult.value,
+    clientName: clientName.value,
+    jurisdiction: jurisdiction.value,
+    billingCode: billingCode.value,
+    description: description.value,
+  } as const
+}
+
 export async function createMatter(
   _prev: MatterFormState,
   formData: FormData
@@ -55,10 +132,8 @@ export async function createMatter(
   const { userId: clerkId } = await auth()
   if (!clerkId) redirect("/sign-in")
 
-  const title = (formData.get("title") as string | null)?.trim()
-  if (!title) {
-    return { error: "Matter title is required to initialize the workspace." }
-  }
+  const fields = parseMatterFields(formData)
+  if ("error" in fields) return { error: fields.error }
 
   const practiceArea = optionalEnum(formData.get("practiceArea"), PRACTICE_AREAS)
   const riskLevel = requiredEnum(formData.get("riskLevel"), RISK_LEVELS, "medium")
@@ -90,14 +165,14 @@ export async function createMatter(
     organizationId = organization?.id ?? null
     matter = await prisma.matter.create({
       data: {
-        title,
-        clientName: (formData.get("clientName") as string | null)?.trim() || null,
+        title: fields.title,
+        clientName: fields.clientName,
         practiceArea,
-        jurisdiction: (formData.get("jurisdiction") as string | null)?.trim() || null,
+        jurisdiction: fields.jurisdiction,
         riskLevel,
-        billingCode: (formData.get("billingCode") as string | null)?.trim() || null,
+        billingCode: fields.billingCode,
         status,
-        description: (formData.get("description") as string | null)?.trim() || null,
+        description: fields.description,
         userId: user.id,
         organizationId,
       },
@@ -113,7 +188,7 @@ export async function createMatter(
     entityId: matter.id,
     matterId: matter.id,
     organizationId,
-    summary: `Created matter “${title}”`,
+    summary: `Created matter “${fields.title}”`,
     metadata: { status, riskLevel, practiceArea },
   })
 
@@ -192,10 +267,8 @@ export async function updateMatter(
   if (!clerkId) return { error: "Authentication required." }
   if (!matterId) return { error: "Matter id is required." }
 
-  const title = (formData.get("title") as string | null)?.trim()
-  if (!title) {
-    return { error: "Matter title is required." }
-  }
+  const fields = parseMatterFields(formData, "Matter title is required.")
+  if ("error" in fields) return { error: fields.error }
 
   const practiceArea = optionalEnum(formData.get("practiceArea"), PRACTICE_AREAS)
   const riskLevel = requiredEnum(formData.get("riskLevel"), RISK_LEVELS, "medium")
@@ -223,13 +296,13 @@ export async function updateMatter(
     await prisma.matter.update({
       where: { id: matter.id },
       data: {
-        title,
-        clientName: (formData.get("clientName") as string | null)?.trim() || null,
+        title: fields.title,
+        clientName: fields.clientName,
         practiceArea,
-        jurisdiction: (formData.get("jurisdiction") as string | null)?.trim() || null,
+        jurisdiction: fields.jurisdiction,
         riskLevel,
-        billingCode: (formData.get("billingCode") as string | null)?.trim() || null,
-        description: (formData.get("description") as string | null)?.trim() || null,
+        billingCode: fields.billingCode,
+        description: fields.description,
       },
     })
 
@@ -239,7 +312,7 @@ export async function updateMatter(
       entityType: "matter",
       entityId: matter.id,
       matterId: matter.id,
-      summary: `Updated matter “${title}” metadata`,
+      summary: `Updated matter “${fields.title}” metadata`,
       metadata: { riskLevel, practiceArea, role: permission.access.role },
     })
   } catch {
@@ -454,24 +527,21 @@ export async function deleteConversation(
   return { success: true }
 }
 
-const MESSAGE_ROLES = new Set(["user", "assistant", "system", "note"])
-
 function normalizeMessageContent(raw: string): string {
   const compact = raw.replace(/\r\n/g, "\n").trim()
   if (!compact) return ""
   return compact.length > 8000 ? `${compact.slice(0, 7997)}…` : compact
 }
 
+/** Public note composer — always persists as role "note" (no client-forged roles). */
 export async function createConversationMessage(
   conversationId: string,
-  content: string,
-  role = "note"
+  content: string
 ): Promise<ConversationFormState> {
   const { userId: clerkId } = await auth()
   if (!clerkId) return { error: "Authentication required." }
   if (!conversationId) return { error: "Conversation id is required." }
 
-  const normalizedRole = MESSAGE_ROLES.has(role) ? role : "note"
   const normalizedContent = normalizeMessageContent(content)
   if (!normalizedContent) return { error: "Message content is required." }
 
@@ -504,7 +574,7 @@ export async function createConversationMessage(
     const message = await prisma.conversationMessage.create({
       data: {
         conversationId: conversation.id,
-        role: normalizedRole,
+        role: "note",
         content: normalizedContent,
       },
       select: { id: true },
@@ -520,9 +590,9 @@ export async function createConversationMessage(
       entityType: "conversation_message",
       entityId: message.id,
       matterId: conversation.matterId,
-      summary: `Added ${normalizedRole} message to conversation`,
+      summary: "Added note message to conversation",
       metadata: {
-        role: normalizedRole,
+        role: "note",
         conversationId: conversation.id,
         length: normalizedContent.length,
       },

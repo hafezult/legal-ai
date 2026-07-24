@@ -3,6 +3,14 @@
 import { useCallback, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
+import {
+  MAX_MATTER_BILLING_CHARS,
+  MAX_MATTER_CLIENT_CHARS,
+  MAX_MATTER_DESCRIPTION_CHARS,
+  MAX_MATTER_JURISDICTION_CHARS,
+  MAX_MATTER_TITLE_CHARS,
+} from "@/lib/matters/limits"
+
 type MatterUpdateAction = (formData: FormData) => Promise<{
   error?: string
   success?: boolean
@@ -123,6 +131,7 @@ export function MatterEditControls({
           id="matter-edit-title"
           name="title"
           required
+          maxLength={MAX_MATTER_TITLE_CHARS}
           defaultValue={matter.title}
           className={inputCls}
         />
@@ -136,6 +145,7 @@ export function MatterEditControls({
           <input
             id="matter-edit-client"
             name="clientName"
+            maxLength={MAX_MATTER_CLIENT_CHARS}
             defaultValue={matter.clientName ?? ""}
             className={inputCls}
           />
@@ -147,6 +157,7 @@ export function MatterEditControls({
           <input
             id="matter-edit-billing"
             name="billingCode"
+            maxLength={MAX_MATTER_BILLING_CHARS}
             defaultValue={matter.billingCode ?? ""}
             className={inputCls}
           />
@@ -178,6 +189,7 @@ export function MatterEditControls({
           <input
             id="matter-edit-jurisdiction"
             name="jurisdiction"
+            maxLength={MAX_MATTER_JURISDICTION_CHARS}
             defaultValue={matter.jurisdiction ?? ""}
             className={inputCls}
           />
@@ -210,6 +222,7 @@ export function MatterEditControls({
           id="matter-edit-description"
           name="description"
           rows={3}
+          maxLength={MAX_MATTER_DESCRIPTION_CHARS}
           defaultValue={matter.description ?? ""}
           className={`${inputCls} resize-none leading-relaxed`}
         />

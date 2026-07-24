@@ -6,7 +6,11 @@ import { revalidatePath } from "next/cache"
 import { recordAuditEvent } from "@/lib/audit"
 import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
+import { consumeRateLimit } from "@/lib/rate-limit"
 import { ensureBucket, removeFromStorage, uploadToStorage } from "@/lib/storage/documents"
+
+const UPLOAD_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
+const REINDEX_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 
 export type DocumentUploadState = {
   error?: string
@@ -138,6 +142,27 @@ export async function uploadDocument(
   const { userId: clerkId } = await auth()
   if (!clerkId) return { error: "Authentication required." }
 
+  // Validate matter write access before buffering the upload body.
+  let ownerUserId: string
+  try {
+    const user = await prisma.user.findUnique({ where: { clerkId } })
+    if (!user) return { error: "Session not found. Please sign in again." }
+    ownerUserId = user.id
+
+    const throttle = consumeRateLimit(`upload:${user.id}`, UPLOAD_RATE_LIMIT)
+    if (!throttle.ok) {
+      const seconds = Math.ceil(throttle.retryAfterMs / 1000)
+      return {
+        error: `Upload rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`,
+      }
+    }
+
+    const permission = await requireMatterPermission(user.id, matterId, "write")
+    if (!permission.ok) return { error: permission.error }
+  } catch {
+    return { error: "Data layer unreachable. Please try again." }
+  }
+
   const file = formData.get("file") as File | null
   if (!file || file.size === 0) return { error: "No file provided." }
 
@@ -152,19 +177,6 @@ export async function uploadDocument(
   const buffer = Buffer.from(await file.arrayBuffer())
   if (!hasExpectedSignature(documentType.type, buffer)) {
     return { error: "File contents do not match the selected document format." }
-  }
-
-  // Validate matter write access — no client-side trust
-  let ownerUserId: string
-  try {
-    const user = await prisma.user.findUnique({ where: { clerkId } })
-    if (!user) return { error: "Session not found. Please sign in again." }
-    ownerUserId = user.id
-
-    const permission = await requireMatterPermission(user.id, matterId, "write")
-    if (!permission.ok) return { error: permission.error }
-  } catch {
-    return { error: "Data layer unreachable. Please try again." }
   }
 
   // Ensure storage bucket exists
@@ -248,6 +260,14 @@ export async function reindexDocument(
       select: { id: true },
     })
     if (!user) return { error: "Session not found. Please sign in again." }
+
+    const throttle = consumeRateLimit(`reindex:${user.id}`, REINDEX_RATE_LIMIT)
+    if (!throttle.ok) {
+      const seconds = Math.ceil(throttle.retryAfterMs / 1000)
+      return {
+        error: `Reindex rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`,
+      }
+    }
 
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) return { error: permission.error }
