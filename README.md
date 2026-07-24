@@ -102,10 +102,12 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Matter conversations can be created or deleted with write permission; research queries also open a conversation thread automatically.
 - Conversation messages (user/assistant/note) are permission-scoped through the parent matter and cascade when a conversation is deleted.
 - Research session deletion requires write permission on the parent matter and revalidates matter/research surfaces.
-- Key mutations write ownership-scoped `AuditEvent` records (matter, document, research, conversation, draft, organization). Trail writes are non-fatal and Settings shows actor activity plus shared matter activity in the active organization.
+- Key mutations write ownership-scoped `AuditEvent` records (matter, document, research, conversation, draft, organization). Trail writes are non-fatal and Settings shows actor activity for the active organization (including legacy personal matters) plus shared matter activity in that organization.
+- Pending invite tokens and acceptance URLs are only loaded for owners and admins.
 - Draft generation and deletion require write permission; drafts persist instruction, type, content, and retrieved chunk ids.
-- Research and drafting history can be restored in-place with stored provenance excerpts (and authorities for research) and exported as Markdown; viewer roles retain read/export access. Matter detail deep-links into research/drafting with optional session/draft restore.
-- Failed indexing or embedding/retrieval can be retried from Documents, Workflows, the matter source registry, and the document workstation when the actor has write permission.
+- Research and drafting history can be restored in-place with stored provenance excerpts (and authorities for research) and exported as Markdown; viewer roles retain read/export access. Matter detail deep-links into research/drafting with optional session/draft restore, including archived matters.
+- Research queries and draft instructions are capped server-side (8,000 characters). Grounded LLM failures still return retrieved excerpts with an error message.
+- Failed indexing, empty/unscannable sources, embedding/retrieval failures, or unreachable indexing triggers can be retried from Documents, Workflows, the matter source registry, and the document workstation when the actor has write permission. Legacy personal matters keep creator write controls even when the active organization role is viewer.
 - Live readiness is exposed at `/api/health` and mirrored on Settings (configured vs reachable probes).
 - Settings exposes organization roster controls for owners/admins (rename, create organization, add/invite by email, role update, remove, revoke pending invites, transfer ownership, delete organization).
 - Pending invites include a shareable `/app/invites/[token]` acceptance link. With `RESEND_API_KEY` configured, invites are emailed automatically; otherwise copyable links and mailto drafts remain available. Invites also activate automatically when the invited email signs in (14-day expiry).

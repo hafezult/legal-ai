@@ -92,6 +92,16 @@ function appBaseUrl(): string {
   return `http://localhost:${process.env.PORT ?? 3000}`
 }
 
+async function markIndexingTriggerFailed(documentId: string) {
+  await prisma.document.update({
+    where: { id: documentId },
+    data: {
+      indexingStatus: "failed",
+      retrievalStatus: "failed",
+    },
+  })
+}
+
 async function triggerIndexing(documentId: string): Promise<DocumentIndexState> {
   try {
     const response = await fetch(`${appBaseUrl()}/api/index-document/${documentId}`, {
@@ -108,11 +118,13 @@ async function triggerIndexing(documentId: string): Promise<DocumentIndexState> 
       } catch {
         /* non-JSON response */
       }
+      await markIndexingTriggerFailed(documentId).catch(() => null)
       return { error }
     }
 
     return { success: true }
   } catch {
+    await markIndexingTriggerFailed(documentId).catch(() => null)
     return { error: "Indexing service unreachable. Check NEXT_PUBLIC_APP_URL and retry." }
   }
 }

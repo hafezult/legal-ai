@@ -11,6 +11,8 @@ import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
 
+export const MAX_RESEARCH_QUERY_CHARS = 8_000
+
 // ── Types ─────────────────────────────────────────────────────────────────
 
 export type ResearchChunk = {
@@ -123,6 +125,11 @@ export async function runResearch(
 
   if (!clerkId) return emptyResult("Authentication required.")
   if (!query.trim()) return emptyResult("Research query cannot be empty.")
+  if (query.length > MAX_RESEARCH_QUERY_CHARS) {
+    return emptyResult(
+      `Research query exceeds the ${MAX_RESEARCH_QUERY_CHARS.toLocaleString()} character limit.`
+    )
+  }
   if (!matterId) return emptyResult("No matter selected.")
 
   // Validate write access
@@ -199,8 +206,18 @@ export async function runResearch(
     statutory:   grouped.statutory.map((a) => a.normalized),
   }
 
-  // Grounded LLM response
-  const answer = await generateGroundedResponse(query, chunks)
+  // Grounded LLM response — retrieval already succeeded; surface provider
+  // failures without discarding the excerpts.
+  let answer = ""
+  let generationError: string | undefined
+  try {
+    answer = await generateGroundedResponse(query, chunks)
+  } catch (err) {
+    generationError =
+      err instanceof Error ? err.message.slice(0, 240) : "Grounded response generation failed."
+    answer =
+      "Retrieved excerpts are shown below, but grounded analysis failed. Retry the query or verify OPENAI_API_KEY."
+  }
 
   // Persist research session and open a matter conversation thread
   let sessionId = ""
@@ -270,6 +287,7 @@ export async function runResearch(
     retrievalCount: chunks.length,
     indexedChunks,
     embeddingConfigured: true,
+    error: generationError,
   }
 }
 

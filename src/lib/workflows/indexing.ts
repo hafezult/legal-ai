@@ -65,6 +65,17 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   // Clear any previous chunks (idempotent re-indexing)
   await prisma.documentChunk.deleteMany({ where: { documentId } })
 
+  if (chunks.length === 0) {
+    await setStatus(documentId, "failed", {
+      parseStatus: "parsed",
+      chunkCount: 0,
+      retrievalStatus: "failed",
+    })
+    throw new Error(
+      `Document ${documentId}: no extractable text chunks (empty or unscannable source).`
+    )
+  }
+
   // Persist chunks without embeddings
   const created = await prisma.$transaction(
     chunks.map((c) =>

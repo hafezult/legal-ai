@@ -4,6 +4,7 @@ import Link from "next/link"
 import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import {
+  canWriteListedMatter,
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
   roleHasPermission,
@@ -45,6 +46,7 @@ type DocumentRow = {
   retrievalStatus: string
   chunkCount: number
   uploadedAt: Date
+  canWrite: boolean
   matter: {
     id: string
     title: string
@@ -62,9 +64,12 @@ export default async function DocumentsPage() {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
       const activeOrg = await getActiveOrganization(user.id)
-      canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
+      const orgCanWrite = activeOrg
+        ? roleHasPermission(activeOrg.role, "write")
+        : true
+      canWrite = orgCanWrite
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
-      documents = await prisma.document.findMany({
+      const rows = await prisma.document.findMany({
         where: { matter: matterWhere },
         orderBy: { uploadedAt: "desc" },
         select: {
@@ -80,10 +85,28 @@ export default async function DocumentsPage() {
             select: {
               id: true,
               title: true,
+              userId: true,
+              organizationId: true,
             },
           },
         },
       })
+      documents = rows.map((doc) => ({
+        id: doc.id,
+        fileName: doc.fileName,
+        mimeType: doc.mimeType,
+        fileSize: doc.fileSize,
+        indexingStatus: doc.indexingStatus,
+        retrievalStatus: doc.retrievalStatus,
+        chunkCount: doc.chunkCount,
+        uploadedAt: doc.uploadedAt,
+        canWrite: canWriteListedMatter(doc.matter, user.id, orgCanWrite),
+        matter: {
+          id: doc.matter.id,
+          title: doc.matter.title,
+        },
+      }))
+      canWrite = orgCanWrite || documents.some((doc) => doc.canWrite)
     }
   } catch {
     /* DB unavailable */
@@ -210,7 +233,7 @@ export default async function DocumentsPage() {
                 <DocumentStatusPill status={doc.retrievalStatus} />
               </div>
               <div className="w-20 shrink-0">
-                {canWrite && documentNeedsRetry(doc) ? (
+                {doc.canWrite && documentNeedsRetry(doc) ? (
                   <DocumentRetryButton
                     matterId={doc.matter.id}
                     documentId={doc.id}

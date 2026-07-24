@@ -6,6 +6,7 @@ import {
   getActiveOrganization,
   isOrgRole,
   listUserOrganizations,
+  roleHasPermission,
 } from "@/lib/auth/rbac"
 import { getHealthReport, type HealthReport } from "@/lib/health"
 import { prisma } from "@/lib/prisma"
@@ -147,10 +148,17 @@ export default async function SettingsPage() {
           ).map((matter) => matter.id)
         : []
 
+      // Scope activity to the active organization: org-matter events, the
+      // actor's org-level (no-matter) events, and legacy personal matter events.
+      // Do not leak the actor's audit trail from other organizations.
       activity = await prisma.auditEvent.findMany({
         where: {
           OR: [
-            { userId: user.id },
+            { userId: user.id, matterId: null },
+            {
+              userId: user.id,
+              matter: { userId: user.id, organizationId: null },
+            },
             ...(orgMatterIds.length > 0
               ? [{ matterId: { in: orgMatterIds } }]
               : []),
@@ -169,6 +177,9 @@ export default async function SettingsPage() {
       })
 
       if (active) {
+        const activeRole = isOrgRole(active.role) ? active.role : "viewer"
+        const canManageInvites = roleHasPermission(activeRole, "manage_members")
+
         const [memberRows, inviteRows] = await Promise.all([
           prisma.organizationMember.findMany({
             where: { organizationId: active.id },
@@ -180,26 +191,29 @@ export default async function SettingsPage() {
               user: { select: { email: true, name: true } },
             },
           }),
-          prisma.organizationInvite.findMany({
-            where: {
-              organizationId: active.id,
-              acceptedAt: null,
-              expiresAt: { gt: new Date() },
-            },
-            orderBy: { createdAt: "desc" },
-            select: {
-              id: true,
-              email: true,
-              role: true,
-              expiresAt: true,
-              token: true,
-            },
-          }),
+          // Invite tokens/URLs must never serialize to non-admin clients.
+          canManageInvites
+            ? prisma.organizationInvite.findMany({
+                where: {
+                  organizationId: active.id,
+                  acceptedAt: null,
+                  expiresAt: { gt: new Date() },
+                },
+                orderBy: { createdAt: "desc" },
+                select: {
+                  id: true,
+                  email: true,
+                  role: true,
+                  expiresAt: true,
+                  token: true,
+                },
+              })
+            : Promise.resolve([]),
         ])
         organization = {
           id: active.id,
           name: active.name,
-          role: isOrgRole(active.role) ? active.role : "viewer",
+          role: activeRole,
           members: memberRows.map((member) => ({
             id: member.id,
             role: member.role,

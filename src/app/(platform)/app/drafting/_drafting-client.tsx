@@ -10,6 +10,7 @@ import {
   deleteDraft,
   generateDraft,
   restoreDraft,
+  MAX_DRAFT_INSTRUCTION_CHARS,
   type DraftOutput,
 } from "./actions"
 
@@ -27,7 +28,12 @@ const EXAMPLE_INSTRUCTIONS = [
   "Analyse the limitation and exclusion clauses and note drafting risks.",
 ]
 
-type Matter = { id: string; title: string; _count: { documents: number } }
+type Matter = {
+  id: string
+  title: string
+  canWrite?: boolean
+  _count: { documents: number }
+}
 
 type RecentDraft = {
   id: string
@@ -152,6 +158,9 @@ export function DraftingClient({
   )
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null)
 
+  const selectedMatterCanWrite =
+    matters.find((matter) => matter.id === selectedMatter)?.canWrite ?? canWrite
+
   const matterDrafts = recentDrafts.filter(
     (draft) => !selectedMatter || draft.matterId === selectedMatter
   )
@@ -214,23 +223,28 @@ export function DraftingClient({
   const handleSubmit = useCallback(
     (event: React.FormEvent) => {
       event.preventDefault()
-      if (!canWrite || !instruction.trim() || !selectedMatter || isPending) return
+      if (!selectedMatterCanWrite || !instruction.trim() || !selectedMatter || isPending)
+        return
       setLocalError(null)
       setResults(null)
 
       startTransition(async () => {
         const output = await generateDraft(selectedMatter, draftType, instruction)
-        if (output.error) setLocalError(output.error)
-        else setResults(output)
+        const hasPartial =
+          Boolean(output.content) || output.chunks.length > 0
+        setResults(output.error && !hasPartial ? null : output)
+        setLocalError(output.error ?? null)
         router.refresh()
       })
     },
-    [canWrite, instruction, selectedMatter, draftType, isPending, router]
+    [selectedMatterCanWrite, instruction, selectedMatter, draftType, isPending, router]
   )
 
   const handleDeleteDraft = useCallback(
-    (draftId: string) => {
-      if (!canWrite || isDeleting) return
+    (draftId: string, draftMatterId: string) => {
+      const draftCanWrite =
+        matters.find((matter) => matter.id === draftMatterId)?.canWrite ?? canWrite
+      if (!draftCanWrite || isDeleting) return
       setLocalError(null)
       setDeletingDraftId(draftId)
 
@@ -250,7 +264,7 @@ export function DraftingClient({
         router.refresh()
       })
     },
-    [canWrite, isDeleting, results?.draftId, router]
+    [matters, canWrite, isDeleting, results?.draftId, router]
   )
 
   return (
@@ -315,14 +329,18 @@ export function DraftingClient({
         </div>
       ) : (
         <>
-          {canWrite ? (
+          {selectedMatterCanWrite ? (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid gap-4 md:grid-cols-[180px_1fr]">
                 <div>
-                  <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
+                  <label
+                    htmlFor="draft-type"
+                    className="mb-2 block text-[10px] uppercase tracking-[0.16em] text-white/35"
+                  >
                     Draft type
-                  </p>
+                  </label>
                   <select
+                    id="draft-type"
                     value={draftType}
                     onChange={(event) => setDraftType(event.target.value as DraftType)}
                     className="w-full cursor-pointer appearance-none rounded-lg border border-white/[0.08] bg-zinc-950 px-4 py-2.5 text-sm text-white/80 focus:border-white/[0.16] focus:outline-none"
@@ -335,13 +353,18 @@ export function DraftingClient({
                   </select>
                 </div>
                 <div>
-                  <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
+                  <label
+                    htmlFor="draft-instruction"
+                    className="mb-2 block text-[10px] uppercase tracking-[0.16em] text-white/35"
+                  >
                     Drafting instruction
-                  </p>
+                  </label>
                   <textarea
+                    id="draft-instruction"
                     value={instruction}
                     onChange={(event) => setInstruction(event.target.value)}
                     rows={4}
+                    maxLength={MAX_DRAFT_INSTRUCTION_CHARS}
                     placeholder={EXAMPLE_INSTRUCTIONS[0]}
                     className="w-full resize-none rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-sm leading-relaxed text-white/85 placeholder:text-white/22 focus:border-white/[0.16] focus:bg-white/[0.03] focus:outline-none"
                   />
@@ -444,10 +467,11 @@ export function DraftingClient({
                         >
                           {isRestoring ? "…" : "Export"}
                         </button>
-                        {canWrite ? (
+                        {matters.find((matter) => matter.id === draft.matterId)
+                          ?.canWrite ?? canWrite ? (
                           <button
                             type="button"
-                            onClick={() => handleDeleteDraft(draft.id)}
+                            onClick={() => handleDeleteDraft(draft.id, draft.matterId)}
                             disabled={isDeleting && deletingDraftId === draft.id}
                             className="rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/30 hover:text-red-300/70 disabled:pointer-events-none disabled:opacity-40"
                           >
@@ -547,8 +571,9 @@ export function DraftingClient({
               ) : results.content ? (
                 <div className="rounded-lg border border-white/[0.06] bg-white/[0.01] px-5 py-6">
                   <p className="text-sm text-white/40">
-                    Restored from a saved draft. Source excerpts are not re-hydrated; the
-                    grounded draft below is preserved from the original generation.
+                    {isRestoring
+                      ? "Loading source excerpts for this restored draft…"
+                      : "No source excerpts are available for this draft. The grounded draft below is preserved from the original generation."}
                   </p>
                 </div>
               ) : (

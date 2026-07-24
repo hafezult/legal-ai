@@ -15,6 +15,8 @@ import { prisma } from "@/lib/prisma"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
 
+export const MAX_DRAFT_INSTRUCTION_CHARS = 8_000
+
 export type DraftSourceChunk = {
   id: string
   content: string
@@ -149,6 +151,11 @@ export async function generateDraft(
   if (!clerkId) return emptyResult("Authentication required.")
   if (!matterId) return emptyResult("No matter selected.")
   if (!instruction.trim()) return emptyResult("Draft instruction cannot be empty.")
+  if (instruction.length > MAX_DRAFT_INSTRUCTION_CHARS) {
+    return emptyResult(
+      `Draft instruction exceeds the ${MAX_DRAFT_INSTRUCTION_CHARS.toLocaleString()} character limit.`
+    )
+  }
   if (!isDraftType(draftTypeInput)) return emptyResult("Unsupported draft type.")
 
   const draftType = draftTypeInput
@@ -215,7 +222,16 @@ export async function generateDraft(
     return { ...emptyResult(msg), matterTitle: matter.title, draftType, embeddingConfigured }
   }
 
-  const content = await generateGroundedDraft(draftType, instruction.trim(), chunks)
+  let content = ""
+  let generationError: string | undefined
+  try {
+    content = await generateGroundedDraft(draftType, instruction.trim(), chunks)
+  } catch (err) {
+    generationError =
+      err instanceof Error ? err.message.slice(0, 240) : "Draft generation failed."
+    content =
+      "Retrieved source excerpts are listed below, but draft generation failed. Retry or verify OPENAI_API_KEY."
+  }
   const title = draftTitle(draftType, instruction)
 
   let draftId = ""
@@ -229,7 +245,7 @@ export async function generateDraft(
         instruction: instruction.trim(),
         content,
         chunkIds: chunks.map((chunk) => chunk.id),
-        status: "ready",
+        status: generationError ? "failed" : "ready",
       },
     })
     draftId = draft.id
@@ -270,6 +286,7 @@ export async function generateDraft(
     retrievalCount: chunks.length,
     indexedChunks,
     embeddingConfigured: true,
+    error: generationError,
   }
 }
 

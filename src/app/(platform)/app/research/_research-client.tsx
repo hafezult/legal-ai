@@ -9,6 +9,7 @@ import {
   deleteResearchSession,
   restoreResearchSession,
   runResearch,
+  MAX_RESEARCH_QUERY_CHARS,
   type ResearchOutput,
 } from "./actions"
 
@@ -57,7 +58,12 @@ function AuthorityRow({ label, items }: { label: string; items: string[] }) {
 
 // ── Main component ────────────────────────────────────────────────────────
 
-type Matter = { id: string; title: string; _count: { documents: number } }
+type Matter = {
+  id: string
+  title: string
+  canWrite?: boolean
+  _count: { documents: number }
+}
 
 type RecentSession = {
   id: string
@@ -183,6 +189,9 @@ export function ResearchClient({
   )
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
 
+  const selectedMatterCanWrite =
+    matters.find((matter) => matter.id === selectedMatter)?.canWrite ?? canWrite
+
   const matterSessions = recentSessions.filter(
     (session) => !selectedMatter || session.matterId === selectedMatter
   )
@@ -243,23 +252,27 @@ export function ResearchClient({
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault()
-      if (!canWrite || !query.trim() || !selectedMatter || isPending) return
+      if (!selectedMatterCanWrite || !query.trim() || !selectedMatter || isPending) return
       setLocalError(null)
       setResults(null)
 
       startTransition(async () => {
         const output = await runResearch(selectedMatter, query)
-        if (output.error) setLocalError(output.error)
-        else setResults(output)
+        const hasPartial =
+          Boolean(output.answer) || output.chunks.length > 0
+        setResults(output.error && !hasPartial ? null : output)
+        setLocalError(output.error ?? null)
         router.refresh()
       })
     },
-    [canWrite, query, selectedMatter, isPending, router]
+    [selectedMatterCanWrite, query, selectedMatter, isPending, router]
   )
 
   const handleDeleteSession = useCallback(
-    (sessionId: string) => {
-      if (!canWrite || isDeleting) return
+    (sessionId: string, sessionMatterId: string) => {
+      const sessionCanWrite =
+        matters.find((matter) => matter.id === sessionMatterId)?.canWrite ?? canWrite
+      if (!sessionCanWrite || isDeleting) return
       setLocalError(null)
       setDeletingSessionId(sessionId)
 
@@ -279,7 +292,7 @@ export function ResearchClient({
         router.refresh()
       })
     },
-    [canWrite, isDeleting, results?.sessionId, router]
+    [matters, canWrite, isDeleting, results?.sessionId, router]
   )
 
   const hasAuthorities = results
@@ -351,16 +364,21 @@ export function ResearchClient({
       ) : (
         <>
           {/* ── Query form ────────────────────────────────────────────── */}
-          {canWrite ? (
+          {selectedMatterCanWrite ? (
             <form onSubmit={handleSubmit} className="space-y-3">
               <div>
-                <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
+                <label
+                  htmlFor="research-query"
+                  className="mb-2 block text-[10px] uppercase tracking-[0.16em] text-white/35"
+                >
                   Research query
-                </p>
+                </label>
                 <textarea
+                  id="research-query"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   rows={4}
+                  maxLength={MAX_RESEARCH_QUERY_CHARS}
                   placeholder={EXAMPLE_QUERIES[0]}
                   className="w-full resize-none rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-sm leading-relaxed text-white/85 placeholder:text-white/22 focus:border-white/[0.16] focus:bg-white/[0.03] focus:outline-none"
                 />
@@ -460,10 +478,13 @@ export function ResearchClient({
                         >
                           {isRestoring ? "…" : "Export"}
                         </button>
-                        {canWrite ? (
+                        {matters.find((matter) => matter.id === session.matterId)
+                          ?.canWrite ?? canWrite ? (
                           <button
                             type="button"
-                            onClick={() => handleDeleteSession(session.id)}
+                            onClick={() =>
+                              handleDeleteSession(session.id, session.matterId)
+                            }
                             disabled={isDeleting && deletingSessionId === session.id}
                             className="rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/30 hover:text-red-300/70 disabled:pointer-events-none disabled:opacity-40"
                           >
@@ -556,8 +577,9 @@ export function ResearchClient({
               ) : results.answer ? (
                 <div className="rounded-lg border border-white/[0.06] bg-white/[0.01] px-5 py-6">
                   <p className="text-sm text-white/40">
-                    Restored from a saved session. Source excerpts are not re-hydrated;
-                    the grounded analysis below is preserved from the original run.
+                    {isRestoring
+                      ? "Loading source excerpts for this restored session…"
+                      : "No source excerpts are available for this session. The grounded analysis below is preserved from the original run."}
                   </p>
                 </div>
               ) : (
