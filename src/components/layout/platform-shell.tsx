@@ -14,7 +14,7 @@ const exactTitles: Record<string, { title: string; subtitle?: string }> = {
   "/app/matters": { title: "Matters", subtitle: "Matter registry" },
   "/app/matters/new": { title: "Matter intake", subtitle: "Governed initialization" },
   "/app/research": { title: "Research", subtitle: "Authority and retrieval" },
-  "/app/drafting": { title: "Drafting", subtitle: "Controlled drafting surface" },
+  "/app/drafting": { title: "Drafting", subtitle: "Grounded draft generation" },
   "/app/documents": { title: "Documents", subtitle: "Intelligence and lineage" },
   "/app/workflows": { title: "Workflows", subtitle: "Orchestration status" },
   "/app/memory": { title: "Memory", subtitle: "Firm and matter memory" },
@@ -42,14 +42,18 @@ export function PlatformShell({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
-    try {
-      if (localStorage.getItem(STORAGE_KEY) === "1") {
-        setCollapsed(true)
+    const timer = window.setTimeout(() => {
+      try {
+        if (localStorage.getItem(STORAGE_KEY) === "1") {
+          setCollapsed(true)
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
-    }
-    setHydrated(true)
+      setHydrated(true)
+    }, 0)
+
+    return () => window.clearTimeout(timer)
   }, [])
 
   useEffect(() => {

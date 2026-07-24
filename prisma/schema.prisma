@@ -20,6 +20,8 @@ model User {
 
   matters          Matter[]
   researchSessions ResearchSession[]
+  draftDocuments   DraftDocument[]
+  auditEvents      AuditEvent[]
 }
 
 model Matter {
@@ -41,6 +43,7 @@ model Matter {
   documents        Document[]
   chunks           DocumentChunk[]
   researchSessions ResearchSession[]
+  draftDocuments   DraftDocument[]
 }
 
 model Conversation {
@@ -49,6 +52,19 @@ model Conversation {
   matter    Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
   title     String
   createdAt DateTime @default(now())
+
+  messages ConversationMessage[]
+}
+
+model ConversationMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
 }
 
 model Document {
@@ -102,4 +118,39 @@ model ResearchSession {
   response  String?
   chunkIds  String[]
   createdAt DateTime @default(now())
+}
+
+model DraftDocument {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matterId    String
+  matter      Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  title       String
+  draftType   String
+  instruction String
+  content     String?
+  chunkIds    String[]
+  status      String   @default("ready")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([matterId])
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action     String
+  entityType String
+  entityId   String?
+  matterId   String?
+  summary    String
+  metadata   String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([matterId])
 }

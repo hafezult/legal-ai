@@ -4,59 +4,36 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useCallback, useState, useTransition } from "react"
 
-import { deleteResearchSession, runResearch, type ResearchOutput } from "./actions"
+import {
+  DRAFT_TYPES,
+  deleteDraft,
+  generateDraft,
+  type DraftOutput,
+  type DraftType,
+} from "./actions"
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-
-function relevanceLabel(distance: number): string {
-  if (distance < 0.25) return "High"
-  if (distance < 0.45) return "Moderate"
-  return "Low"
-}
-
-function relevanceClass(distance: number): string {
-  if (distance < 0.25) return "text-white/68"
-  if (distance < 0.45) return "text-white/48"
-  return "text-white/30"
-}
-
-const EXAMPLE_QUERIES = [
-  "Summarise the disclosure obligations arising from the uploaded witness statements.",
-  "Identify references to breach of fiduciary duty in the matter documents.",
-  "Extract all clauses relating to termination and notice periods.",
-  "What authorities are cited regarding causation or remoteness of damage?",
-  "Identify any CPR provisions referenced and their procedural implications.",
+const DRAFT_TYPE_OPTIONS: { value: DraftType; label: string }[] = [
+  { value: "advice", label: "Advice note" },
+  { value: "brief", label: "Skeleton / brief" },
+  { value: "memo", label: "Research memo" },
+  { value: "clause", label: "Clause analysis" },
 ]
 
-// ── Sub-components ────────────────────────────────────────────────────────
-
-function AuthorityRow({ label, items }: { label: string; items: string[] }) {
-  if (!items.length) return null
-  return (
-    <div>
-      <p className="text-[10px] uppercase tracking-[0.14em] text-white/32">{label}</p>
-      <div className="mt-1.5 flex flex-wrap gap-2">
-        {items.map((item) => (
-          <span
-            key={item}
-            className="rounded border border-white/[0.08] bg-white/[0.02] px-2.5 py-1 text-xs text-white/60"
-          >
-            {item}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ── Main component ────────────────────────────────────────────────────────
+const EXAMPLE_INSTRUCTIONS = [
+  "Prepare counsel's advice on disclosure risks arising from the uploaded witness evidence.",
+  "Outline a skeleton argument on breach of fiduciary duty based on the matter sources.",
+  "Draft an internal memo summarising termination and notice-period clauses.",
+  "Analyse the limitation and exclusion clauses and note drafting risks.",
+]
 
 type Matter = { id: string; title: string; _count: { documents: number } }
 
-type RecentSession = {
+type RecentDraft = {
   id: string
-  query: string
-  response: string | null
+  title: string
+  draftType: string
+  instruction: string
+  content: string | null
   chunkIds: string[]
   createdAt: Date | string
   matterId: string
@@ -78,91 +55,101 @@ function excerpt(text: string, length = 140) {
   return compact.length > length ? `${compact.slice(0, length)}…` : compact
 }
 
-export function ResearchClient({
+function relevanceLabel(distance: number): string {
+  if (distance < 0.25) return "High"
+  if (distance < 0.45) return "Moderate"
+  return "Low"
+}
+
+function relevanceClass(distance: number): string {
+  if (distance < 0.25) return "text-white/68"
+  if (distance < 0.45) return "text-white/48"
+  return "text-white/30"
+}
+
+function draftTypeLabel(draftType: string) {
+  return DRAFT_TYPE_OPTIONS.find((option) => option.value === draftType)?.label ?? draftType
+}
+
+export function DraftingClient({
   matters,
-  recentSessions,
+  recentDrafts,
 }: {
   matters: Matter[]
-  recentSessions: RecentSession[]
+  recentDrafts: RecentDraft[]
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [isDeleting, startDeleteTransition] = useTransition()
   const [selectedMatter, setSelectedMatter] = useState(matters[0]?.id ?? "")
-  const [query, setQuery] = useState("")
-  const [results, setResults] = useState<ResearchOutput | null>(null)
+  const [draftType, setDraftType] = useState<DraftType>("advice")
+  const [instruction, setInstruction] = useState("")
+  const [results, setResults] = useState<DraftOutput | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
-  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
+  const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null)
 
-  const matterSessions = recentSessions.filter(
-    (session) => !selectedMatter || session.matterId === selectedMatter
+  const matterDrafts = recentDrafts.filter(
+    (draft) => !selectedMatter || draft.matterId === selectedMatter
   )
 
   const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault()
-      if (!query.trim() || !selectedMatter || isPending) return
+    (event: React.FormEvent) => {
+      event.preventDefault()
+      if (!instruction.trim() || !selectedMatter || isPending) return
       setLocalError(null)
       setResults(null)
 
       startTransition(async () => {
-        const output = await runResearch(selectedMatter, query)
+        const output = await generateDraft(selectedMatter, draftType, instruction)
         if (output.error) setLocalError(output.error)
         else setResults(output)
         router.refresh()
       })
     },
-    [query, selectedMatter, isPending, router]
+    [instruction, selectedMatter, draftType, isPending, router]
   )
 
-  const handleDeleteSession = useCallback(
-    (sessionId: string) => {
+  const handleDeleteDraft = useCallback(
+    (draftId: string) => {
       if (isDeleting) return
       setLocalError(null)
-      setDeletingSessionId(sessionId)
+      setDeletingDraftId(draftId)
 
       startDeleteTransition(async () => {
-        const result = await deleteResearchSession(sessionId)
+        const result = await deleteDraft(draftId)
         if (result.error) {
           setLocalError(result.error)
-          setDeletingSessionId(null)
+          setDeletingDraftId(null)
           return
         }
 
-        if (results?.sessionId === sessionId) {
+        if (results?.draftId === draftId) {
           setResults(null)
         }
 
-        setDeletingSessionId(null)
+        setDeletingDraftId(null)
         router.refresh()
       })
     },
-    [isDeleting, results?.sessionId, router]
+    [isDeleting, results?.draftId, router]
   )
-
-  const hasAuthorities = results
-    ? Object.values(results.authorities).some((a) => a.length > 0)
-    : false
 
   return (
     <div className="space-y-8">
-
-      {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-6">
         <div>
           <p className="text-[11px] uppercase tracking-[0.22em] text-white/40">
-            Legal intelligence
+            Draft preparation
           </p>
           <h1 className="mt-2 font-serif text-3xl tracking-tight text-white/[0.96] md:text-4xl">
-            Research
+            Drafting
           </h1>
-          <p className="mt-2 text-sm leading-relaxed text-white/45">
-            Semantic retrieval scoped to matter sources. Every response is grounded
-            in uploaded documents — no unattributed citations.
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
+            Generate grounded advice notes, skeletons, memos, and clause analyses from
+            retrieval-ready matter sources — then review before client use.
           </p>
         </div>
 
-        {/* Matter selector */}
         {matters.length > 0 && (
           <div className="min-w-[220px]">
             <p className="mb-1.5 text-[10px] uppercase tracking-[0.16em] text-white/35">
@@ -170,12 +157,13 @@ export function ResearchClient({
             </p>
             <select
               value={selectedMatter}
-              onChange={(e) => setSelectedMatter(e.target.value)}
+              onChange={(event) => setSelectedMatter(event.target.value)}
               className="w-full cursor-pointer appearance-none rounded-lg border border-white/[0.08] bg-zinc-950 px-4 py-2.5 text-sm text-white/80 focus:border-white/[0.16] focus:outline-none"
             >
-              {matters.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.title} ({m._count.documents} doc{m._count.documents !== 1 ? "s" : ""})
+              {matters.map((matter) => (
+                <option key={matter.id} value={matter.id}>
+                  {matter.title} ({matter._count.documents} doc
+                  {matter._count.documents !== 1 ? "s" : ""})
                 </option>
               ))}
             </select>
@@ -185,9 +173,9 @@ export function ResearchClient({
 
       {matters.length === 0 ? (
         <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.01] px-8 py-16 text-center">
-          <p className="font-serif text-lg text-white/45">No matters available</p>
+          <p className="font-serif text-lg text-white/45">No matter context available</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-white/28">
-            Create a matter and upload documents before running research queries.
+            Create a matter and upload sources before preparing grounded drafts.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link
@@ -197,40 +185,58 @@ export function ResearchClient({
               Initialize matter
             </Link>
             <Link
-              href="/app/matters"
+              href="/app/research"
               className="rounded-lg border border-white/[0.07] bg-white/[0.01] px-5 py-2.5 text-sm text-white/45 transition-colors duration-200 hover:border-white/[0.14] hover:text-white/72"
             >
-              Open matters
+              Open research
             </Link>
           </div>
         </div>
       ) : (
         <>
-          {/* ── Query form ────────────────────────────────────────────── */}
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <div>
-              <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
-                Research query
-              </p>
-              <textarea
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                rows={4}
-                placeholder={EXAMPLE_QUERIES[0]}
-                className="w-full resize-none rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-sm leading-relaxed text-white/85 placeholder:text-white/22 focus:border-white/[0.16] focus:bg-white/[0.03] focus:outline-none"
-              />
-              <div className="mt-2 flex flex-wrap gap-2">
-                {EXAMPLE_QUERIES.slice(1).map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    onClick={() => setQuery(q)}
-                    className="rounded border border-white/[0.07] bg-white/[0.02] px-3 py-1 text-xs text-white/32 transition-colors hover:border-white/[0.12] hover:text-white/55"
-                  >
-                    {q.slice(0, 48)}…
-                  </button>
-                ))}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-[180px_1fr]">
+              <div>
+                <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
+                  Draft type
+                </p>
+                <select
+                  value={draftType}
+                  onChange={(event) => setDraftType(event.target.value as DraftType)}
+                  className="w-full cursor-pointer appearance-none rounded-lg border border-white/[0.08] bg-zinc-950 px-4 py-2.5 text-sm text-white/80 focus:border-white/[0.16] focus:outline-none"
+                >
+                  {DRAFT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
+              <div>
+                <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
+                  Drafting instruction
+                </p>
+                <textarea
+                  value={instruction}
+                  onChange={(event) => setInstruction(event.target.value)}
+                  rows={4}
+                  placeholder={EXAMPLE_INSTRUCTIONS[0]}
+                  className="w-full resize-none rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-sm leading-relaxed text-white/85 placeholder:text-white/22 focus:border-white/[0.16] focus:bg-white/[0.03] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {EXAMPLE_INSTRUCTIONS.slice(1).map((example) => (
+                <button
+                  key={example}
+                  type="button"
+                  onClick={() => setInstruction(example)}
+                  className="rounded border border-white/[0.07] bg-white/[0.02] px-3 py-1 text-xs text-white/32 transition-colors hover:border-white/[0.12] hover:text-white/55"
+                >
+                  {example.slice(0, 48)}…
+                </button>
+              ))}
             </div>
 
             {localError && (
@@ -241,41 +247,45 @@ export function ResearchClient({
 
             <button
               type="submit"
-              disabled={!query.trim() || !selectedMatter || isPending}
+              disabled={!instruction.trim() || !selectedMatter || isPending}
               className="rounded-lg border border-white/[0.12] bg-white/[0.05] px-6 py-2.5 text-sm text-white/72 transition-colors hover:border-white/[0.2] hover:bg-white/[0.09] hover:text-white/92 disabled:pointer-events-none disabled:opacity-38"
             >
-              {isPending ? "Retrieving…" : "Run research →"}
+              {isPending ? "Preparing draft…" : "Generate draft →"}
             </button>
           </form>
 
-          {/* ── Recent sessions ───────────────────────────────────────── */}
           <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.015] p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-[10px] uppercase tracking-[0.18em] text-white/40">
-                Recent research sessions
+                Recent drafts
               </p>
               <span className="rounded-full border border-white/[0.08] px-2.5 py-0.5 text-[10px] text-white/30">
-                {matterSessions.length} shown
+                {matterDrafts.length} shown
               </span>
             </div>
-            {matterSessions.length === 0 ? (
+            {matterDrafts.length === 0 ? (
               <p className="mt-4 text-sm leading-relaxed text-white/32">
-                No saved sessions for this matter yet. Run a query to persist a
-                grounded research trace.
+                No saved drafts for this matter yet. Generate a grounded draft to persist
+                an evidence-backed work product.
               </p>
             ) : (
               <div className="mt-4 space-y-2">
-                {matterSessions.map((session) => (
+                {matterDrafts.map((draft) => (
                   <div
-                    key={session.id}
+                    key={draft.id}
                     className="rounded-lg border border-white/[0.05] bg-black/20 px-4 py-3 transition-colors hover:border-white/[0.1] hover:bg-black/30"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <button
                         type="button"
                         onClick={() => {
-                          setSelectedMatter(session.matterId)
-                          setQuery(session.query)
+                          setSelectedMatter(draft.matterId)
+                          setInstruction(draft.instruction)
+                          setDraftType(
+                            (DRAFT_TYPES as readonly string[]).includes(draft.draftType)
+                              ? (draft.draftType as DraftType)
+                              : "advice"
+                          )
                           setLocalError(null)
                           setResults(null)
                         }}
@@ -283,27 +293,29 @@ export function ResearchClient({
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="text-[10px] uppercase tracking-[0.14em] text-white/30">
-                            {session.matterTitle}
+                            {draft.matterTitle} · {draftTypeLabel(draft.draftType)}
                           </p>
                           <p className="text-[10px] text-white/22">
-                            {fmtShortDate(session.createdAt)} · {session.chunkIds.length}{" "}
-                            chunk{session.chunkIds.length !== 1 ? "s" : ""}
+                            {fmtShortDate(draft.createdAt)} · {draft.chunkIds.length}{" "}
+                            source{draft.chunkIds.length !== 1 ? "s" : ""}
                           </p>
                         </div>
-                        <p className="mt-2 text-sm text-white/62">{excerpt(session.query)}</p>
+                        <p className="mt-2 text-sm text-white/62">
+                          {excerpt(draft.instruction)}
+                        </p>
                         <p className="mt-1.5 text-xs text-white/28">
-                          {session.response
-                            ? excerpt(session.response, 120)
-                            : "No grounded response saved for this session."}
+                          {draft.content
+                            ? excerpt(draft.content, 120)
+                            : "No draft content saved."}
                         </p>
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleDeleteSession(session.id)}
-                        disabled={isDeleting && deletingSessionId === session.id}
+                        onClick={() => handleDeleteDraft(draft.id)}
+                        disabled={isDeleting && deletingDraftId === draft.id}
                         className="shrink-0 rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/30 hover:text-red-300/70 disabled:pointer-events-none disabled:opacity-40"
                       >
-                        {isDeleting && deletingSessionId === session.id
+                        {isDeleting && deletingDraftId === draft.id
                           ? "Deleting…"
                           : "Delete"}
                       </button>
@@ -314,12 +326,14 @@ export function ResearchClient({
             )}
           </div>
 
-          {/* ── Results ───────────────────────────────────────────────── */}
           {isPending && (
             <div className="animate-pulse space-y-4 pt-4">
               <div className="h-2.5 w-48 rounded bg-white/[0.05]" />
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="rounded-lg border border-white/[0.05] bg-white/[0.01] p-5">
+              {[0, 1, 2].map((index) => (
+                <div
+                  key={index}
+                  className="rounded-lg border border-white/[0.05] bg-white/[0.01] p-5"
+                >
                   <div className="h-2.5 w-32 rounded bg-white/[0.06]" />
                   <div className="mt-3 space-y-2">
                     <div className="h-3 w-full rounded bg-white/[0.04]" />
@@ -332,14 +346,16 @@ export function ResearchClient({
 
           {results && !isPending && (
             <div className="space-y-6 border-t border-white/[0.06] pt-8">
-
-              {/* Retrieval summary */}
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <p className="text-[10px] uppercase tracking-[0.18em] text-white/38">
-                  Retrieved excerpts
+                  Source excerpts
                 </p>
                 <span className="rounded-full border border-white/[0.08] px-2.5 py-0.5 text-[10px] text-white/35">
-                  {results.retrievalCount} source{results.retrievalCount !== 1 ? "s" : ""} · {results.matterTitle}
+                  {results.retrievalCount} source
+                  {results.retrievalCount !== 1 ? "s" : ""} · {results.matterTitle}
+                </span>
+                <span className="rounded-full border border-white/[0.08] px-2.5 py-0.5 text-[10px] text-white/35">
+                  {draftTypeLabel(results.draftType)}
                 </span>
                 {!results.embeddingConfigured && (
                   <span className="rounded-full border border-amber-400/[0.2] bg-amber-400/[0.04] px-2.5 py-0.5 text-[10px] text-amber-400/60">
@@ -348,32 +364,35 @@ export function ResearchClient({
                 )}
               </div>
 
-              {/* Excerpts */}
               {results.chunks.length > 0 ? (
                 <div className="space-y-3">
-                  {results.chunks.map((chunk, i) => (
+                  {results.chunks.map((chunk, index) => (
                     <div
                       key={chunk.id}
                       className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-black/20 p-5"
                     >
                       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1">
                         <span className="text-[10px] uppercase tracking-[0.14em] text-white/35">
-                          Excerpt {i + 1}
+                          Excerpt {index + 1}
                         </span>
                         <span className="text-xs text-white/50">{chunk.fileName}</span>
                         {chunk.pageRef && (
                           <span className="text-xs text-white/35">Page {chunk.pageRef}</span>
                         )}
                         {chunk.headingPath && (
-                          <span className="text-xs text-white/28 italic">{chunk.headingPath}</span>
+                          <span className="text-xs italic text-white/28">
+                            {chunk.headingPath}
+                          </span>
                         )}
-                        <span className={`ml-auto text-xs ${relevanceClass(chunk.distance)}`}>
+                        <span
+                          className={`ml-auto text-xs ${relevanceClass(chunk.distance)}`}
+                        >
                           {relevanceLabel(chunk.distance)} relevance
                         </span>
                       </div>
                       <p className="border-l border-white/[0.08] pl-4 text-sm leading-relaxed text-white/68">
                         {chunk.content.length > 600
-                          ? chunk.content.slice(0, 600) + "…"
+                          ? `${chunk.content.slice(0, 600)}…`
                           : chunk.content}
                       </p>
                     </div>
@@ -382,55 +401,43 @@ export function ResearchClient({
               ) : (
                 <div className="rounded-lg border border-white/[0.06] bg-white/[0.01] px-5 py-6">
                   <p className="text-sm text-white/40">
-                    No relevant excerpts retrieved. The query may not match the indexed
-                    sources — try rephrasing, or verify that documents are fully indexed.
+                    No relevant excerpts retrieved. Rephrase the instruction or confirm
+                    documents are fully indexed.
                   </p>
                 </div>
               )}
 
-              {/* Authority analysis */}
-              {hasAuthorities && (
-                <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015] p-5">
-                  <p className="mb-4 text-[10px] uppercase tracking-[0.18em] text-white/40">
-                    Authority analysis
-                  </p>
-                  <div className="space-y-4">
-                    <AuthorityRow label="Cases" items={results.authorities.cases} />
-                    <AuthorityRow label="Legislation" items={results.authorities.statutes} />
-                    <AuthorityRow label="CPR" items={results.authorities.cpr} />
-                    <AuthorityRow label="Practice directions" items={results.authorities.practiceDirs} />
-                    <AuthorityRow label="Statutory instruments" items={results.authorities.statutory} />
-                  </div>
-                  {!hasAuthorities && (
-                    <p className="text-xs text-white/28">
-                      No UK legal authorities detected in the retrieved excerpts.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Grounded analysis */}
               <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.08] bg-black/30 p-6">
                 <p className="mb-4 text-[10px] uppercase tracking-[0.18em] text-white/40">
-                  Grounded analysis
+                  Grounded draft
                 </p>
-                {results.answer ? (
+                {results.content ? (
                   <div className="space-y-3 text-sm leading-relaxed text-white/72">
-                    {results.answer.split("\n\n").map((para, i) => (
-                      <p key={i}>{para}</p>
+                    {results.content.split("\n\n").map((paragraph, index) => (
+                      <p key={index}>{paragraph}</p>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-white/35">No analysis generated.</p>
+                  <p className="text-sm text-white/35">No draft generated.</p>
                 )}
-                {results.sessionId && (
+                {results.draftId && (
                   <p className="mt-5 border-t border-white/[0.05] pt-3 text-[10px] text-white/22">
-                    Session {results.sessionId.slice(-8)} · {results.retrievalCount} chunk
+                    Draft {results.draftId.slice(-8)} · {results.retrievalCount} chunk
                     {results.retrievalCount !== 1 ? "s" : ""} retrieved
                   </p>
                 )}
               </div>
 
+              <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-black/20 px-6 py-4">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-white/35">
+                  Drafting control
+                </p>
+                <p className="mt-1.5 text-sm leading-relaxed text-white/40">
+                  Review this draft against the matter record and source excerpts before
+                  client use. Generated text is evidence-bound, not a substitute for
+                  counsel judgment.
+                </p>
+              </div>
             </div>
           )}
         </>
