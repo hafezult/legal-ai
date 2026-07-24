@@ -196,7 +196,7 @@ export async function runResearch(
   // Grounded LLM response
   const answer = await generateGroundedResponse(query, chunks)
 
-  // Persist research session
+  // Persist research session and open a matter conversation thread
   let sessionId = ""
   try {
     const session = await prisma.researchSession.create({
@@ -209,9 +209,26 @@ export async function runResearch(
       },
     })
     sessionId = session.id
+
+    const conversationTitle = query.replace(/\s+/g, " ").trim()
+    if (conversationTitle) {
+      await prisma.conversation.create({
+        data: {
+          matterId,
+          title:
+            conversationTitle.length > 120
+              ? `${conversationTitle.slice(0, 117)}…`
+              : conversationTitle,
+        },
+      })
+    }
   } catch {
     /* Non-fatal — session persistence failure should not break research */
   }
+
+  revalidatePath(`/app/matters/${matterId}`)
+  revalidatePath("/app/memory")
+  revalidatePath("/app")
 
   return {
     query,

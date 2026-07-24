@@ -88,6 +88,8 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Document upload validates matter ownership server-side.
 - Document deletion removes storage objects and cascaded chunks after ownership checks.
 - Matter status updates (active / on hold / closed / archived) are ownership-scoped.
+- Matter deletion removes cascaded documents, chunks, conversations, and research sessions after ownership checks, then cleans Supabase storage objects.
+- Matter conversations can be created or deleted with ownership checks; research queries also open a conversation thread automatically.
 - Research session deletion is ownership-scoped and revalidates matter/research surfaces.
 - `/api/index-document/[documentId]` requires `INDEXING_SECRET` outside local development.
 - Retrieval queries are matter-scoped at the SQL layer.

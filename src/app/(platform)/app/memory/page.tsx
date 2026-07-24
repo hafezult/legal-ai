@@ -17,6 +17,7 @@ type MemoryMatter = {
   _count: {
     chunks: number
     researchSessions: number
+    conversations: number
   }
 }
 
@@ -55,6 +56,7 @@ export default async function MemoryPage() {
             select: {
               chunks: true,
               researchSessions: true,
+              conversations: true,
             },
           },
         },
@@ -68,6 +70,10 @@ export default async function MemoryPage() {
   const chunkCount = matters.reduce((sum, matter) => sum + matter._count.chunks, 0)
   const researchSessionCount = matters.reduce(
     (sum, matter) => sum + matter._count.researchSessions,
+    0
+  )
+  const conversationCount = matters.reduce(
+    (sum, matter) => sum + matter._count.conversations,
     0
   )
   const retrievalReadyCount = matters.reduce(
@@ -94,12 +100,13 @@ export default async function MemoryPage() {
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-5">
         {[
           { label: "Matters", value: matters.length },
           { label: "Sources", value: documentCount },
           { label: "Chunks", value: chunkCount },
           { label: "Research sessions", value: researchSessionCount },
+          { label: "Conversations", value: conversationCount },
         ].map((stat) => (
           <div
             key={stat.label}
@@ -181,6 +188,9 @@ export default async function MemoryPage() {
                 <p className="mt-0.5 text-xs text-white/28">
                   {matter._count.researchSessions} research session
                   {matter._count.researchSessions === 1 ? "" : "s"}
+                  {" · "}
+                  {matter._count.conversations} conversation
+                  {matter._count.conversations === 1 ? "" : "s"}
                 </p>
               </div>
               <span className="hidden w-36 shrink-0 truncate text-sm text-white/40 md:block">

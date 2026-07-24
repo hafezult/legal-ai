@@ -4,10 +4,17 @@ import { notFound } from "next/navigation"
 
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { DocumentUploadZone } from "@/components/documents/document-upload-zone"
+import { MatterConversationsPanel } from "@/components/matters/matter-conversations-panel"
+import { MatterDeleteControls } from "@/components/matters/matter-delete-controls"
 import { MatterStatusControls } from "@/components/matters/matter-status-controls"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import { prisma } from "@/lib/prisma"
-import { updateMatterStatus } from "../actions"
+import {
+  createConversation,
+  deleteConversation,
+  deleteMatter,
+  updateMatterStatus,
+} from "../actions"
 import { uploadDocument } from "./actions"
 
 export const dynamic = "force-dynamic"
@@ -109,6 +116,12 @@ export default async function MatterDetailPage({
     createdAt: Date
   }
 
+  type ConversationRow = {
+    id: string
+    title: string
+    createdAt: Date
+  }
+
   type MatterData = {
     id: string
     title: string
@@ -123,7 +136,8 @@ export default async function MatterDetailPage({
     updatedAt: Date
     documents: Doc[]
     researchSessions: ResearchSessionRow[]
-    _count: { documents: number; researchSessions: number }
+    conversations: ConversationRow[]
+    _count: { documents: number; researchSessions: number; conversations: number }
   }
 
   let matter: MatterData | null = null
@@ -169,7 +183,18 @@ export default async function MatterDetailPage({
               createdAt: true,
             },
           },
-          _count: { select: { documents: true, researchSessions: true } },
+          conversations: {
+            orderBy: { createdAt: "desc" },
+            take: 8,
+            select: {
+              id: true,
+              title: true,
+              createdAt: true,
+            },
+          },
+          _count: {
+            select: { documents: true, researchSessions: true, conversations: true },
+          },
         },
       })
     }
@@ -182,6 +207,9 @@ export default async function MatterDetailPage({
   // Bind server action — safe to pass to client component
   const boundUpload = uploadDocument.bind(null, matter.id)
   const boundStatusUpdate = updateMatterStatus.bind(null, matter.id)
+  const boundDeleteMatter = deleteMatter.bind(null, matter.id)
+  const boundCreateConversation = createConversation.bind(null, matter.id)
+  const boundDeleteConversation = deleteConversation
 
   const hasDocuments = matter.documents.length > 0
   const indexedDocuments = matter.documents.filter((doc) =>
@@ -242,6 +270,10 @@ export default async function MatterDetailPage({
             <MatterStatusControls
               currentStatus={matter.status}
               updateAction={boundStatusUpdate}
+            />
+            <MatterDeleteControls
+              matterTitle={matter.title}
+              deleteAction={boundDeleteMatter}
             />
           </div>
         </div>
@@ -439,44 +471,59 @@ export default async function MatterDetailPage({
           )}
         </div>
 
-        {/* Intelligence Readiness Panel */}
-        <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-black/20 p-6">
-          <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
-            Intelligence readiness
-          </p>
-          <p className="mt-4 font-serif text-[14px] text-white/42">
-            {hasRetrievalReady ? "Grounded intelligence ready" : "Grounded intelligence pending"}
-          </p>
-          <p className="mt-1.5 text-xs leading-relaxed text-white/25">
-            {hasRetrievalReady
-              ? "Semantic retrieval and grounded research can now operate against indexed matter sources."
-              : "Parsing, chunking, retrieval, and grounded research readiness update here as matter sources move through indexing."}
-          </p>
+        <MatterConversationsPanel
+          conversations={matter.conversations}
+          createAction={boundCreateConversation}
+          deleteAction={boundDeleteConversation}
+        />
+      </div>
 
-          <div className="mt-5 space-y-2">
-            {[
-              { label: "Source parsing", status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
-              { label: "Chunk indexing", status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
-              { label: "Semantic retrieval", status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
-              { label: "Grounded answers", status: hasResearchSessions ? "active" : hasRetrievalReady ? "pending" : "awaiting" },
-              { label: "Research sessions", status: hasResearchSessions ? "active" : hasRetrievalReady ? "pending" : "awaiting" },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between border-t border-white/[0.04] py-2.5 first:border-t-0">
-                <p className="text-xs text-white/38">{item.label}</p>
-                <span className={`text-[10px] uppercase tracking-[0.1em] ${
-                  item.status === "active"   ? "text-white/65" :
-                  item.status === "pending"  ? "text-white/35" :
-                                               "text-white/20"
-                }`}>
-                  {item.status === "awaiting" ? "Awaiting" : item.status === "pending" ? "Pending" : "Active"}
-                </span>
-              </div>
-            ))}
-          </div>
+      {/* ── Section D — Intelligence Readiness ───────────────────── */}
+      <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-black/20 p-6">
+        <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
+          Intelligence readiness
+        </p>
+        <p className="mt-4 font-serif text-[14px] text-white/42">
+          {hasRetrievalReady ? "Grounded intelligence ready" : "Grounded intelligence pending"}
+        </p>
+        <p className="mt-1.5 text-xs leading-relaxed text-white/25">
+          {hasRetrievalReady
+            ? "Semantic retrieval and grounded research can now operate against indexed matter sources."
+            : "Parsing, chunking, retrieval, and grounded research readiness update here as matter sources move through indexing."}
+        </p>
+
+        <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {[
+            { label: "Source parsing", status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+            { label: "Chunk indexing", status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+            { label: "Semantic retrieval", status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
+            { label: "Grounded answers", status: hasResearchSessions ? "active" : hasRetrievalReady ? "pending" : "awaiting" },
+            { label: "Research sessions", status: hasResearchSessions ? "active" : hasRetrievalReady ? "pending" : "awaiting" },
+            {
+              label: "Conversations",
+              status:
+                matter._count.conversations > 0
+                  ? "active"
+                  : hasResearchSessions
+                    ? "pending"
+                    : "awaiting",
+            },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center justify-between border border-white/[0.04] rounded-lg bg-white/[0.01] px-3.5 py-3">
+              <p className="text-xs text-white/38">{item.label}</p>
+              <span className={`text-[10px] uppercase tracking-[0.1em] ${
+                item.status === "active"   ? "text-white/65" :
+                item.status === "pending"  ? "text-white/35" :
+                                             "text-white/20"
+              }`}>
+                {item.status === "awaiting" ? "Awaiting" : item.status === "pending" ? "Pending" : "Active"}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* ── Section D — Operational Timeline ─────────────────────── */}
+      {/* ── Section E — Operational Timeline ─────────────────────── */}
       <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015] p-6">
         <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
           Operational timeline
@@ -511,7 +558,7 @@ export default async function MatterDetailPage({
         </div>
       </div>
 
-      {/* ── Section E — System State ──────────────────────────────── */}
+      {/* ── Section F — System State ──────────────────────────────── */}
       <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.01] p-6">
         <div className="flex items-center justify-between gap-4">
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">System state</p>

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 
 import { prisma } from "@/lib/prisma"
+import { removeManyFromStorage } from "@/lib/storage/documents"
 
 export type MatterFormState = {
   error?: string
@@ -131,6 +132,152 @@ export async function updateMatterStatus(
   revalidatePath(`/app/matters/${matterId}`)
   revalidatePath("/app/matters")
   revalidatePath("/app/research")
+  revalidatePath("/app")
+
+  return { success: true }
+}
+
+export type MatterDeleteState = {
+  error?: string
+  success?: boolean
+}
+
+export async function deleteMatter(matterId: string): Promise<MatterDeleteState> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { error: "Authentication required." }
+  if (!matterId) return { error: "Matter id is required." }
+
+  let storagePaths: string[] = []
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const matter = await prisma.matter.findFirst({
+      where: { id: matterId, userId: user.id },
+      select: {
+        id: true,
+        documents: {
+          select: { storagePath: true },
+        },
+      },
+    })
+    if (!matter) return { error: "Matter not found or access denied." }
+
+    storagePaths = matter.documents
+      .map((document) => document.storagePath)
+      .filter((path): path is string => Boolean(path))
+
+    await prisma.matter.delete({ where: { id: matter.id } })
+  } catch {
+    return { error: "Unable to delete matter. Please try again." }
+  }
+
+  if (storagePaths.length > 0) {
+    await removeManyFromStorage(storagePaths).catch(() => null)
+  }
+
+  revalidatePath("/app/matters")
+  revalidatePath("/app/documents")
+  revalidatePath("/app/research")
+  revalidatePath("/app/memory")
+  revalidatePath("/app/workflows")
+  revalidatePath("/app/drafting")
+  revalidatePath("/app")
+
+  return { success: true }
+}
+
+export type ConversationFormState = {
+  error?: string
+  success?: boolean
+}
+
+function conversationTitle(raw: string): string {
+  const compact = raw.replace(/\s+/g, " ").trim()
+  if (!compact) return ""
+  return compact.length > 120 ? `${compact.slice(0, 117)}…` : compact
+}
+
+export async function createConversation(
+  matterId: string,
+  title: string
+): Promise<ConversationFormState> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { error: "Authentication required." }
+  if (!matterId) return { error: "Matter id is required." }
+
+  const normalizedTitle = conversationTitle(title)
+  if (!normalizedTitle) return { error: "Conversation title is required." }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const matter = await prisma.matter.findFirst({
+      where: { id: matterId, userId: user.id },
+      select: { id: true },
+    })
+    if (!matter) return { error: "Matter not found or access denied." }
+
+    await prisma.conversation.create({
+      data: {
+        matterId: matter.id,
+        title: normalizedTitle,
+      },
+    })
+  } catch {
+    return { error: "Unable to create conversation. Please try again." }
+  }
+
+  revalidatePath(`/app/matters/${matterId}`)
+  revalidatePath("/app/memory")
+  revalidatePath("/app")
+
+  return { success: true }
+}
+
+export async function deleteConversation(
+  conversationId: string
+): Promise<ConversationFormState> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { error: "Authentication required." }
+  if (!conversationId) return { error: "Conversation id is required." }
+
+  let matterId: string | null = null
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        matter: { userId: user.id },
+      },
+      select: { id: true, matterId: true },
+    })
+    if (!conversation) return { error: "Conversation not found or access denied." }
+
+    matterId = conversation.matterId
+    await prisma.conversation.delete({ where: { id: conversation.id } })
+  } catch {
+    return { error: "Unable to delete conversation. Please try again." }
+  }
+
+  if (matterId) {
+    revalidatePath(`/app/matters/${matterId}`)
+  }
+  revalidatePath("/app/memory")
   revalidatePath("/app")
 
   return { success: true }
