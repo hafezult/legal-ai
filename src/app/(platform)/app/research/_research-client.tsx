@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useCallback, useState, useTransition } from "react"
 
 import { runResearch, type ResearchOutput } from "./actions"
@@ -51,12 +52,47 @@ function AuthorityRow({ label, items }: { label: string; items: string[] }) {
 
 type Matter = { id: string; title: string; _count: { documents: number } }
 
-export function ResearchClient({ matters }: { matters: Matter[] }) {
+type RecentSession = {
+  id: string
+  query: string
+  response: string | null
+  chunkIds: string[]
+  createdAt: Date | string
+  matterId: string
+  matterTitle: string
+}
+
+function fmtShortDate(value: Date | string) {
+  const date = typeof value === "string" ? new Date(value) : value
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
+function excerpt(text: string, length = 140) {
+  const compact = text.replace(/\s+/g, " ").trim()
+  return compact.length > length ? `${compact.slice(0, length)}…` : compact
+}
+
+export function ResearchClient({
+  matters,
+  recentSessions,
+}: {
+  matters: Matter[]
+  recentSessions: RecentSession[]
+}) {
   const [isPending, startTransition] = useTransition()
   const [selectedMatter, setSelectedMatter] = useState(matters[0]?.id ?? "")
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<ResearchOutput | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
+
+  const matterSessions = recentSessions.filter(
+    (session) => !selectedMatter || session.matterId === selectedMatter
+  )
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -123,6 +159,20 @@ export function ResearchClient({ matters }: { matters: Matter[] }) {
           <p className="mx-auto mt-2 max-w-sm text-sm text-white/28">
             Create a matter and upload documents before running research queries.
           </p>
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <Link
+              href="/app/matters/new"
+              className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-5 py-2.5 text-sm text-white/62 transition-colors duration-200 hover:border-white/[0.18] hover:bg-white/[0.07] hover:text-white/88"
+            >
+              Initialize matter
+            </Link>
+            <Link
+              href="/app/matters"
+              className="rounded-lg border border-white/[0.07] bg-white/[0.01] px-5 py-2.5 text-sm text-white/45 transition-colors duration-200 hover:border-white/[0.14] hover:text-white/72"
+            >
+              Open matters
+            </Link>
+          </div>
         </div>
       ) : (
         <>
@@ -167,6 +217,56 @@ export function ResearchClient({ matters }: { matters: Matter[] }) {
               {isPending ? "Retrieving…" : "Run research →"}
             </button>
           </form>
+
+          {/* ── Recent sessions ───────────────────────────────────────── */}
+          <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.015] p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                Recent research sessions
+              </p>
+              <span className="rounded-full border border-white/[0.08] px-2.5 py-0.5 text-[10px] text-white/30">
+                {matterSessions.length} shown
+              </span>
+            </div>
+            {matterSessions.length === 0 ? (
+              <p className="mt-4 text-sm leading-relaxed text-white/32">
+                No saved sessions for this matter yet. Run a query to persist a
+                grounded research trace.
+              </p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {matterSessions.map((session) => (
+                  <button
+                    key={session.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedMatter(session.matterId)
+                      setQuery(session.query)
+                      setLocalError(null)
+                      setResults(null)
+                    }}
+                    className="block w-full rounded-lg border border-white/[0.05] bg-black/20 px-4 py-3 text-left transition-colors hover:border-white/[0.1] hover:bg-black/30"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-white/30">
+                        {session.matterTitle}
+                      </p>
+                      <p className="text-[10px] text-white/22">
+                        {fmtShortDate(session.createdAt)} · {session.chunkIds.length}{" "}
+                        chunk{session.chunkIds.length !== 1 ? "s" : ""}
+                      </p>
+                    </div>
+                    <p className="mt-2 text-sm text-white/62">{excerpt(session.query)}</p>
+                    <p className="mt-1.5 text-xs text-white/28">
+                      {session.response
+                        ? excerpt(session.response, 120)
+                        : "No grounded response saved for this session."}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* ── Results ───────────────────────────────────────────────── */}
           {isPending && (
