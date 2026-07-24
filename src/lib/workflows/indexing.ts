@@ -4,7 +4,6 @@ import { prisma } from "@/lib/prisma"
 import { extractText } from "@/lib/parsing"
 import { chunkDocument } from "@/lib/retrieval/chunking"
 import { generateBatchEmbeddings, isEmbeddingConfigured } from "@/lib/ai/embeddings"
-import { extractAuthorities } from "@/lib/legal/authorities"
 
 export type PipelineStatus =
   | "pending"
@@ -114,10 +113,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     `
   }
 
-  // ── 5. Extract authorities ───────────────────────────────────────────────
-  // Stored as part of parsed text — available via chunk content at query time
-  void extractAuthorities(parsed.text) // validated; used downstream in research
-
+  // Authorities are extracted at research time from retrieved chunk content.
   await setStatus(documentId, "retrieval-ready", {
     retrievalStatus: "ready",
   })
