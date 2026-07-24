@@ -505,3 +505,152 @@ export function buildInviteAcceptUrl(token: string) {
   )
   return `${base}/app/invites/${token}`
 }
+
+/**
+ * Transfer organization ownership to another member.
+ * The previous owner is demoted to admin.
+ */
+export async function transferOrganizationOwnership(
+  actorUserId: string,
+  organizationId: string,
+  targetMemberId: string
+): Promise<
+  | {
+      ok: true
+      organizationName: string
+      previousOwnerEmail: string
+      newOwnerEmail: string
+    }
+  | { ok: false; error: string }
+> {
+  const actorMembership = await prisma.organizationMember.findUnique({
+    where: {
+      organizationId_userId: { organizationId, userId: actorUserId },
+    },
+    select: {
+      id: true,
+      role: true,
+      user: { select: { email: true } },
+      organization: { select: { name: true } },
+    },
+  })
+
+  if (!actorMembership || actorMembership.role !== "owner") {
+    return { ok: false, error: "Only the organization owner can transfer ownership." }
+  }
+
+  const target = await prisma.organizationMember.findFirst({
+    where: { id: targetMemberId, organizationId },
+    select: {
+      id: true,
+      userId: true,
+      role: true,
+      user: { select: { email: true } },
+    },
+  })
+
+  if (!target) {
+    return { ok: false, error: "Target member not found in this organization." }
+  }
+  if (target.userId === actorUserId) {
+    return { ok: false, error: "You already own this organization." }
+  }
+
+  await prisma.$transaction([
+    prisma.organizationMember.update({
+      where: { id: target.id },
+      data: { role: "owner" },
+    }),
+    prisma.organizationMember.update({
+      where: { id: actorMembership.id },
+      data: { role: "admin" },
+    }),
+  ])
+
+  return {
+    ok: true,
+    organizationName: actorMembership.organization.name,
+    previousOwnerEmail: actorMembership.user.email,
+    newOwnerEmail: target.user.email,
+  }
+}
+
+/**
+ * Delete an organization owned by the actor.
+ * Matters keep their creator ownership with organizationId cleared (SetNull).
+ * Requires confirmationName to match the organization name.
+ */
+export async function deleteOwnedOrganization(
+  actorUserId: string,
+  organizationId: string,
+  confirmationName: string
+): Promise<
+  | { ok: true; organizationName: string; matterCount: number }
+  | { ok: false; error: string }
+> {
+  const membership = await prisma.organizationMember.findUnique({
+    where: {
+      organizationId_userId: { organizationId, userId: actorUserId },
+    },
+    select: {
+      role: true,
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          _count: { select: { matters: true } },
+        },
+      },
+    },
+  })
+
+  if (!membership || membership.role !== "owner") {
+    return { ok: false, error: "Only the organization owner can delete it." }
+  }
+
+  const organizationName = membership.organization.name
+  const confirmed = confirmationName.replace(/\s+/g, " ").trim()
+  if (!confirmed || confirmed.toLowerCase() !== organizationName.toLowerCase()) {
+    return {
+      ok: false,
+      error: `Type “${organizationName}” exactly to confirm deletion.`,
+    }
+  }
+
+  const ownedCount = await prisma.organizationMember.count({
+    where: { userId: actorUserId, role: "owner" },
+  })
+  if (ownedCount <= 1) {
+    return {
+      ok: false,
+      error:
+        "Create another organization first. You must keep at least one owned workspace.",
+    }
+  }
+
+  const matterCount = membership.organization._count.matters
+
+  const affectedUsers = await prisma.user.findMany({
+    where: { activeOrganizationId: organizationId },
+    select: { id: true },
+  })
+
+  await prisma.$transaction(async (tx) => {
+    await tx.user.updateMany({
+      where: { activeOrganizationId: organizationId },
+      data: { activeOrganizationId: null },
+    })
+    await tx.organization.delete({ where: { id: organizationId } })
+  })
+
+  // Restore valid active workspaces for users who pointed at the deleted org.
+  for (const user of affectedUsers) {
+    try {
+      await getActiveOrganization(user.id)
+    } catch {
+      /* Best-effort; membership queries still work without a stored selection */
+    }
+  }
+
+  return { ok: true, organizationName, matterCount }
+}

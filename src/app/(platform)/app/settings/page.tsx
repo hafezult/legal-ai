@@ -101,6 +101,12 @@ export default async function SettingsPage() {
       configured: Boolean(process.env.NEXT_PUBLIC_APP_URL),
       description: "Absolute callback URL for upload-triggered indexing.",
     },
+    {
+      label: "Invite email (Resend)",
+      configured: Boolean(process.env.RESEND_API_KEY),
+      description:
+        "Optional outbound invite delivery. Without it, invites still work via copyable links and mailto.",
+    },
   ]
 
   let activity: ActivityEvent[] = []
@@ -199,8 +205,9 @@ export default async function SettingsPage() {
           Settings
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
-          Runtime readiness, organization creation, roles, invite delivery,
-          integration status, and security posture for the Aether workspace.
+          Runtime readiness, organization creation, ownership transfer, invite
+          delivery, integration status, and security posture for the Aether
+          workspace.
         </p>
       </div>
 
@@ -350,7 +357,7 @@ export default async function SettingsPage() {
           {
             label: "Role controls",
             value:
-              "Owner / admin / member / viewer roles gate write, delete, and membership management. Create additional organizations, switch the active workspace, leave non-owned orgs, and deliver pending invites via copyable links or mailto.",
+              "Owner / admin / member / viewer roles gate write, delete, and membership management. Create or delete organizations, transfer ownership, switch the active workspace, leave non-owned orgs, and deliver pending invites via Resend, copyable links, or mailto.",
           },
         ].map((item) => (
           <div

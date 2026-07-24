@@ -10,6 +10,7 @@ import {
   acceptOrganizationInviteByToken,
   buildInviteAcceptUrl,
   createOwnedOrganization,
+  deleteOwnedOrganization,
   getActiveOrganization,
   inviteExpiryDate,
   isOrgRole,
@@ -17,8 +18,10 @@ import {
   ORG_ROLES,
   roleAtLeast,
   setActiveOrganization,
+  transferOrganizationOwnership,
   type OrgRole,
 } from "@/lib/auth/rbac"
+import { sendOrganizationInviteEmail } from "@/lib/email/invite"
 import { prisma } from "@/lib/prisma"
 
 export type OrganizationActionState = {
@@ -26,6 +29,7 @@ export type OrganizationActionState = {
   success?: boolean
   inviteCreated?: boolean
   inviteUrl?: string
+  inviteEmailSent?: boolean
   organizationId?: string
 }
 
@@ -110,7 +114,7 @@ export async function leaveOrganization(
     if (membership.role === "owner") {
       return {
         error:
-          "Owners cannot leave their organization. Transfer ownership or keep at least one owner workspace.",
+          "Owners cannot leave. Transfer ownership to another member, or delete the organization from Settings.",
       }
     }
 
@@ -359,19 +363,112 @@ export async function addOrganizationMember(
       },
     })
 
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { name: true },
+    })
+
+    const emailResult = await sendOrganizationInviteEmail({
+      to: emailNormalized,
+      organizationName: organization?.name || "Aether workspace",
+      inviteUrl,
+      role,
+      invitedByName: actor.user.name || actor.user.email,
+    })
+
     await recordAuditEvent({
       userId: actor.user.id,
       action: "organization.invite_create",
       entityType: "organization_invite",
       entityId: organizationId,
       summary: `Invited ${emailNormalized} as ${role}`,
-      metadata: { role, expiresAt: expiresAt.toISOString(), inviteUrl },
+      metadata: {
+        role,
+        expiresAt: expiresAt.toISOString(),
+        inviteUrl,
+        emailSent: emailResult.sent,
+        emailReason: emailResult.sent ? undefined : emailResult.reason,
+      },
     })
 
     revalidatePath("/app/settings")
-    return { success: true, inviteCreated: true, inviteUrl }
+    return {
+      success: true,
+      inviteCreated: true,
+      inviteUrl,
+      inviteEmailSent: emailResult.sent,
+    }
   } catch {
     return { error: "Unable to add member or create invite. Please try again." }
+  }
+}
+
+export async function transferOwnership(
+  organizationId: string,
+  targetMemberId: string
+): Promise<OrganizationActionState> {
+  const actor = await requireActor()
+  if ("error" in actor) return { error: actor.error }
+
+  try {
+    const result = await transferOrganizationOwnership(
+      actor.user.id,
+      organizationId,
+      targetMemberId
+    )
+    if (!result.ok) return { error: result.error }
+
+    await recordAuditEvent({
+      userId: actor.user.id,
+      action: "organization.ownership_transfer",
+      entityType: "organization",
+      entityId: organizationId,
+      summary: `Transferred ownership of “${result.organizationName}” to ${result.newOwnerEmail}`,
+      metadata: {
+        previousOwnerEmail: result.previousOwnerEmail,
+        newOwnerEmail: result.newOwnerEmail,
+      },
+    })
+
+    revalidatePath("/app", "layout")
+    revalidatePath("/app/settings")
+    revalidatePath("/app/matters")
+    return { success: true }
+  } catch {
+    return { error: "Unable to transfer ownership. Please try again." }
+  }
+}
+
+export async function deleteOrganization(
+  organizationId: string,
+  confirmationName: string
+): Promise<OrganizationActionState> {
+  const actor = await requireActor()
+  if ("error" in actor) return { error: actor.error }
+
+  try {
+    const result = await deleteOwnedOrganization(
+      actor.user.id,
+      organizationId,
+      confirmationName
+    )
+    if (!result.ok) return { error: result.error }
+
+    await recordAuditEvent({
+      userId: actor.user.id,
+      action: "organization.delete",
+      entityType: "organization",
+      entityId: organizationId,
+      summary: `Deleted organization “${result.organizationName}”`,
+      metadata: { matterCount: result.matterCount },
+    })
+
+    revalidatePath("/app", "layout")
+    revalidatePath("/app/settings")
+    revalidatePath("/app/matters")
+    return { success: true }
+  } catch {
+    return { error: "Unable to delete organization. Please try again." }
   }
 }
 

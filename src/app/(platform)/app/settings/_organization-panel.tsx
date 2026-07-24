@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation"
 import {
   addOrganizationMember,
   createOrganization,
+  deleteOrganization,
   leaveOrganization,
   removeOrganizationMember,
   renameOrganization,
   revokeOrganizationInvite,
   switchActiveOrganization,
+  transferOwnership,
   updateOrganizationMemberRole,
   type OrganizationActionState,
 } from "./actions"
@@ -86,14 +88,21 @@ export function OrganizationAccessPanel({
   const [inviteRole, setInviteRole] = useState<(typeof ROLE_OPTIONS)[number]>("member")
   const [lastInviteUrl, setLastInviteUrl] = useState<string | null>(null)
   const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null)
+  const [transferMemberId, setTransferMemberId] = useState("")
+  const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const [message, setMessage] = useState<{
     type: "success" | "error"
     text: string
   } | null>(null)
 
   const canManage = actorRole === "owner" || actorRole === "admin"
+  const isOwner = actorRole === "owner"
   const canLeave = actorRole !== "owner"
   const showSwitcher = organizations.length > 1
+  const transferCandidates = members.filter(
+    (member) => member.role !== "owner" && !member.isSelf
+  )
+  const canDeleteOrg = isOwner && organizations.filter((org) => org.role === "owner").length > 1
 
   const run = useCallback(
     (
@@ -114,7 +123,9 @@ export function OrganizationAccessPanel({
         onSuccess?.(result)
         const text =
           result.inviteCreated
-            ? "Invite ready. Copy the link or open mail to deliver it."
+            ? result.inviteEmailSent
+              ? "Invite emailed and link ready to share."
+              : "Invite ready. Copy the link or open mail to deliver it."
             : successText
         setMessage({ type: "success", text })
         router.refresh()
@@ -295,8 +306,8 @@ export function OrganizationAccessPanel({
               </button>
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-white/28">
-              Existing users join immediately. Others get a shareable invite link
-              and mailto draft for delivery.
+              Existing users join immediately. Others get a shareable invite link;
+              when Resend is configured the invite is also emailed automatically.
             </p>
           </div>
         ) : (
@@ -493,6 +504,106 @@ export function OrganizationAccessPanel({
           >
             Leave this organization
           </button>
+        </div>
+      ) : null}
+
+      {isOwner ? (
+        <div className="mt-6 space-y-5 border-t border-white/[0.06] pt-5">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.16em] text-white/32">
+              Transfer ownership
+            </p>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-white/28">
+              Promote another member to owner. You become an admin and can leave
+              afterward if needed.
+            </p>
+            {transferCandidates.length === 0 ? (
+              <p className="mt-3 text-sm text-white/30">
+                Add another member before transferring ownership.
+              </p>
+            ) : (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <select
+                  value={transferMemberId}
+                  onChange={(e) => setTransferMemberId(e.target.value)}
+                  disabled={isPending}
+                  className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-black/25 px-3 py-2 text-sm text-white/80 outline-none transition-colors focus:border-white/[0.18] disabled:opacity-50"
+                >
+                  <option value="">Select member</option>
+                  {transferCandidates.map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.name || member.email} · {member.role}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={isPending || !transferMemberId}
+                  onClick={() =>
+                    run(async () => {
+                      const result = await transferOwnership(
+                        organizationId,
+                        transferMemberId
+                      )
+                      if (!result.error) setTransferMemberId("")
+                      return result
+                    }, "Ownership transferred. You are now an admin.")
+                  }
+                  className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-[12px] text-white/60 transition-colors hover:border-white/[0.16] hover:text-white/80 disabled:opacity-40"
+                >
+                  Transfer
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.16em] text-white/32">
+              Delete organization
+            </p>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-white/28">
+              Removes the workspace, memberships, and invites. Matter records stay
+              with their creators and are detached from this organization. You must
+              keep at least one owned workspace.
+            </p>
+            {canDeleteOrg ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <input
+                  value={deleteConfirmation}
+                  onChange={(e) => setDeleteConfirmation(e.target.value)}
+                  placeholder={`Type “${organizationName}” to confirm`}
+                  disabled={isPending}
+                  className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-black/25 px-3 py-2 text-sm text-white/80 outline-none transition-colors focus:border-white/[0.18] disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  disabled={
+                    isPending ||
+                    deleteConfirmation.replace(/\s+/g, " ").trim().toLowerCase() !==
+                      organizationName.toLowerCase()
+                  }
+                  onClick={() =>
+                    run(async () => {
+                      const result = await deleteOrganization(
+                        organizationId,
+                        deleteConfirmation
+                      )
+                      if (!result.error) setDeleteConfirmation("")
+                      return result
+                    }, "Organization deleted.")
+                  }
+                  className="rounded-lg border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2 text-[12px] text-amber-100/70 transition-colors hover:border-amber-400/40 hover:text-amber-100 disabled:opacity-40"
+                >
+                  Delete
+                </button>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-white/30">
+                Create another organization first. Your last owned workspace cannot
+                be deleted.
+              </p>
+            )}
+          </div>
         </div>
       ) : null}
     </div>

@@ -49,6 +49,8 @@ Required variables:
 | `OPENAI_API_KEY` | Enables embeddings, semantic retrieval, and grounded answers. |
 | `NEXT_PUBLIC_APP_URL` | Absolute app URL used to trigger indexing after uploads. |
 | `INDEXING_SECRET` | Shared secret for the internal indexing endpoint outside development. |
+| `RESEND_API_KEY` | Optional. When set, pending organization invites are emailed via Resend. |
+| `RESEND_FROM_EMAIL` | Optional Resend from address (defaults to `Aether <onboarding@resend.dev>`). |
 
 Initialize the database:
 
@@ -88,7 +90,7 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Data access is scoped through the authenticated user's persisted app row and organization membership.
 - Each signed-in user receives a personal organization (owner role). Additional organizations can be created from Settings; matter creation uses the active organization.
 - Users who belong to multiple organizations can switch the active workspace from the sidebar or Settings.
-- Non-owners can leave an organization; owners retain their workspace and cannot leave without transferring ownership.
+- Non-owners can leave an organization; owners can transfer ownership to another member (becoming admin) or delete the organization after name confirmation when they own more than one workspace.
 - Organization roles (`owner`, `admin`, `member`, `viewer`) gate read, write, delete, and membership management.
 - Document upload validates matter write access server-side.
 - Document deletion removes storage objects and cascaded chunks after delete-permission checks.
@@ -99,7 +101,8 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Research session deletion requires write permission on the parent matter and revalidates matter/research surfaces.
 - Key mutations write ownership-scoped `AuditEvent` records (matter, document, research, conversation, draft, organization). Trail writes are non-fatal and surface on Settings.
 - Draft generation and deletion require write permission; drafts persist instruction, type, content, and retrieved chunk ids.
-- Settings exposes organization roster controls for owners/admins (rename, create organization, add/invite by email, role update, remove, revoke pending invites).
-- Pending invites include a shareable `/app/invites/[token]` acceptance link and a mailto draft for outbound delivery. Invites also activate automatically when the invited email signs in (14-day expiry).
+- Settings exposes organization roster controls for owners/admins (rename, create organization, add/invite by email, role update, remove, revoke pending invites, transfer ownership, delete organization).
+- Pending invites include a shareable `/app/invites/[token]` acceptance link. With `RESEND_API_KEY` configured, invites are emailed automatically; otherwise copyable links and mailto drafts remain available. Invites also activate automatically when the invited email signs in (14-day expiry).
+- Organization deletion detaches matters (organizationId set null) while preserving creator ownership; memberships and invites cascade away.
 - `/api/index-document/[documentId]` requires `INDEXING_SECRET` outside local development.
 - Retrieval queries are matter-scoped at the SQL layer.
