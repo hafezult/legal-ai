@@ -219,7 +219,19 @@ export async function runResearch(
             conversationTitle.length > 120
               ? `${conversationTitle.slice(0, 117)}…`
               : conversationTitle,
+          messages: {
+            create: [
+              { role: "user", content: query },
+              ...(answer
+                ? [{ role: "assistant", content: answer }]
+                : []),
+            ],
+          },
         },
+      })
+      await prisma.matter.update({
+        where: { id: matterId },
+        data: { updatedAt: new Date() },
       })
     }
   } catch {

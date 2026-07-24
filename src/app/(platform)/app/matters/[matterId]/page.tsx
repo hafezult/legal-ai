@@ -11,6 +11,7 @@ import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import { prisma } from "@/lib/prisma"
 import {
   createConversation,
+  createConversationMessage,
   deleteConversation,
   deleteMatter,
   updateMatterStatus,
@@ -116,10 +117,19 @@ export default async function MatterDetailPage({
     createdAt: Date
   }
 
+  type ConversationMessageRow = {
+    id: string
+    role: string
+    content: string
+    createdAt: Date
+  }
+
   type ConversationRow = {
     id: string
     title: string
     createdAt: Date
+    messages: ConversationMessageRow[]
+    _count: { messages: number }
   }
 
   type MatterData = {
@@ -190,6 +200,17 @@ export default async function MatterDetailPage({
               id: true,
               title: true,
               createdAt: true,
+              messages: {
+                orderBy: { createdAt: "asc" },
+                take: 40,
+                select: {
+                  id: true,
+                  role: true,
+                  content: true,
+                  createdAt: true,
+                },
+              },
+              _count: { select: { messages: true } },
             },
           },
           _count: {
@@ -210,6 +231,7 @@ export default async function MatterDetailPage({
   const boundDeleteMatter = deleteMatter.bind(null, matter.id)
   const boundCreateConversation = createConversation.bind(null, matter.id)
   const boundDeleteConversation = deleteConversation
+  const boundCreateConversationMessage = createConversationMessage
 
   const hasDocuments = matter.documents.length > 0
   const indexedDocuments = matter.documents.filter((doc) =>
@@ -475,6 +497,7 @@ export default async function MatterDetailPage({
           conversations={matter.conversations}
           createAction={boundCreateConversation}
           deleteAction={boundDeleteConversation}
+          createMessageAction={boundCreateConversationMessage}
         />
       </div>
 

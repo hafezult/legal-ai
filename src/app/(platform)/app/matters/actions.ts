@@ -282,3 +282,67 @@ export async function deleteConversation(
 
   return { success: true }
 }
+
+const MESSAGE_ROLES = new Set(["user", "assistant", "system", "note"])
+
+function normalizeMessageContent(raw: string): string {
+  const compact = raw.replace(/\r\n/g, "\n").trim()
+  if (!compact) return ""
+  return compact.length > 8000 ? `${compact.slice(0, 7997)}…` : compact
+}
+
+export async function createConversationMessage(
+  conversationId: string,
+  content: string,
+  role = "note"
+): Promise<ConversationFormState> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { error: "Authentication required." }
+  if (!conversationId) return { error: "Conversation id is required." }
+
+  const normalizedRole = MESSAGE_ROLES.has(role) ? role : "note"
+  const normalizedContent = normalizeMessageContent(content)
+  if (!normalizedContent) return { error: "Message content is required." }
+
+  let matterId: string | null = null
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        matter: { userId: user.id },
+      },
+      select: { id: true, matterId: true },
+    })
+    if (!conversation) return { error: "Conversation not found or access denied." }
+
+    matterId = conversation.matterId
+    await prisma.conversationMessage.create({
+      data: {
+        conversationId: conversation.id,
+        role: normalizedRole,
+        content: normalizedContent,
+      },
+    })
+    await prisma.matter.update({
+      where: { id: conversation.matterId },
+      data: { updatedAt: new Date() },
+    })
+  } catch {
+    return { error: "Unable to add message. Please try again." }
+  }
+
+  if (matterId) {
+    revalidatePath(`/app/matters/${matterId}`)
+  }
+  revalidatePath("/app/memory")
+  revalidatePath("/app")
+
+  return { success: true }
+}

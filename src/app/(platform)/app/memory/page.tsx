@@ -14,6 +14,9 @@ type MemoryMatter = {
     indexingStatus: string
     retrievalStatus: string
   }[]
+  conversations: {
+    _count: { messages: number }
+  }[]
   _count: {
     chunks: number
     researchSessions: number
@@ -52,6 +55,11 @@ export default async function MemoryPage() {
               retrievalStatus: true,
             },
           },
+          conversations: {
+            select: {
+              _count: { select: { messages: true } },
+            },
+          },
           _count: {
             select: {
               chunks: true,
@@ -74,6 +82,15 @@ export default async function MemoryPage() {
   )
   const conversationCount = matters.reduce(
     (sum, matter) => sum + matter._count.conversations,
+    0
+  )
+  const messageCount = matters.reduce(
+    (sum, matter) =>
+      sum +
+      matter.conversations.reduce(
+        (threadSum, conversation) => threadSum + conversation._count.messages,
+        0
+      ),
     0
   )
   const retrievalReadyCount = matters.reduce(
@@ -100,13 +117,14 @@ export default async function MemoryPage() {
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {[
           { label: "Matters", value: matters.length },
           { label: "Sources", value: documentCount },
           { label: "Chunks", value: chunkCount },
           { label: "Research sessions", value: researchSessionCount },
           { label: "Conversations", value: conversationCount },
+          { label: "Messages", value: messageCount },
         ].map((stat) => (
           <div
             key={stat.label}
@@ -191,6 +209,18 @@ export default async function MemoryPage() {
                   {" · "}
                   {matter._count.conversations} conversation
                   {matter._count.conversations === 1 ? "" : "s"}
+                  {" · "}
+                  {matter.conversations.reduce(
+                    (sum, conversation) => sum + conversation._count.messages,
+                    0
+                  )}{" "}
+                  message
+                  {matter.conversations.reduce(
+                    (sum, conversation) => sum + conversation._count.messages,
+                    0
+                  ) === 1
+                    ? ""
+                    : "s"}
                 </p>
               </div>
               <span className="hidden w-36 shrink-0 truncate text-sm text-white/40 md:block">
