@@ -5,7 +5,7 @@ import { DocumentRetryButton } from "@/components/documents/document-retry-butto
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import {
   getActiveOrganization,
-  matterAccessWhere,
+  matterAccessWhereForActiveOrg,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
@@ -45,8 +45,9 @@ export default async function WorkflowsPage() {
     if (user) {
       const activeOrg = await getActiveOrganization(user.id)
       canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
+      const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
       documents = await prisma.document.findMany({
-        where: { matter: matterAccessWhere(user.id) },
+        where: { matter: matterWhere },
         orderBy: { uploadedAt: "desc" },
         take: 12,
         select: {

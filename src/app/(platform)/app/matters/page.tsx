@@ -4,7 +4,7 @@ import Link from "next/link"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import {
   getActiveOrganization,
-  matterAccessWhere,
+  matterAccessWhereForActiveOrg,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
@@ -46,8 +46,9 @@ export default async function MattersPage() {
     if (user) {
       const activeOrg = await getActiveOrganization(user.id)
       canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
+      const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
       matters = await prisma.matter.findMany({
-        where: matterAccessWhere(user.id),
+        where: matterWhere,
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,

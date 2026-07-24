@@ -2,10 +2,12 @@ import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 
+import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { DocumentUploadZone } from "@/components/documents/document-upload-zone"
 import { MatterConversationsPanel } from "@/components/matters/matter-conversations-panel"
 import { MatterDeleteControls } from "@/components/matters/matter-delete-controls"
+import { MatterEditControls } from "@/components/matters/matter-edit-controls"
 import { MatterStatusControls } from "@/components/matters/matter-status-controls"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import { getMatterAccess, matterAccessWhere, roleHasPermission } from "@/lib/auth/rbac"
@@ -15,6 +17,7 @@ import {
   createConversationMessage,
   deleteConversation,
   deleteMatter,
+  updateMatter,
   updateMatterStatus,
 } from "../actions"
 import { uploadDocument } from "./actions"
@@ -246,6 +249,7 @@ export default async function MatterDetailPage({
   // Bind server action — safe to pass to client component
   const boundUpload = uploadDocument.bind(null, matter.id)
   const boundStatusUpdate = updateMatterStatus.bind(null, matter.id)
+  const boundMatterUpdate = updateMatter.bind(null, matter.id)
   const boundDeleteMatter = deleteMatter.bind(null, matter.id)
   const boundCreateConversation = createConversation.bind(null, matter.id)
   const boundDeleteConversation = deleteConversation
@@ -313,6 +317,20 @@ export default async function MatterDetailPage({
               <MatterStatusControls
                 currentStatus={matter.status}
                 updateAction={boundStatusUpdate}
+              />
+            ) : null}
+            {canWrite ? (
+              <MatterEditControls
+                matter={{
+                  title: matter.title,
+                  clientName: matter.clientName,
+                  practiceArea: matter.practiceArea,
+                  jurisdiction: matter.jurisdiction,
+                  riskLevel: matter.riskLevel,
+                  billingCode: matter.billingCode,
+                  description: matter.description,
+                }}
+                updateAction={boundMatterUpdate}
               />
             ) : null}
             {canDelete ? (
@@ -396,18 +414,25 @@ export default async function MatterDetailPage({
                 <span className="hidden w-32 shrink-0 text-right text-[10px] uppercase tracking-[0.14em] text-white/28 lg:block">
                   Ingested
                 </span>
+                {canWrite ? (
+                  <span className="w-16 shrink-0 text-right text-[10px] uppercase tracking-[0.14em] text-white/28">
+                    Actions
+                  </span>
+                ) : null}
               </div>
 
               {/* Rows */}
               {matter.documents.map((doc) => (
-                <Link
+                <div
                   key={doc.id}
-                  href={`/app/matters/${matter.id}/documents/${doc.id}`}
                   className="flex items-center gap-4 border-t border-white/[0.04] px-4 py-3 transition-colors first:border-t-0 hover:bg-white/[0.02]"
                 >
-                  <div className="min-w-0 flex-1">
+                  <Link
+                    href={`/app/matters/${matter.id}/documents/${doc.id}`}
+                    className="min-w-0 flex-1"
+                  >
                     <p className="truncate text-[13px] text-white/75">{doc.fileName}</p>
-                  </div>
+                  </Link>
                   <span className="hidden w-12 shrink-0 text-xs text-white/38 sm:block">
                     {mimeLabel(doc.mimeType)}
                   </span>
@@ -423,7 +448,17 @@ export default async function MatterDetailPage({
                   <span className="hidden w-32 shrink-0 text-right text-xs text-white/25 lg:block">
                     {fmtShortDate(doc.uploadedAt)}
                   </span>
-                </Link>
+                  {canWrite ? (
+                    <div className="w-16 shrink-0 text-right">
+                      {doc.indexingStatus === "failed" ? (
+                        <DocumentRetryButton
+                          matterId={matter.id}
+                          documentId={doc.id}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               ))}
             </div>
           </div>

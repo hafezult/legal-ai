@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation"
 import { useCallback, useState, useTransition } from "react"
 
 import { downloadMarkdown } from "@/lib/download"
-import { deleteResearchSession, runResearch, type ResearchOutput } from "./actions"
+import {
+  deleteResearchSession,
+  restoreResearchSession,
+  runResearch,
+  type ResearchOutput,
+} from "./actions"
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -89,21 +94,6 @@ function emptyAuthorities(): ResearchOutput["authorities"] {
   }
 }
 
-function hydrateSession(session: RecentSession): ResearchOutput {
-  return {
-    query: session.query,
-    matterId: session.matterId,
-    matterTitle: session.matterTitle,
-    answer: session.response ?? "",
-    chunks: [],
-    authorities: emptyAuthorities(),
-    sessionId: session.id,
-    retrievalCount: session.chunkIds.length,
-    indexedChunks: session.chunkIds.length,
-    embeddingConfigured: true,
-  }
-}
-
 function researchMarkdown(output: ResearchOutput) {
   const lines = [
     `# Research — ${output.matterTitle}`,
@@ -121,11 +111,35 @@ function researchMarkdown(output: ResearchOutput) {
     `- Session: \`${output.sessionId}\``,
     `- Retrieved chunks: ${output.retrievalCount}`,
   ]
+  const authorityEntries: [string, string[]][] = [
+    ["Cases", output.authorities.cases],
+    ["Statutes", output.authorities.statutes],
+    ["CPR", output.authorities.cpr],
+    ["Practice directions", output.authorities.practiceDirs],
+    ["Statutory instruments", output.authorities.statutory],
+  ]
+  const presentAuthorities = authorityEntries.filter(([, items]) => items.length > 0)
+  if (presentAuthorities.length > 0) {
+    lines.push("", "## Authorities", "")
+    for (const [label, items] of presentAuthorities) {
+      lines.push(`### ${label}`, "")
+      for (const item of items) {
+        lines.push(`- ${item}`)
+      }
+      lines.push("")
+    }
+  }
   if (output.chunks.length > 0) {
     lines.push("", "## Source excerpts", "")
     output.chunks.forEach((chunk, index) => {
+      const loc = [
+        chunk.headingPath ? `Section: ${chunk.headingPath}` : null,
+        chunk.pageRef ? `Page ${chunk.pageRef}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
       lines.push(
-        `### Excerpt ${index + 1} — ${chunk.fileName}`,
+        `### Excerpt ${index + 1} — ${chunk.fileName}${loc ? ` (${loc})` : ""}`,
         "",
         chunk.content,
         ""
@@ -147,6 +161,7 @@ export function ResearchClient({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [isDeleting, startDeleteTransition] = useTransition()
+  const [isRestoring, startRestoreTransition] = useTransition()
   const [selectedMatter, setSelectedMatter] = useState(matters[0]?.id ?? "")
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<ResearchOutput | null>(null)
@@ -157,13 +172,6 @@ export function ResearchClient({
     (session) => !selectedMatter || session.matterId === selectedMatter
   )
 
-  const restoreSession = useCallback((session: RecentSession) => {
-    setSelectedMatter(session.matterId)
-    setQuery(session.query)
-    setLocalError(null)
-    setResults(hydrateSession(session))
-  }, [])
-
   const exportResults = useCallback((output: ResearchOutput) => {
     const stamp = new Date().toISOString().slice(0, 10)
     downloadMarkdown(
@@ -171,6 +179,51 @@ export function ResearchClient({
       researchMarkdown(output)
     )
   }, [])
+
+  const restoreSession = useCallback(
+    (session: RecentSession) => {
+      setSelectedMatter(session.matterId)
+      setQuery(session.query)
+      setLocalError(null)
+      setResults({
+        query: session.query,
+        matterId: session.matterId,
+        matterTitle: session.matterTitle,
+        answer: session.response ?? "",
+        chunks: [],
+        authorities: emptyAuthorities(),
+        sessionId: session.id,
+        retrievalCount: session.chunkIds.length,
+        indexedChunks: session.chunkIds.length,
+        embeddingConfigured: true,
+      })
+
+      startRestoreTransition(async () => {
+        const output = await restoreResearchSession(session.id)
+        if (output.error) {
+          setLocalError(output.error)
+          return
+        }
+        setResults(output)
+      })
+    },
+    []
+  )
+
+  const exportSession = useCallback(
+    (session: RecentSession) => {
+      setLocalError(null)
+      startRestoreTransition(async () => {
+        const output = await restoreResearchSession(session.id)
+        if (output.error) {
+          setLocalError(output.error)
+          return
+        }
+        exportResults(output)
+      })
+    },
+    [exportResults]
+  )
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -386,11 +439,11 @@ export function ResearchClient({
                       <div className="flex shrink-0 flex-col gap-1.5">
                         <button
                           type="button"
-                          onClick={() => exportResults(hydrateSession(session))}
-                          disabled={!session.response}
+                          onClick={() => exportSession(session)}
+                          disabled={isRestoring}
                           className="rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/68 disabled:pointer-events-none disabled:opacity-40"
                         >
-                          Export
+                          {isRestoring ? "…" : "Export"}
                         </button>
                         {canWrite ? (
                           <button

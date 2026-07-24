@@ -1,7 +1,11 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
-import { matterAccessWhere } from "@/lib/auth/rbac"
+import {
+  getActiveOrganization,
+  matterAccessWhereForActiveOrg,
+  roleHasPermission,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -39,12 +43,16 @@ export default async function MemoryPage() {
   if (!clerkId) return null
 
   let matters: MemoryMatter[] = []
+  let canWrite = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
+      const activeOrg = await getActiveOrganization(user.id)
+      canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
+      const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
       matters = await prisma.matter.findMany({
-        where: matterAccessWhere(user.id),
+        where: matterWhere,
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,
@@ -120,7 +128,7 @@ export default async function MemoryPage() {
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
           Matter-scoped source memory, retrieval chunks, research history, and
-          grounded drafts are isolated by workspace boundaries.
+          grounded drafts are isolated by the active organization workspace.
         </p>
       </div>
 
@@ -172,14 +180,25 @@ export default async function MemoryPage() {
         <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.01] px-8 py-16 text-center">
           <p className="font-serif text-lg text-white/45">No matter memory yet</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-white/28">
-            Create a matter and ingest source documents to build the memory index.
+            {canWrite
+              ? "Create a matter and ingest source documents to build the memory index."
+              : "Your organization role is read-only. Ask an admin to create a matter or grant write access."}
           </p>
-          <Link
-            href="/app/matters/new"
-            className="mt-8 inline-flex rounded-lg border border-white/[0.1] bg-white/[0.03] px-5 py-2.5 text-sm text-white/55 transition-colors duration-200 hover:border-white/[0.16] hover:text-white/78"
-          >
-            Initialize matter
-          </Link>
+          {canWrite ? (
+            <Link
+              href="/app/matters/new"
+              className="mt-8 inline-flex rounded-lg border border-white/[0.1] bg-white/[0.03] px-5 py-2.5 text-sm text-white/55 transition-colors duration-200 hover:border-white/[0.16] hover:text-white/78"
+            >
+              Initialize matter
+            </Link>
+          ) : (
+            <Link
+              href="/app/matters"
+              className="mt-8 inline-flex rounded-lg border border-white/[0.1] bg-white/[0.03] px-5 py-2.5 text-sm text-white/55 transition-colors duration-200 hover:border-white/[0.16] hover:text-white/78"
+            >
+              Browse matters
+            </Link>
+          )}
         </div>
       ) : (
         <div className="overflow-hidden rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015]">

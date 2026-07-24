@@ -1,7 +1,10 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
-import { matterAccessWhere } from "@/lib/auth/rbac"
+import {
+  getActiveOrganization,
+  matterAccessWhereForActiveOrg,
+} from "@/lib/auth/rbac"
 import { getHealthReport } from "@/lib/health"
 import { prisma } from "@/lib/prisma"
 
@@ -67,21 +70,23 @@ export default async function DashboardPage() {
 
     if (user) {
       dataAvailable = true
+      const activeOrg = await getActiveOrganization(user.id)
+      const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
       ;[matterCount, retrievalReadyCount, researchSessionCount, recentSessions, recentMatters] =
         await Promise.all([
-          prisma.matter.count({ where: matterAccessWhere(user.id) }),
+          prisma.matter.count({ where: matterWhere }),
           prisma.document.count({
             where: {
-              matter: matterAccessWhere(user.id),
+              matter: matterWhere,
               OR: [
                 { retrievalStatus: "ready" },
                 { indexingStatus: "retrieval-ready" },
               ],
             },
           }),
-          prisma.researchSession.count({ where: { OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }] } }),
+          prisma.researchSession.count({ where: { matter: matterWhere } }),
           prisma.researchSession.findMany({
-            where: { OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }] },
+            where: { matter: matterWhere },
             orderBy: { createdAt: "desc" },
             take: 5,
             select: {
@@ -94,7 +99,7 @@ export default async function DashboardPage() {
             },
           }),
           prisma.matter.findMany({
-            where: matterAccessWhere(user.id),
+            where: matterWhere,
             orderBy: { updatedAt: "desc" },
             take: 5,
             select: {

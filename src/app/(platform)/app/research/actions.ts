@@ -7,6 +7,7 @@ import { recordAuditEvent } from "@/lib/audit"
 import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
+import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
 
@@ -269,6 +270,84 @@ export async function runResearch(
     retrievalCount: chunks.length,
     indexedChunks,
     embeddingConfigured: true,
+  }
+}
+
+/** Restore a saved research session with stored provenance chunks and authorities. */
+export async function restoreResearchSession(
+  sessionId: string
+): Promise<ResearchOutput> {
+  const { userId: clerkId } = await auth()
+
+  const emptyResult = (error: string): ResearchOutput => ({
+    query: "",
+    matterId: "",
+    matterTitle: "",
+    answer: "",
+    chunks: [],
+    authorities: { cases: [], statutes: [], cpr: [], practiceDirs: [], statutory: [] },
+    sessionId: "",
+    retrievalCount: 0,
+    indexedChunks: 0,
+    embeddingConfigured: isEmbeddingConfigured(),
+    error,
+  })
+
+  if (!clerkId) return emptyResult("Authentication required.")
+  if (!sessionId) return emptyResult("Session id is required.")
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return emptyResult("User session not found.")
+
+    const session = await prisma.researchSession.findFirst({
+      where: {
+        id: sessionId,
+        OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }],
+      },
+      select: {
+        id: true,
+        query: true,
+        response: true,
+        chunkIds: true,
+        matterId: true,
+        matter: { select: { title: true } },
+      },
+    })
+    if (!session) return emptyResult("Research session not found or access denied.")
+
+    const permission = await requireMatterPermission(user.id, session.matterId, "read")
+    if (!permission.ok) return emptyResult(permission.error)
+
+    const chunks = await loadProvenanceChunks(session.matterId, session.chunkIds)
+    const combinedText = chunks.map((chunk) => chunk.content).join("\n\n")
+    const grouped = groupAuthorities(extractAuthorities(combinedText))
+    const authorities: ResearchAuthorities = {
+      cases: grouped.cases.map((a) => a.normalized),
+      statutes: grouped.statutes.map((a) => a.normalized),
+      cpr: grouped.cpr.map((a) => a.normalized),
+      practiceDirs: grouped.practiceDirs.map((a) => a.normalized),
+      statutory: grouped.statutory.map((a) => a.normalized),
+    }
+    const indexedChunks = await indexedChunkCount(session.matterId).catch(() => chunks.length)
+
+    return {
+      query: session.query,
+      matterId: session.matterId,
+      matterTitle: session.matter.title,
+      answer: session.response ?? "",
+      chunks,
+      authorities,
+      sessionId: session.id,
+      retrievalCount: chunks.length,
+      indexedChunks,
+      embeddingConfigured: isEmbeddingConfigured(),
+    }
+  } catch {
+    return emptyResult("Unable to restore research session.")
   }
 }
 

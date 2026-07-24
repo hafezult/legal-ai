@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server"
 
 import {
   getActiveOrganization,
-  matterAccessWhere,
+  matterAccessWhereForActiveOrg,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
@@ -33,10 +33,11 @@ export default async function ResearchPage() {
       canWrite = activeOrg
         ? roleHasPermission(activeOrg.role, "write")
         : true
+      const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
 
       const [matterRows, sessionRows] = await Promise.all([
         prisma.matter.findMany({
-          where: { AND: [matterAccessWhere(user.id), { status: { not: "archived" } }] },
+          where: { AND: [matterWhere, { status: { not: "archived" } }] },
           orderBy: { updatedAt: "desc" },
           select: {
             id: true,
@@ -45,7 +46,7 @@ export default async function ResearchPage() {
           },
         }),
         prisma.researchSession.findMany({
-          where: { OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }] },
+          where: { matter: matterWhere },
           orderBy: { createdAt: "desc" },
           take: 8,
           select: {

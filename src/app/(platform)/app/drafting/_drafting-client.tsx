@@ -9,6 +9,7 @@ import {
   DRAFT_TYPES,
   deleteDraft,
   generateDraft,
+  restoreDraft,
   type DraftOutput,
   type DraftType,
 } from "./actions"
@@ -72,25 +73,6 @@ function draftTypeLabel(draftType: string) {
   return DRAFT_TYPE_OPTIONS.find((option) => option.value === draftType)?.label ?? draftType
 }
 
-function hydrateDraft(draft: RecentDraft): DraftOutput {
-  const typed = (DRAFT_TYPES as readonly string[]).includes(draft.draftType)
-    ? (draft.draftType as DraftType)
-    : "advice"
-  return {
-    draftId: draft.id,
-    matterId: draft.matterId,
-    matterTitle: draft.matterTitle,
-    title: draft.title,
-    draftType: typed,
-    instruction: draft.instruction,
-    content: draft.content ?? "",
-    chunks: [],
-    retrievalCount: draft.chunkIds.length,
-    indexedChunks: draft.chunkIds.length,
-    embeddingConfigured: true,
-  }
-}
-
 function draftMarkdown(output: DraftOutput) {
   const lines = [
     `# ${output.title}`,
@@ -114,8 +96,14 @@ function draftMarkdown(output: DraftOutput) {
   if (output.chunks.length > 0) {
     lines.push("", "## Source excerpts", "")
     output.chunks.forEach((chunk, index) => {
+      const loc = [
+        chunk.headingPath ? `Section: ${chunk.headingPath}` : null,
+        chunk.pageRef ? `Page ${chunk.pageRef}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
       lines.push(
-        `### Excerpt ${index + 1} — ${chunk.fileName}`,
+        `### Excerpt ${index + 1} — ${chunk.fileName}${loc ? ` (${loc})` : ""}`,
         "",
         chunk.content,
         ""
@@ -137,6 +125,7 @@ export function DraftingClient({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [isDeleting, startDeleteTransition] = useTransition()
+  const [isRestoring, startRestoreTransition] = useTransition()
   const [selectedMatter, setSelectedMatter] = useState(matters[0]?.id ?? "")
   const [draftType, setDraftType] = useState<DraftType>("advice")
   const [instruction, setInstruction] = useState("")
@@ -148,18 +137,6 @@ export function DraftingClient({
     (draft) => !selectedMatter || draft.matterId === selectedMatter
   )
 
-  const restoreDraft = useCallback((draft: RecentDraft) => {
-    setSelectedMatter(draft.matterId)
-    setInstruction(draft.instruction)
-    setDraftType(
-      (DRAFT_TYPES as readonly string[]).includes(draft.draftType)
-        ? (draft.draftType as DraftType)
-        : "advice"
-    )
-    setLocalError(null)
-    setResults(hydrateDraft(draft))
-  }, [])
-
   const exportDraft = useCallback((output: DraftOutput) => {
     const stamp = new Date().toISOString().slice(0, 10)
     downloadMarkdown(
@@ -167,6 +144,53 @@ export function DraftingClient({
       draftMarkdown(output)
     )
   }, [])
+
+  const restoreSavedDraft = useCallback((draft: RecentDraft) => {
+    const typed = (DRAFT_TYPES as readonly string[]).includes(draft.draftType)
+      ? (draft.draftType as DraftType)
+      : "advice"
+    setSelectedMatter(draft.matterId)
+    setInstruction(draft.instruction)
+    setDraftType(typed)
+    setLocalError(null)
+    setResults({
+      draftId: draft.id,
+      matterId: draft.matterId,
+      matterTitle: draft.matterTitle,
+      title: draft.title,
+      draftType: typed,
+      instruction: draft.instruction,
+      content: draft.content ?? "",
+      chunks: [],
+      retrievalCount: draft.chunkIds.length,
+      indexedChunks: draft.chunkIds.length,
+      embeddingConfigured: true,
+    })
+
+    startRestoreTransition(async () => {
+      const output = await restoreDraft(draft.id)
+      if (output.error) {
+        setLocalError(output.error)
+        return
+      }
+      setResults(output)
+    })
+  }, [])
+
+  const exportSavedDraft = useCallback(
+    (draft: RecentDraft) => {
+      setLocalError(null)
+      startRestoreTransition(async () => {
+        const output = await restoreDraft(draft.id)
+        if (output.error) {
+          setLocalError(output.error)
+          return
+        }
+        exportDraft(output)
+      })
+    },
+    [exportDraft]
+  )
 
   const handleSubmit = useCallback(
     (event: React.FormEvent) => {
@@ -371,7 +395,7 @@ export function DraftingClient({
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <button
                         type="button"
-                        onClick={() => restoreDraft(draft)}
+                        onClick={() => restoreSavedDraft(draft)}
                         className="min-w-0 flex-1 text-left"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -395,11 +419,11 @@ export function DraftingClient({
                       <div className="flex shrink-0 flex-col gap-1.5">
                         <button
                           type="button"
-                          onClick={() => exportDraft(hydrateDraft(draft))}
-                          disabled={!draft.content}
+                          onClick={() => exportSavedDraft(draft)}
+                          disabled={isRestoring}
                           className="rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/68 disabled:pointer-events-none disabled:opacity-40"
                         >
-                          Export
+                          {isRestoring ? "…" : "Export"}
                         </button>
                         {canWrite ? (
                           <button

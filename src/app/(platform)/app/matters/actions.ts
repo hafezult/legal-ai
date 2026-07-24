@@ -176,6 +176,84 @@ export async function updateMatterStatus(
   return { success: true }
 }
 
+export type MatterUpdateState = {
+  error?: string
+  success?: boolean
+}
+
+export async function updateMatter(
+  matterId: string,
+  formData: FormData
+): Promise<MatterUpdateState> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { error: "Authentication required." }
+  if (!matterId) return { error: "Matter id is required." }
+
+  const title = (formData.get("title") as string | null)?.trim()
+  if (!title) {
+    return { error: "Matter title is required." }
+  }
+
+  const practiceArea = optionalEnum(formData.get("practiceArea"), PRACTICE_AREAS)
+  const riskLevel = requiredEnum(formData.get("riskLevel"), RISK_LEVELS, "medium")
+
+  if (practiceArea === "__invalid__" || !riskLevel) {
+    return { error: "Matter metadata contains an unsupported option." }
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const permission = await requireMatterPermission(user.id, matterId, "write")
+    if (!permission.ok) return { error: permission.error }
+
+    const matter = await prisma.matter.findUnique({
+      where: { id: matterId },
+      select: { id: true },
+    })
+    if (!matter) return { error: "Matter not found or access denied." }
+
+    await prisma.matter.update({
+      where: { id: matter.id },
+      data: {
+        title,
+        clientName: (formData.get("clientName") as string | null)?.trim() || null,
+        practiceArea,
+        jurisdiction: (formData.get("jurisdiction") as string | null)?.trim() || null,
+        riskLevel,
+        billingCode: (formData.get("billingCode") as string | null)?.trim() || null,
+        description: (formData.get("description") as string | null)?.trim() || null,
+      },
+    })
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "matter.update",
+      entityType: "matter",
+      entityId: matter.id,
+      matterId: matter.id,
+      summary: `Updated matter “${title}” metadata`,
+      metadata: { riskLevel, practiceArea, role: permission.access.role },
+    })
+  } catch {
+    return { error: "Unable to update matter. Please try again." }
+  }
+
+  revalidatePath(`/app/matters/${matterId}`)
+  revalidatePath("/app/matters")
+  revalidatePath("/app/research")
+  revalidatePath("/app/drafting")
+  revalidatePath("/app/memory")
+  revalidatePath("/app/settings")
+  revalidatePath("/app")
+
+  return { success: true }
+}
+
 export type MatterDeleteState = {
   error?: string
   success?: boolean

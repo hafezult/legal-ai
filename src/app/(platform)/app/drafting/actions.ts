@@ -7,6 +7,7 @@ import { recordAuditEvent } from "@/lib/audit"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
 import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
+import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
 
 export const DRAFT_TYPES = [
@@ -280,6 +281,78 @@ export async function generateDraft(
     retrievalCount: chunks.length,
     indexedChunks,
     embeddingConfigured: true,
+  }
+}
+
+/** Restore a saved draft with stored provenance source excerpts. */
+export async function restoreDraft(draftId: string): Promise<DraftOutput> {
+  const { userId: clerkId } = await auth()
+
+  const emptyResult = (error: string): DraftOutput => ({
+    draftId: "",
+    matterId: "",
+    matterTitle: "",
+    title: "",
+    draftType: "advice",
+    instruction: "",
+    content: "",
+    chunks: [],
+    retrievalCount: 0,
+    indexedChunks: 0,
+    embeddingConfigured: isEmbeddingConfigured(),
+    error,
+  })
+
+  if (!clerkId) return emptyResult("Authentication required.")
+  if (!draftId) return emptyResult("Draft id is required.")
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return emptyResult("User session not found.")
+
+    const draft = await prisma.draftDocument.findFirst({
+      where: {
+        id: draftId,
+        OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }],
+      },
+      select: {
+        id: true,
+        title: true,
+        draftType: true,
+        instruction: true,
+        content: true,
+        chunkIds: true,
+        matterId: true,
+        matter: { select: { title: true } },
+      },
+    })
+    if (!draft) return emptyResult("Draft not found or access denied.")
+
+    const permission = await requireMatterPermission(user.id, draft.matterId, "read")
+    if (!permission.ok) return emptyResult(permission.error)
+
+    const draftType: DraftType = isDraftType(draft.draftType) ? draft.draftType : "advice"
+    const chunks = await loadProvenanceChunks(draft.matterId, draft.chunkIds)
+    const indexedChunks = await indexedChunkCount(draft.matterId).catch(() => chunks.length)
+
+    return {
+      draftId: draft.id,
+      matterId: draft.matterId,
+      matterTitle: draft.matter.title,
+      title: draft.title,
+      draftType,
+      instruction: draft.instruction,
+      content: draft.content ?? "",
+      chunks,
+      retrievalCount: chunks.length,
+      indexedChunks,
+      embeddingConfigured: isEmbeddingConfigured(),
+    }
+  } catch {
+    return emptyResult("Unable to restore draft.")
   }
 }
 
