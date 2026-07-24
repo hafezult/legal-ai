@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { prisma } from "@/lib/prisma"
 import { runIndexingPipeline } from "@/lib/workflows/indexing"
 
 // Allow up to 5 minutes for large documents
@@ -26,6 +27,14 @@ export async function POST(
   const { documentId } = await params
   if (!documentId) {
     return NextResponse.json({ error: "documentId required" }, { status: 400 })
+  }
+
+  const document = await prisma.document.findUnique({
+    where: { id: documentId },
+    select: { id: true },
+  })
+  if (!document) {
+    return NextResponse.json({ error: "Document not found" }, { status: 404 })
   }
 
   try {

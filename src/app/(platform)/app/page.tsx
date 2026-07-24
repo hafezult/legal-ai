@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
+import Link from "next/link"
 
 import { prisma } from "@/lib/prisma"
 
@@ -37,15 +38,17 @@ export default async function DashboardPage() {
   }
 
   let matterCount = 0
-  let indexedDocumentCount = 0
   let researchSessionCount = 0
   let dataAvailable = false
   let recentSessions: {
     id: string
     query: string
+    response: string | null
+    chunkIds: string[]
     createdAt: Date
-    matter: { title: string }
+    matter: { id: string; title: string }
   }[] = []
+  let retrievalReadyCount = 0
 
   try {
     const user = await prisma.user.findUnique({
@@ -54,27 +57,33 @@ export default async function DashboardPage() {
 
     if (user) {
       dataAvailable = true
-      ;[matterCount, indexedDocumentCount, researchSessionCount, recentSessions] = await Promise.all([
-        prisma.matter.count({ where: { userId: user.id } }),
-        prisma.document.count({
-          where: {
-            matter: { userId: user.id },
-            indexingStatus: { in: ["indexed", "retrieval-ready"] },
-          },
-        }),
-        prisma.researchSession.count({ where: { userId: user.id } }),
-        prisma.researchSession.findMany({
-          where: { userId: user.id },
-          orderBy: { createdAt: "desc" },
-          take: 3,
-          select: {
-            id: true,
-            query: true,
-            createdAt: true,
-            matter: { select: { title: true } },
-          },
-        }),
-      ])
+      ;[matterCount, retrievalReadyCount, researchSessionCount, recentSessions] =
+        await Promise.all([
+          prisma.matter.count({ where: { userId: user.id } }),
+          prisma.document.count({
+            where: {
+              matter: { userId: user.id },
+              OR: [
+                { retrievalStatus: "ready" },
+                { indexingStatus: "retrieval-ready" },
+              ],
+            },
+          }),
+          prisma.researchSession.count({ where: { userId: user.id } }),
+          prisma.researchSession.findMany({
+            where: { userId: user.id },
+            orderBy: { createdAt: "desc" },
+            take: 5,
+            select: {
+              id: true,
+              query: true,
+              response: true,
+              chunkIds: true,
+              createdAt: true,
+              matter: { select: { id: true, title: true } },
+            },
+          }),
+        ])
     }
   } catch {
     /* Database unavailable in local dev */
@@ -89,7 +98,7 @@ export default async function DashboardPage() {
     },
     {
       label: "Document index",
-      status: indexedDocumentCount > 0 ? "operational" : "pending",
+      status: retrievalReadyCount > 0 ? "operational" : "pending",
     },
   ]
 
@@ -113,7 +122,10 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         {[
           { label: "Active matters", value: String(matterCount) },
-          { label: "Indexed documents", value: String(indexedDocumentCount) },
+          {
+            label: "Retrieval-ready docs",
+            value: String(retrievalReadyCount),
+          },
           { label: "Research sessions", value: String(researchSessionCount) },
         ].map((card) => (
           <div
@@ -173,17 +185,28 @@ export default async function DashboardPage() {
               </p>
               <div className="space-y-2">
                 {recentSessions.map((session) => (
-                  <div
+                  <Link
                     key={session.id}
-                    className="rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2.5"
+                    href={`/app/matters/${session.matter.id}`}
+                    className="block rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2.5 transition-colors hover:border-white/[0.1] hover:bg-white/[0.03]"
                   >
                     <p className="line-clamp-1 text-sm text-white/62">{session.query}</p>
                     <p className="mt-1 text-[11px] text-white/28">
                       {session.matter.title} · {fmtShortDate(session.createdAt)}
+                      {session.chunkIds.length > 0
+                        ? ` · ${session.chunkIds.length} chunk${session.chunkIds.length !== 1 ? "s" : ""}`
+                        : ""}
+                      {session.response ? " · response saved" : ""}
                     </p>
-                  </div>
+                  </Link>
                 ))}
               </div>
+              <Link
+                href="/app/research"
+                className="inline-flex text-[11px] text-white/30 transition-colors hover:text-white/55"
+              >
+                Open research workspace →
+              </Link>
             </div>
           )}
         </div>
