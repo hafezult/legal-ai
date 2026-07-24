@@ -110,6 +110,7 @@ export async function createMatter(
     entityType: "matter",
     entityId: matter.id,
     matterId: matter.id,
+    organizationId: matter.organizationId,
     summary: `Created matter “${title}”`,
     metadata: { status, riskLevel, practiceArea },
   })

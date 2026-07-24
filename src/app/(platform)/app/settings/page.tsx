@@ -139,29 +139,20 @@ export default async function SettingsPage() {
       organizations = await listUserOrganizations(user.id)
       const active = await getActiveOrganization(user.id)
 
-      const orgMatterIds = active
-        ? (
-            await prisma.matter.findMany({
-              where: { organizationId: active.id },
-              select: { id: true },
-            })
-          ).map((matter) => matter.id)
-        : []
-
-      // Scope activity to the active organization: org-matter events, the
-      // actor's org-level (no-matter) events, and legacy personal matter events.
-      // Do not leak the actor's audit trail from other organizations.
+      // Scope activity via organizationId: active-org events, plus the actor's
+      // personal/legacy (organizationId null) trail. Do not leak other orgs.
       activity = await prisma.auditEvent.findMany({
         where: {
           OR: [
-            { userId: user.id, matterId: null },
+            ...(active ? [{ organizationId: active.id }] : []),
             {
               userId: user.id,
-              matter: { userId: user.id, organizationId: null },
+              organizationId: null,
+              OR: [
+                { matterId: null },
+                { matter: { userId: user.id, organizationId: null } },
+              ],
             },
-            ...(orgMatterIds.length > 0
-              ? [{ matterId: { in: orgMatterIds } }]
-              : []),
           ],
         },
         orderBy: { createdAt: "desc" },

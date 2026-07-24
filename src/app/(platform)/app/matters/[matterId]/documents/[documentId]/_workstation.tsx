@@ -899,6 +899,41 @@ export function DocumentWorkstation({
     dragging.current = true
   }, [])
 
+  const nudgeSplit = useCallback((delta: number) => {
+    setSplitPos((prev) => Math.max(20, Math.min(80, prev + delta)))
+  }, [])
+
+  const onResizeKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const step = e.shiftKey ? 10 : 2
+      if (e.key === "ArrowLeft") {
+        e.preventDefault()
+        nudgeSplit(-step)
+        return
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault()
+        nudgeSplit(step)
+        return
+      }
+      if (e.key === "Home") {
+        e.preventDefault()
+        setSplitPos(20)
+        return
+      }
+      if (e.key === "End") {
+        e.preventDefault()
+        setSplitPos(80)
+        return
+      }
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault()
+        setSplitPos(DEFAULT_SPLIT)
+      }
+    },
+    [nudgeSplit]
+  )
+
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!dragging.current || !containerRef.current) return
@@ -989,11 +1024,19 @@ export function DocumentWorkstation({
           <DocViewer doc={doc} signedUrl={signedUrl} />
         </div>
 
-        {/* ── Drag handle ───────────────────────────────────────────── */}
+        {/* ── Drag / keyboard resize handle ─────────────────────────── */}
         <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize document and intelligence panels"
+          aria-valuemin={20}
+          aria-valuemax={80}
+          aria-valuenow={Math.round(splitPos)}
+          tabIndex={0}
           onMouseDown={startDrag}
-          className="hidden w-1 shrink-0 cursor-col-resize bg-white/[0.03] transition-colors hover:bg-white/[0.09] lg:block"
-          title="Drag to resize"
+          onKeyDown={onResizeKeyDown}
+          className="hidden w-1 shrink-0 cursor-col-resize bg-white/[0.03] transition-colors hover:bg-white/[0.09] focus-visible:bg-white/[0.14] focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-white/40 lg:block"
+          title="Drag or use arrow keys to resize"
         />
 
         {/* ── Right: Intelligence panel ─────────────────────────────── */}

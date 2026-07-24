@@ -76,6 +76,7 @@ export async function createOrganization(
       action: "organization.create",
       entityType: "organization",
       entityId: created.id,
+      organizationId: created.id,
       summary: `Created organization “${created.name}”`,
     })
 
@@ -132,6 +133,7 @@ export async function leaveOrganization(
       action: "organization.leave",
       entityType: "organization",
       entityId: organizationId,
+      organizationId,
       summary: `Left organization “${membership.organization.name}”`,
     })
   } catch {
@@ -162,6 +164,7 @@ export async function acceptInviteByToken(
       action: "organization.invite_accept",
       entityType: "organization_invite",
       entityId: result.organizationId,
+      organizationId: result.organizationId,
       summary: `Accepted invite to “${result.organizationName}” as ${result.role}`,
       metadata: { role: result.role },
     })
@@ -192,6 +195,7 @@ export async function switchActiveOrganization(
       action: "organization.switch",
       entityType: "organization",
       entityId: organizationId,
+      organizationId,
       summary: `Switched active workspace to “${active.name}”`,
     })
   } catch {
@@ -233,6 +237,7 @@ export async function renameOrganization(
       action: "organization.rename",
       entityType: "organization",
       entityId: organizationId,
+      organizationId,
       summary: `Renamed organization to “${trimmed}”`,
     })
   } catch {
@@ -311,6 +316,7 @@ export async function addOrganizationMember(
         action: "organization.member_add",
         entityType: "organization_member",
         entityId: organizationId,
+        organizationId,
         summary: `Added ${target.email} as ${role}`,
         metadata: { targetUserId: target.id, role },
       })
@@ -381,6 +387,7 @@ export async function addOrganizationMember(
       action: "organization.invite_create",
       entityType: "organization_invite",
       entityId: organizationId,
+      organizationId,
       summary: `Invited ${emailNormalized} as ${role}`,
       metadata: {
         role,
@@ -423,6 +430,7 @@ export async function transferOwnership(
       action: "organization.ownership_transfer",
       entityType: "organization",
       entityId: organizationId,
+      organizationId,
       summary: `Transferred ownership of “${result.organizationName}” to ${result.newOwnerEmail}`,
       metadata: {
         previousOwnerEmail: result.previousOwnerEmail,
@@ -499,6 +507,7 @@ export async function revokeOrganizationInvite(
       action: "organization.invite_revoke",
       entityType: "organization_invite",
       entityId: invite.id,
+      organizationId,
       summary: `Revoked invite for ${invite.email}`,
     })
   } catch {
@@ -553,6 +562,7 @@ export async function updateOrganizationMemberRole(
       action: "organization.member_role",
       entityType: "organization_member",
       entityId: member.id,
+      organizationId,
       summary: `Updated ${member.user.email} role to ${role}`,
       metadata: { role, previousRole: member.role },
     })
@@ -611,6 +621,7 @@ export async function removeOrganizationMember(
       action: "organization.member_remove",
       entityType: "organization_member",
       entityId: member.id,
+      organizationId,
       summary: `Removed ${member.user.email} from the organization`,
       metadata: { previousRole: member.role },
     })
