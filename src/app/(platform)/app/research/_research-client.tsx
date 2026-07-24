@@ -1,8 +1,10 @@
 "use client"
 
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useCallback, useState, useTransition } from "react"
 
-import { runResearch, type ResearchOutput } from "./actions"
+import { deleteResearchSession, runResearch, type ResearchOutput } from "./actions"
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -51,12 +53,50 @@ function AuthorityRow({ label, items }: { label: string; items: string[] }) {
 
 type Matter = { id: string; title: string; _count: { documents: number } }
 
-export function ResearchClient({ matters }: { matters: Matter[] }) {
+type RecentSession = {
+  id: string
+  query: string
+  response: string | null
+  chunkIds: string[]
+  createdAt: Date | string
+  matterId: string
+  matterTitle: string
+}
+
+function fmtShortDate(value: Date | string) {
+  const date = typeof value === "string" ? new Date(value) : value
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
+function excerpt(text: string, length = 140) {
+  const compact = text.replace(/\s+/g, " ").trim()
+  return compact.length > length ? `${compact.slice(0, length)}…` : compact
+}
+
+export function ResearchClient({
+  matters,
+  recentSessions,
+}: {
+  matters: Matter[]
+  recentSessions: RecentSession[]
+}) {
+  const router = useRouter()
   const [isPending, startTransition] = useTransition()
+  const [isDeleting, startDeleteTransition] = useTransition()
   const [selectedMatter, setSelectedMatter] = useState(matters[0]?.id ?? "")
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<ResearchOutput | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
+
+  const matterSessions = recentSessions.filter(
+    (session) => !selectedMatter || session.matterId === selectedMatter
+  )
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -69,9 +109,35 @@ export function ResearchClient({ matters }: { matters: Matter[] }) {
         const output = await runResearch(selectedMatter, query)
         if (output.error) setLocalError(output.error)
         else setResults(output)
+        router.refresh()
       })
     },
-    [query, selectedMatter, isPending]
+    [query, selectedMatter, isPending, router]
+  )
+
+  const handleDeleteSession = useCallback(
+    (sessionId: string) => {
+      if (isDeleting) return
+      setLocalError(null)
+      setDeletingSessionId(sessionId)
+
+      startDeleteTransition(async () => {
+        const result = await deleteResearchSession(sessionId)
+        if (result.error) {
+          setLocalError(result.error)
+          setDeletingSessionId(null)
+          return
+        }
+
+        if (results?.sessionId === sessionId) {
+          setResults(null)
+        }
+
+        setDeletingSessionId(null)
+        router.refresh()
+      })
+    },
+    [isDeleting, results?.sessionId, router]
   )
 
   const hasAuthorities = results
@@ -123,6 +189,20 @@ export function ResearchClient({ matters }: { matters: Matter[] }) {
           <p className="mx-auto mt-2 max-w-sm text-sm text-white/28">
             Create a matter and upload documents before running research queries.
           </p>
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <Link
+              href="/app/matters/new"
+              className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-5 py-2.5 text-sm text-white/62 transition-colors duration-200 hover:border-white/[0.18] hover:bg-white/[0.07] hover:text-white/88"
+            >
+              Initialize matter
+            </Link>
+            <Link
+              href="/app/matters"
+              className="rounded-lg border border-white/[0.07] bg-white/[0.01] px-5 py-2.5 text-sm text-white/45 transition-colors duration-200 hover:border-white/[0.14] hover:text-white/72"
+            >
+              Open matters
+            </Link>
+          </div>
         </div>
       ) : (
         <>
@@ -167,6 +247,72 @@ export function ResearchClient({ matters }: { matters: Matter[] }) {
               {isPending ? "Retrieving…" : "Run research →"}
             </button>
           </form>
+
+          {/* ── Recent sessions ───────────────────────────────────────── */}
+          <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.015] p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-white/40">
+                Recent research sessions
+              </p>
+              <span className="rounded-full border border-white/[0.08] px-2.5 py-0.5 text-[10px] text-white/30">
+                {matterSessions.length} shown
+              </span>
+            </div>
+            {matterSessions.length === 0 ? (
+              <p className="mt-4 text-sm leading-relaxed text-white/32">
+                No saved sessions for this matter yet. Run a query to persist a
+                grounded research trace.
+              </p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {matterSessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className="rounded-lg border border-white/[0.05] bg-black/20 px-4 py-3 transition-colors hover:border-white/[0.1] hover:bg-black/30"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedMatter(session.matterId)
+                          setQuery(session.query)
+                          setLocalError(null)
+                          setResults(null)
+                        }}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-[10px] uppercase tracking-[0.14em] text-white/30">
+                            {session.matterTitle}
+                          </p>
+                          <p className="text-[10px] text-white/22">
+                            {fmtShortDate(session.createdAt)} · {session.chunkIds.length}{" "}
+                            chunk{session.chunkIds.length !== 1 ? "s" : ""}
+                          </p>
+                        </div>
+                        <p className="mt-2 text-sm text-white/62">{excerpt(session.query)}</p>
+                        <p className="mt-1.5 text-xs text-white/28">
+                          {session.response
+                            ? excerpt(session.response, 120)
+                            : "No grounded response saved for this session."}
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSession(session.id)}
+                        disabled={isDeleting && deletingSessionId === session.id}
+                        className="shrink-0 rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/30 hover:text-red-300/70 disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        {isDeleting && deletingSessionId === session.id
+                          ? "Deleting…"
+                          : "Delete"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* ── Results ───────────────────────────────────────────────── */}
           {isPending && (
