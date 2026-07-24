@@ -26,7 +26,7 @@ Install dependencies:
 npm install
 ```
 
-Use Node.js 20.9 or newer; this matches the framework runtime requirement.
+Use Node.js 20.9 or newer (CI validates on Node.js 22).
 
 Copy environment variables and fill in service credentials:
 
