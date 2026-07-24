@@ -65,7 +65,7 @@ export default async function SettingsPage() {
     {
       label: "OpenAI",
       configured: Boolean(process.env.OPENAI_API_KEY),
-      description: "Embeddings, semantic search, and grounded answers.",
+      description: "Embeddings, semantic search, grounded answers, and drafting.",
     },
     {
       label: "Indexing secret",

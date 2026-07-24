@@ -289,7 +289,8 @@ export default async function DashboardPage() {
         </p>
         <p className="mt-1.5 text-sm leading-relaxed text-white/40">
           Sessions are Clerk-bound. Data access routes through your Postgres user row.
-          Extend with org roles and audit trails as you harden the platform.
+          Ownership-scoped audit trails record key mutations. Org-role RBAC remains
+          available as a future hardening step.
         </p>
       </div>
     </div>

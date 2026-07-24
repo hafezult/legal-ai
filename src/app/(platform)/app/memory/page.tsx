@@ -21,6 +21,7 @@ type MemoryMatter = {
     chunks: number
     researchSessions: number
     conversations: number
+    draftDocuments: number
   }
 }
 
@@ -65,6 +66,7 @@ export default async function MemoryPage() {
               chunks: true,
               researchSessions: true,
               conversations: true,
+              draftDocuments: true,
             },
           },
         },
@@ -82,6 +84,10 @@ export default async function MemoryPage() {
   )
   const conversationCount = matters.reduce(
     (sum, matter) => sum + matter._count.conversations,
+    0
+  )
+  const draftCount = matters.reduce(
+    (sum, matter) => sum + matter._count.draftDocuments,
     0
   )
   const messageCount = matters.reduce(
@@ -112,17 +118,18 @@ export default async function MemoryPage() {
           Memory
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
-          Matter-scoped source memory, retrieval chunks, and research history are
-          isolated by workspace boundaries.
+          Matter-scoped source memory, retrieval chunks, research history, and
+          grounded drafts are isolated by workspace boundaries.
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-7">
         {[
           { label: "Matters", value: matters.length },
           { label: "Sources", value: documentCount },
           { label: "Chunks", value: chunkCount },
           { label: "Research sessions", value: researchSessionCount },
+          { label: "Drafts", value: draftCount },
           { label: "Conversations", value: conversationCount },
           { label: "Messages", value: messageCount },
         ].map((stat) => (
@@ -206,6 +213,9 @@ export default async function MemoryPage() {
                 <p className="mt-0.5 text-xs text-white/28">
                   {matter._count.researchSessions} research session
                   {matter._count.researchSessions === 1 ? "" : "s"}
+                  {" · "}
+                  {matter._count.draftDocuments} draft
+                  {matter._count.draftDocuments === 1 ? "" : "s"}
                   {" · "}
                   {matter._count.conversations} conversation
                   {matter._count.conversations === 1 ? "" : "s"}

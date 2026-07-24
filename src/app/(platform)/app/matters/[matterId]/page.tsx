@@ -147,7 +147,12 @@ export default async function MatterDetailPage({
     documents: Doc[]
     researchSessions: ResearchSessionRow[]
     conversations: ConversationRow[]
-    _count: { documents: number; researchSessions: number; conversations: number }
+    _count: {
+      documents: number
+      researchSessions: number
+      conversations: number
+      draftDocuments: number
+    }
   }
 
   let matter: MatterData | null = null
@@ -214,7 +219,12 @@ export default async function MatterDetailPage({
             },
           },
           _count: {
-            select: { documents: true, researchSessions: true, conversations: true },
+            select: {
+              documents: true,
+              researchSessions: true,
+              conversations: true,
+              draftDocuments: true,
+            },
           },
         },
       })
@@ -247,6 +257,7 @@ export default async function MatterDetailPage({
   const hasIndexedDocuments = indexedDocuments > 0
   const hasRetrievalReady = retrievalReadyDocuments > 0
   const hasResearchSessions = matter._count.researchSessions > 0
+  const hasDrafts = matter._count.draftDocuments > 0
 
   const sourceIngestionNote = !hasDocuments
     ? "Awaiting first document"
@@ -262,6 +273,7 @@ export default async function MatterDetailPage({
     { label: "Source ingestion",       note: sourceIngestionNote,              state: allDocumentsIndexed ? "complete" as const : "pending" as const },
     { label: "Retrieval layer",        note: hasRetrievalReady ? `${retrievalReadyDocuments} document${retrievalReadyDocuments !== 1 ? "s" : ""} retrieval-ready` : "Pending index completion", state: hasRetrievalReady ? "complete" as const : "pending" as const },
     { label: "Authority analysis",     note: hasResearchSessions ? `${matter._count.researchSessions} research session${matter._count.researchSessions !== 1 ? "s" : ""} logged` : "Awaiting research activity", state: hasResearchSessions ? "complete" as const : "pending" as const },
+    { label: "Grounded drafting",      note: hasDrafts ? `${matter._count.draftDocuments} draft${matter._count.draftDocuments !== 1 ? "s" : ""} prepared` : "Awaiting draft generation", state: hasDrafts ? "complete" as const : "pending" as const },
   ]
 
   const systemLayers = [
@@ -270,7 +282,7 @@ export default async function MatterDetailPage({
     { label: "Retrieval system",      status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
     { label: "Embedding index",       status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
     { label: "Orchestration layer",   status: "operational" },
-    { label: "Drafting surface",      status: "available" },
+    { label: "Drafting surface",      status: hasDrafts ? "active" : "available" },
   ]
 
   return (

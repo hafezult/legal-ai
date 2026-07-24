@@ -1,6 +1,6 @@
 # Aether Legal AI
 
-Aether is a Next.js legal intelligence workspace for matter-scoped document ingestion, indexing, semantic retrieval, and grounded research. The app combines Clerk authentication, Prisma/Postgres with pgvector, Supabase-backed document storage, and OpenAI embeddings/completions.
+Aether is a Next.js legal intelligence workspace for matter-scoped document ingestion, indexing, semantic retrieval, grounded research, and evidence-bound drafting. The app combines Clerk authentication, Prisma/Postgres with pgvector, Supabase-backed document storage, and OpenAI embeddings/completions.
 
 ## Core workflow
 
@@ -9,6 +9,7 @@ Aether is a Next.js legal intelligence workspace for matter-scoped document inge
 3. Upload PDF, DOCX, or TXT source documents to a matter.
 4. The indexing endpoint parses, chunks, embeds, and stores document vectors.
 5. The research surface retrieves matter-scoped excerpts and generates grounded answers with source traceability.
+6. The drafting surface prepares advice notes, skeletons, memos, and clause analyses from the same retrieval layer.
 
 ## Tech stack
 
@@ -79,7 +80,7 @@ For build-only validation without live service credentials, use syntactically va
 
 ## Database notes
 
-The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history and `AuditEvent` rows for ownership-scoped workspace activity. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
+The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history, `AuditEvent` rows for ownership-scoped workspace activity, and `DraftDocument` rows for grounded drafting outputs. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
 
 ## Security notes
 
@@ -92,6 +93,7 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Matter conversations can be created or deleted with ownership checks; research queries also open a conversation thread automatically.
 - Conversation messages (user/assistant/note) are ownership-scoped through the parent matter and cascade when a conversation is deleted.
 - Research session deletion is ownership-scoped and revalidates matter/research surfaces.
-- Key mutations write ownership-scoped `AuditEvent` records (matter, document, research, conversation). Trail writes are non-fatal and surface on Settings.
+- Key mutations write ownership-scoped `AuditEvent` records (matter, document, research, conversation, draft). Trail writes are non-fatal and surface on Settings.
+- Draft generation and deletion are ownership-scoped; drafts persist instruction, type, content, and retrieved chunk ids.
 - `/api/index-document/[documentId]` requires `INDEXING_SECRET` outside local development.
 - Retrieval queries are matter-scoped at the SQL layer.
