@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - cursor/overall-project-finalization-e376
+      - cursor/overall-project-finalization-71a4
 
 jobs:
   validate:
@@ -44,6 +44,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
 
       - name: Audit high-severity dependencies
         run: npm audit --audit-level=high

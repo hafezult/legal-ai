@@ -51,6 +51,8 @@ Required variables:
 | `INDEXING_SECRET` | Shared secret for the optional `/api/index-document` HTTP trigger outside development. Upload/reindex run indexing in-process. |
 | `RESEND_API_KEY` | Optional. When set, pending organization invites are emailed via Resend. |
 | `RESEND_FROM_EMAIL` | Optional Resend from address (defaults to `Aether <onboarding@resend.dev>`). |
+| `UPSTASH_REDIS_REST_URL` | Optional. Enables shared sliding-window rate limits across instances. |
+| `UPSTASH_REDIS_REST_TOKEN` | Optional. Upstash Redis REST token paired with the URL above. |
 
 Initialize the database:
 
@@ -74,6 +76,7 @@ Open [http://localhost:3000](http://localhost:3000).
 ```bash
 npm run lint
 npm run typecheck
+npm test
 npx prisma validate
 npm audit --audit-level=high
 npm run build
@@ -83,7 +86,7 @@ For build-only validation without live service credentials, use syntactically va
 
 ## Database notes
 
-The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history, `AuditEvent` rows for ownership-scoped workspace activity, `DraftDocument` rows for grounded drafting outputs, `Organization` / `OrganizationMember` tables for role-based workspace sharing, `User.activeOrganizationId` for multi-org switching, `OrganizationInvite` for pre-signup email invites, `AuditEvent.organizationId` for org-scoped activity feeds, and a unique constraint on `User.email`. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
+The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history, `AuditEvent` rows for ownership-scoped workspace activity, `DraftDocument` rows for grounded drafting outputs, `Organization` / `OrganizationMember` tables for role-based workspace sharing, `User.activeOrganizationId` for multi-org switching, `OrganizationInvite` for pre-signup email invites, `AuditEvent.organizationId` for org-scoped activity feeds, a unique constraint on `User.email`, and an `OrganizationRole` enum constraining membership/invite roles. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
 
 ## Security notes
 
@@ -106,8 +109,8 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Pending invite tokens and acceptance URLs are only loaded for owners and admins.
 - Draft generation and deletion require write permission; drafts persist instruction, type, content, and retrieved chunk ids.
 - Research and drafting history can be restored in-place with stored provenance excerpts (and authorities for research) and exported as Markdown; viewer roles retain read/export access. Matter detail deep-links into research/drafting with optional session/draft restore, including archived matters.
-- Research queries and draft instructions are capped server-side (8,000 characters). Grounded LLM failures still return retrieved excerpts with an error message. Per-user in-process rate limits throttle research and drafting bursts. Persistence failures surface a non-fatal warning while still returning generated content.
-- Failed indexing, empty/unscannable sources, embedding/retrieval failures, indexed-but-pending retrieval (no OpenAI key yet), stale mid-pipeline statuses (parsing/chunking/embedding older than ~10 minutes), or pipeline errors can be retried from Documents, Workflows, the matter source registry, and the document workstation when the actor has write permission. Legacy personal matters keep creator write controls even when the active organization role is viewer. Upload/reindex run the indexing pipeline in-process, claim documents so concurrent runs cannot interleave chunk writes, and surface a warning when indexing fails so retry controls appear immediately.
+- Research queries and draft instructions are capped server-side (8,000 characters). Grounded LLM failures still return retrieved excerpts with an error message. Per-user rate limits throttle research, drafting, upload, reindex, and invite bursts (Upstash Redis when configured; otherwise in-process). Persistence failures surface a non-fatal warning while still returning generated content.
+- Failed indexing, empty/unscannable sources, embedding/retrieval failures, indexed-but-pending retrieval (no OpenAI key yet), stale mid-pipeline statuses (parsing/chunking/embedding older than ~10 minutes), or pipeline errors can be retried from Documents, Workflows, the matter source registry, and the document workstation when the actor has write permission. Legacy personal matters keep creator write controls even when the active organization role is viewer. Upload/reindex run the indexing pipeline in-process, claim documents so concurrent runs cannot interleave chunk writes, refuse claim conflicts without marking the active run failed, and surface a warning when indexing fails so retry controls appear immediately.
 - Public `/api/health` is a cheap process liveness probe (no database fan-out). Settings and the dashboard load full dependency probes via `getHealthReport()`; aggregate readiness ignores optional OpenAI/indexing configuration so missing AI keys do not mark the deployment unhealthy.
 - User emails are stored lowercased and uniquely constrained so invite/member matching cannot collide across accounts.
 - Settings exposes organization roster controls for owners/admins (rename, create organization, add/invite by email, role update, remove, revoke pending invites, transfer ownership, delete organization). Admins can only manage members strictly below their own rank (peer admins cannot demote/remove each other).

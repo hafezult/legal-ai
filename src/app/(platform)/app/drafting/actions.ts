@@ -168,7 +168,7 @@ export async function generateDraft(
     user = await prisma.user.findUnique({ where: { clerkId }, select: { id: true } })
     if (!user) return emptyResult("User session not found.")
 
-    const throttle = consumeRateLimit(`draft:${user.id}`, DRAFT_RATE_LIMIT)
+    const throttle = await consumeRateLimit(`draft:${user.id}`, DRAFT_RATE_LIMIT)
     if (!throttle.ok) {
       const seconds = Math.ceil(throttle.retryAfterMs / 1000)
       return emptyResult(

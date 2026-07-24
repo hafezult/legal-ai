@@ -281,7 +281,7 @@ export async function addOrganizationMember(
     return { error: "Owner role cannot be assigned when adding members." }
   }
 
-  const throttle = consumeRateLimit(
+  const throttle = await consumeRateLimit(
     `invite:${actor.user.id}:${organizationId}`,
     INVITE_RATE_LIMIT
   )

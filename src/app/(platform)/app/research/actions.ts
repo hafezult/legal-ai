@@ -141,7 +141,7 @@ export async function runResearch(
     user = await prisma.user.findUnique({ where: { clerkId } })
     if (!user) return emptyResult("User session not found.")
 
-    const throttle = consumeRateLimit(`research:${user.id}`, RESEARCH_RATE_LIMIT)
+    const throttle = await consumeRateLimit(`research:${user.id}`, RESEARCH_RATE_LIMIT)
     if (!throttle.ok) {
       const seconds = Math.ceil(throttle.retryAfterMs / 1000)
       return emptyResult(
