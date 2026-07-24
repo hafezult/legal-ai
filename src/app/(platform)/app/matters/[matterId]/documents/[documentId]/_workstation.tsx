@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 
+import { documentIndexingBusy } from "@/lib/documents/status"
+
 // ── Serialised types (passed from RSC) ────────────────────────────────────
 
 export type WorkstationDoc = {
@@ -981,8 +983,10 @@ export function DocumentWorkstation({
     }
   }, [activeTab, doc, chunks, sessions, authorities, embeddedCount])
 
-  const reindexLabel =
-    doc.indexingStatus === "failed" || doc.retrievalStatus === "failed"
+  const indexingBusy = documentIndexingBusy(doc)
+  const reindexLabel = indexingBusy
+    ? "Indexing in progress"
+    : doc.indexingStatus === "failed" || doc.retrievalStatus === "failed"
       ? "Retry indexing"
       : doc.retrievalStatus === "ready"
         ? "Re-index source"
@@ -1071,10 +1075,10 @@ export function DocumentWorkstation({
                   <button
                     type="button"
                     onClick={runReindex}
-                    disabled={isReindexing || isDeleting}
+                    disabled={isReindexing || isDeleting || indexingBusy}
                     className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.02] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/64 disabled:pointer-events-none disabled:opacity-45"
                   >
-                    {isReindexing ? "Indexing..." : reindexLabel}
+                    {isReindexing || indexingBusy ? "Indexing..." : reindexLabel}
                   </button>
                 ) : null}
                 {canDelete ? (

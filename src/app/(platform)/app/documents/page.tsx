@@ -121,7 +121,7 @@ export default async function DocumentsPage() {
   const retrievalReadyCount = documents.filter(
     (doc) => doc.retrievalStatus === "ready" || doc.indexingStatus === "retrieval-ready"
   ).length
-  const failedCount = documents.filter((doc) => doc.indexingStatus === "failed").length
+  const failedCount = documents.filter((doc) => documentNeedsRetry(doc)).length
 
   return (
     <div className="space-y-8">

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server"
 
 import { prisma } from "@/lib/prisma"
-import { runIndexingPipeline } from "@/lib/workflows/indexing"
+import {
+  isIndexingInProgressError,
+  runIndexingPipeline,
+} from "@/lib/workflows/indexing"
 
 // Allow up to 5 minutes for large documents
 export const maxDuration = 300
@@ -63,6 +66,12 @@ export async function POST(
     await runIndexingPipeline(documentId)
     return NextResponse.json({ ok: true, documentId })
   } catch (error) {
+    if (isIndexingInProgressError(error)) {
+      return NextResponse.json(
+        { error: "Indexing already in progress" },
+        { status: 409 }
+      )
+    }
     const msg = error instanceof Error ? error.message : "Indexing failed"
     console.error(`[/api/index-document/${documentId}]`, msg)
     return NextResponse.json({ error: msg }, { status: 500 })

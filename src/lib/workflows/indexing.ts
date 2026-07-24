@@ -17,6 +17,28 @@ export type PipelineStatus =
 
 const IN_PROGRESS_STATUSES = ["parsing", "chunking", "embedding"] as const
 
+/** Thrown when another non-stale pipeline claim already holds the document. */
+export class IndexingInProgressError extends Error {
+  readonly documentId: string
+
+  constructor(documentId: string) {
+    super(
+      `Document ${documentId}: indexing already in progress. Retry after it finishes or stalls.`
+    )
+    this.name = "IndexingInProgressError"
+    this.documentId = documentId
+  }
+}
+
+export function isIndexingInProgressError(
+  error: unknown
+): error is IndexingInProgressError {
+  return (
+    error instanceof IndexingInProgressError ||
+    (error instanceof Error && error.name === "IndexingInProgressError")
+  )
+}
+
 async function setStatus(
   documentId: string,
   indexingStatus: PipelineStatus,
@@ -32,6 +54,8 @@ async function setStatus(
  * Atomically claim a document for indexing so parallel upload/reindex/HTTP
  * triggers cannot interleave chunk deletes and embedding writes.
  * Stale in-progress claims (older than STALE_INDEXING_MS) may be reclaimed.
+ * Claim also resets retrieval/parse so callers must not pre-flip status to
+ * `pending` (that would defeat the in-progress guard).
  */
 async function claimDocumentForIndexing(documentId: string): Promise<boolean> {
   const staleBefore = new Date(Date.now() - STALE_INDEXING_MS)
@@ -46,6 +70,7 @@ async function claimDocumentForIndexing(documentId: string): Promise<boolean> {
     data: {
       indexingStatus: "parsing",
       parseStatus: "parsing",
+      retrievalStatus: "pending",
     },
   })
   return claimed.count === 1
@@ -69,9 +94,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
 
   const claimed = await claimDocumentForIndexing(documentId)
   if (!claimed) {
-    throw new Error(
-      `Document ${documentId}: indexing already in progress. Retry after it finishes or stalls.`
-    )
+    throw new IndexingInProgressError(documentId)
   }
 
   // ── 1. Parse ────────────────────────────────────────────────────────────

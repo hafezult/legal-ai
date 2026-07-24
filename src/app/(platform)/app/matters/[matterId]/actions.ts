@@ -8,7 +8,10 @@ import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import { ensureBucket, removeFromStorage, uploadToStorage } from "@/lib/storage/documents"
-import { runIndexingPipeline } from "@/lib/workflows/indexing"
+import {
+  isIndexingInProgressError,
+  runIndexingPipeline,
+} from "@/lib/workflows/indexing"
 
 const UPLOAD_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const REINDEX_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
@@ -108,6 +111,14 @@ async function triggerIndexing(documentId: string): Promise<DocumentIndexState> 
     await runIndexingPipeline(documentId)
     return { success: true }
   } catch (error) {
+    // Concurrent claim conflict is expected — leave the active run alone.
+    if (isIndexingInProgressError(error)) {
+      return {
+        error:
+          "Indexing is already in progress for this document. Try again after it finishes or stalls.",
+      }
+    }
+
     const message =
       error instanceof Error ? error.message.slice(0, 240) : "Indexing failed."
     // Pipeline already stamps failed/pending states for parse/embed errors;
@@ -119,8 +130,13 @@ async function triggerIndexing(documentId: string): Promise<DocumentIndexState> 
       })
       .catch(() => null)
 
+    const active =
+      doc &&
+      ["parsing", "chunking", "embedding"].includes(doc.indexingStatus)
+
     if (
       doc &&
+      !active &&
       doc.indexingStatus !== "failed" &&
       doc.retrievalStatus !== "failed" &&
       doc.indexingStatus !== "indexed" &&
@@ -148,7 +164,7 @@ export async function uploadDocument(
     if (!user) return { error: "Session not found. Please sign in again." }
     ownerUserId = user.id
 
-    const throttle = consumeRateLimit(`upload:${user.id}`, UPLOAD_RATE_LIMIT)
+    const throttle = await consumeRateLimit(`upload:${user.id}`, UPLOAD_RATE_LIMIT)
     if (!throttle.ok) {
       const seconds = Math.ceil(throttle.retryAfterMs / 1000)
       return {
@@ -260,7 +276,7 @@ export async function reindexDocument(
     })
     if (!user) return { error: "Session not found. Please sign in again." }
 
-    const throttle = consumeRateLimit(`reindex:${user.id}`, REINDEX_RATE_LIMIT)
+    const throttle = await consumeRateLimit(`reindex:${user.id}`, REINDEX_RATE_LIMIT)
     if (!throttle.ok) {
       const seconds = Math.ceil(throttle.retryAfterMs / 1000)
       return {
@@ -281,14 +297,9 @@ export async function reindexDocument(
     })
     if (!document) return { error: "Document not found or access denied." }
 
-    await prisma.document.update({
-      where: { id: document.id },
-      data: {
-        indexingStatus: "pending",
-        retrievalStatus: "pending",
-        parseStatus: "pending",
-      },
-    })
+    // Do not reset indexingStatus here — that would defeat the atomic claim
+    // guard in runIndexingPipeline for concurrent in-progress runs. Claim
+    // itself resets parse/retrieval when it wins the race.
 
     await recordAuditEvent({
       userId: user.id,
