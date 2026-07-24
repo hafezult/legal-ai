@@ -82,7 +82,7 @@ npm audit --audit-level=high
 npm run build
 ```
 
-For build-only validation without live service credentials, use syntactically valid dummy values for Clerk/Supabase/Postgres and leave `OPENAI_API_KEY` empty. Semantic retrieval requires a real OpenAI key and re-indexed documents. With the pinned Next.js 16.2.11 release and dependency overrides, `npm audit --audit-level=high` is clean.
+For build-only validation without live service credentials, use syntactically valid dummy values for Clerk/Supabase/Postgres and leave `OPENAI_API_KEY` empty. Semantic retrieval requires a real OpenAI key and re-indexed documents. With the pinned Next.js 16.2.11 release and dependency overrides (`brace-expansion@5.0.8`, `minimatch@10.2.5`, nested Next `postcss@8.5.23`), `npm audit --audit-level=high` is clean.
 
 ## Database notes
 
