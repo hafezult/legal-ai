@@ -1,5 +1,6 @@
-// AI intelligence layer
-// Phase 3+: embeddings, LLM orchestration, multi-agent reasoning graphs
+// AI intelligence layer public entrypoint.
+
+import { generateBatchEmbeddings, isEmbeddingConfigured } from "@/lib/ai/embeddings"
 
 export type EmbeddingJob = {
   documentId: string
@@ -14,9 +15,24 @@ export type EmbeddingResult = {
   status: "queued" | "complete" | "failed"
 }
 
-/** Schedule a document's chunks for embedding. Phase 3 implementation pending. */
-export async function scheduleEmbedding(
-  _job: EmbeddingJob
-): Promise<EmbeddingResult> {
-  return { documentId: _job.documentId, chunkCount: 0, status: "queued" }
+/** Generate embeddings for a document's chunks using the configured provider. */
+export async function scheduleEmbedding(job: EmbeddingJob): Promise<EmbeddingResult> {
+  if (!isEmbeddingConfigured()) {
+    return { documentId: job.documentId, chunkCount: 0, status: "failed" }
+  }
+
+  try {
+    const embeddings = await generateBatchEmbeddings(
+      job.chunks,
+      job.model ? { model: job.model } : {}
+    )
+
+    return {
+      documentId: job.documentId,
+      chunkCount: embeddings.length,
+      status: "complete",
+    }
+  } catch {
+    return { documentId: job.documentId, chunkCount: 0, status: "failed" }
+  }
 }
