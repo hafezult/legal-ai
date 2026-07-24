@@ -74,6 +74,7 @@ export function MatterConversationsPanel({
   const [draftById, setDraftById] = useState<Record<string, string>>({})
   const [isPending, startTransition] = useTransition()
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [postingId, setPostingId] = useState<string | null>(null)
   const [message, setMessage] = useState<{
     type: "success" | "error"
@@ -103,6 +104,7 @@ export function MatterConversationsPanel({
   const runDelete = useCallback(
     (conversationId: string) => {
       setMessage(null)
+      setConfirmingDeleteId(null)
       setDeletingId(conversationId)
       startTransition(async () => {
         const result = await deleteAction(conversationId)
@@ -234,6 +236,9 @@ export function MatterConversationsPanel({
                 <div className="flex items-start justify-between gap-3 px-3.5 py-3">
                   <button
                     type="button"
+                    id={`conversation-toggle-${conversation.id}`}
+                    aria-expanded={isExpanded}
+                    aria-controls={`conversation-panel-${conversation.id}`}
                     onClick={() =>
                       setExpandedId((current) =>
                         current === conversation.id ? null : conversation.id
@@ -250,19 +255,48 @@ export function MatterConversationsPanel({
                     </p>
                   </button>
                   {!readOnly ? (
-                    <button
-                      type="button"
-                      disabled={isPending}
-                      onClick={() => runDelete(conversation.id)}
-                      className="shrink-0 rounded border border-white/[0.08] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/25 hover:text-red-200/70 disabled:opacity-45"
-                    >
-                      {deletingId === conversation.id ? "..." : "Delete"}
-                    </button>
+                    confirmingDeleteId === conversation.id ? (
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={isPending}
+                          onClick={() => setConfirmingDeleteId(null)}
+                          className="rounded border border-white/[0.08] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/60 disabled:opacity-45"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isPending}
+                          onClick={() => runDelete(conversation.id)}
+                          className="rounded border border-red-400/25 bg-red-400/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-red-200/75 transition-colors hover:border-red-400/40 disabled:opacity-45"
+                        >
+                          {deletingId === conversation.id ? "..." : "Confirm"}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isPending}
+                        onClick={() => {
+                          setMessage(null)
+                          setConfirmingDeleteId(conversation.id)
+                        }}
+                        className="shrink-0 rounded border border-white/[0.08] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/25 hover:text-red-200/70 disabled:opacity-45"
+                      >
+                        Delete
+                      </button>
+                    )
                   ) : null}
                 </div>
 
                 {isExpanded ? (
-                  <div className="border-t border-white/[0.04] px-3.5 py-3">
+                  <div
+                    id={`conversation-panel-${conversation.id}`}
+                    role="region"
+                    aria-labelledby={`conversation-toggle-${conversation.id}`}
+                    className="border-t border-white/[0.04] px-3.5 py-3"
+                  >
                     {conversation.messages.length === 0 ? (
                       <p className="text-xs leading-relaxed text-white/22">
                         No messages yet. Add a note or run research to capture the

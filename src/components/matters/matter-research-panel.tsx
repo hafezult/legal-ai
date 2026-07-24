@@ -72,6 +72,10 @@ export function MatterResearchPanel({
   const handleDelete = useCallback(
     (sessionId: string) => {
       if (!canWrite || isDeleting) return
+      const confirmed = window.confirm(
+        "Delete this research session? The saved query and grounded response will be removed."
+      )
+      if (!confirmed) return
       setError(null)
       setDeletingId(sessionId)
       startDelete(async () => {

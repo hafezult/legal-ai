@@ -273,6 +273,10 @@ export function ResearchClient({
       const sessionCanWrite =
         matters.find((matter) => matter.id === sessionMatterId)?.canWrite ?? canWrite
       if (!sessionCanWrite || isDeleting) return
+      const confirmed = window.confirm(
+        "Delete this research session? The saved query and grounded response will be removed."
+      )
+      if (!confirmed) return
       setLocalError(null)
       setDeletingSessionId(sessionId)
 

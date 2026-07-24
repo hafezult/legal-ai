@@ -248,6 +248,10 @@ export function DraftingClient({
       const draftCanWrite =
         matters.find((matter) => matter.id === draftMatterId)?.canWrite ?? canWrite
       if (!draftCanWrite || isDeleting) return
+      const confirmed = window.confirm(
+        "Delete this draft? The generated work product will be permanently removed."
+      )
+      if (!confirmed) return
       setLocalError(null)
       setDeletingDraftId(draftId)
 

@@ -422,12 +422,16 @@ export function OrganizationAccessPanel({
                   <button
                     type="button"
                     disabled={isPending}
-                    onClick={() =>
+                    onClick={() => {
+                      const confirmed = window.confirm(
+                        `Remove ${member.name || member.email} from this organization?`
+                      )
+                      if (!confirmed) return
                       run(
                         () => removeOrganizationMember(organizationId, member.id),
                         "Member removed."
                       )
-                    }
+                    }}
                     className="text-[11px] text-white/35 transition-colors hover:text-amber-200/70 disabled:opacity-40"
                   >
                     Remove
@@ -485,12 +489,16 @@ export function OrganizationAccessPanel({
                     <button
                       type="button"
                       disabled={isPending}
-                      onClick={() =>
+                      onClick={() => {
+                        const confirmed = window.confirm(
+                          `Revoke the invite for ${invite.email}? The acceptance link will stop working.`
+                        )
+                        if (!confirmed) return
                         run(
                           () => revokeOrganizationInvite(organizationId, invite.id),
                           "Invite revoked."
                         )
-                      }
+                      }}
                       className="text-[11px] text-white/35 transition-colors hover:text-amber-200/70 disabled:opacity-40"
                     >
                       Revoke
@@ -508,12 +516,16 @@ export function OrganizationAccessPanel({
           <button
             type="button"
             disabled={isPending}
-            onClick={() =>
+            onClick={() => {
+              const confirmed = window.confirm(
+                "Leave this organization? You will lose access to its shared matters until invited again."
+              )
+              if (!confirmed) return
               run(
                 () => leaveOrganization(organizationId),
                 "You left this organization."
               )
-            }
+            }}
             className="text-[12px] text-white/35 transition-colors hover:text-amber-200/70 disabled:opacity-40"
           >
             Leave this organization
@@ -553,7 +565,14 @@ export function OrganizationAccessPanel({
                 <button
                   type="button"
                   disabled={isPending || !transferMemberId}
-                  onClick={() =>
+                  onClick={() => {
+                    const candidate = transferCandidates.find(
+                      (member) => member.id === transferMemberId
+                    )
+                    const confirmed = window.confirm(
+                      `Transfer ownership to ${candidate?.name || candidate?.email || "the selected member"}? You will become an admin.`
+                    )
+                    if (!confirmed) return
                     run(async () => {
                       const result = await transferOwnership(
                         organizationId,
@@ -562,7 +581,7 @@ export function OrganizationAccessPanel({
                       if (!result.error) setTransferMemberId("")
                       return result
                     }, "Ownership transferred. You are now an admin.")
-                  }
+                  }}
                   className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-[12px] text-white/60 transition-colors hover:border-white/[0.16] hover:text-white/80 disabled:opacity-40"
                 >
                   Transfer
