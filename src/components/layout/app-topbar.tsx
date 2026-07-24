@@ -30,7 +30,6 @@ export function AppTopbar({ title, subtitle, onOpenSidebar }: AppTopbarProps) {
       </div>
       <div className="flex shrink-0 items-center gap-3">
         <UserButton
-          afterSignOutUrl="/"
           appearance={{
             elements: {
               avatarBox: "h-8 w-8 ring-1 ring-white/10",
