@@ -9,6 +9,7 @@ import {
   getActiveOrganization,
   matterAccessWhere,
   requireMatterPermission,
+  roleHasPermission,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { removeManyFromStorage } from "@/lib/storage/documents"
@@ -79,6 +80,12 @@ export async function createMatter(
   let matter: { id: string }
   try {
     const organization = await getActiveOrganization(user.id)
+    if (organization && !roleHasPermission(organization.role, "write")) {
+      return {
+        error:
+          "Your organization role is read-only. Ask an admin to grant write access before creating matters.",
+      }
+    }
     matter = await prisma.matter.create({
       data: {
         title,

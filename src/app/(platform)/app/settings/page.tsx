@@ -7,6 +7,7 @@ import {
   isOrgRole,
   listUserOrganizations,
 } from "@/lib/auth/rbac"
+import { getHealthReport, type HealthReport } from "@/lib/health"
 import { prisma } from "@/lib/prisma"
 import { OrganizationAccessPanel } from "./_organization-panel"
 
@@ -44,9 +45,11 @@ type OrgInviteRow = {
   inviteUrl: string
 }
 
-const pillClass: Record<"ready" | "missing", string> = {
+const pillClass: Record<"ready" | "missing" | "degraded" | "ok", string> = {
   ready: "border-emerald-400/20 bg-emerald-400/10 text-emerald-200/70",
+  ok: "border-emerald-400/20 bg-emerald-400/10 text-emerald-200/70",
   missing: "border-amber-400/20 bg-amber-400/10 text-amber-200/70",
+  degraded: "border-red-400/20 bg-red-400/10 text-red-200/70",
 }
 
 function fmtShortDate(d: Date) {
@@ -118,6 +121,13 @@ export default async function SettingsPage() {
     invites: OrgInviteRow[]
   } | null = null
   let organizations: { id: string; name: string; role: string }[] = []
+  let health: HealthReport | null = null
+
+  try {
+    health = await getHealthReport()
+  } catch {
+    health = null
+  }
 
   try {
     const user = await prisma.user.findUnique({
@@ -230,16 +240,55 @@ export default async function SettingsPage() {
             </p>
             <p className="mt-1.5 text-sm leading-relaxed text-white/40">
               Secret values are never displayed. Configure missing services in the
-              deployment environment or local `.env.local`.
+              deployment environment or local `.env.local`. Live reachability is also
+              exposed at <code className="text-white/55">/api/health</code>.
             </p>
           </div>
-          <Link
-            href="/app"
-            className="rounded-lg border border-white/[0.1] bg-white/[0.03] px-4 py-2 text-[13px] text-white/55 transition-colors duration-200 hover:border-white/[0.16] hover:text-white/78"
-          >
-            Dashboard
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            {health ? (
+              <span
+                className={`rounded-full border px-2.5 py-0.5 text-[10px] uppercase tracking-[0.12em] ${
+                  pillClass[health.status === "ok" ? "ok" : "degraded"]
+                }`}
+              >
+                Live {health.status}
+              </span>
+            ) : null}
+            <Link
+              href="/app"
+              className="rounded-lg border border-white/[0.1] bg-white/[0.03] px-4 py-2 text-[13px] text-white/55 transition-colors duration-200 hover:border-white/[0.16] hover:text-white/78"
+            >
+              Dashboard
+            </Link>
+          </div>
         </div>
+
+        {health ? (
+          <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {Object.entries(health.probes).map(([key, probe]) => (
+              <div
+                key={key}
+                className="rounded-lg border border-white/[0.06] bg-black/20 px-4 py-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-serif text-base capitalize text-white/76">
+                      {key}
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-white/35">
+                      {probe.detail}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${pillClass[probe.status]}`}
+                  >
+                    {probe.status}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         <div className="mt-6 grid gap-3 md:grid-cols-2">
           {readiness.map((item) => {

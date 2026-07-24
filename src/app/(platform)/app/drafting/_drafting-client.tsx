@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useCallback, useState, useTransition } from "react"
 
+import { downloadMarkdown } from "@/lib/download"
 import {
   DRAFT_TYPES,
   deleteDraft,
@@ -71,12 +72,67 @@ function draftTypeLabel(draftType: string) {
   return DRAFT_TYPE_OPTIONS.find((option) => option.value === draftType)?.label ?? draftType
 }
 
+function hydrateDraft(draft: RecentDraft): DraftOutput {
+  const typed = (DRAFT_TYPES as readonly string[]).includes(draft.draftType)
+    ? (draft.draftType as DraftType)
+    : "advice"
+  return {
+    draftId: draft.id,
+    matterId: draft.matterId,
+    matterTitle: draft.matterTitle,
+    title: draft.title,
+    draftType: typed,
+    instruction: draft.instruction,
+    content: draft.content ?? "",
+    chunks: [],
+    retrievalCount: draft.chunkIds.length,
+    indexedChunks: draft.chunkIds.length,
+    embeddingConfigured: true,
+  }
+}
+
+function draftMarkdown(output: DraftOutput) {
+  const lines = [
+    `# ${output.title}`,
+    "",
+    `Matter: ${output.matterTitle}`,
+    `Type: ${draftTypeLabel(output.draftType)}`,
+    "",
+    `## Instruction`,
+    "",
+    output.instruction,
+    "",
+    `## Grounded draft`,
+    "",
+    output.content || "_No draft content saved._",
+    "",
+    `## Provenance`,
+    "",
+    `- Draft: \`${output.draftId}\``,
+    `- Retrieved chunks: ${output.retrievalCount}`,
+  ]
+  if (output.chunks.length > 0) {
+    lines.push("", "## Source excerpts", "")
+    output.chunks.forEach((chunk, index) => {
+      lines.push(
+        `### Excerpt ${index + 1} — ${chunk.fileName}`,
+        "",
+        chunk.content,
+        ""
+      )
+    })
+  }
+  return lines.join("\n")
+}
+
 export function DraftingClient({
   matters,
   recentDrafts,
+  canWrite = true,
 }: {
   matters: Matter[]
   recentDrafts: RecentDraft[]
+  canWrite?: boolean
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -92,10 +148,30 @@ export function DraftingClient({
     (draft) => !selectedMatter || draft.matterId === selectedMatter
   )
 
+  const restoreDraft = useCallback((draft: RecentDraft) => {
+    setSelectedMatter(draft.matterId)
+    setInstruction(draft.instruction)
+    setDraftType(
+      (DRAFT_TYPES as readonly string[]).includes(draft.draftType)
+        ? (draft.draftType as DraftType)
+        : "advice"
+    )
+    setLocalError(null)
+    setResults(hydrateDraft(draft))
+  }, [])
+
+  const exportDraft = useCallback((output: DraftOutput) => {
+    const stamp = new Date().toISOString().slice(0, 10)
+    downloadMarkdown(
+      `draft-${output.draftType}-${output.matterTitle.slice(0, 32)}-${stamp}.md`,
+      draftMarkdown(output)
+    )
+  }, [])
+
   const handleSubmit = useCallback(
     (event: React.FormEvent) => {
       event.preventDefault()
-      if (!instruction.trim() || !selectedMatter || isPending) return
+      if (!canWrite || !instruction.trim() || !selectedMatter || isPending) return
       setLocalError(null)
       setResults(null)
 
@@ -106,12 +182,12 @@ export function DraftingClient({
         router.refresh()
       })
     },
-    [instruction, selectedMatter, draftType, isPending, router]
+    [canWrite, instruction, selectedMatter, draftType, isPending, router]
   )
 
   const handleDeleteDraft = useCallback(
     (draftId: string) => {
-      if (isDeleting) return
+      if (!canWrite || isDeleting) return
       setLocalError(null)
       setDeletingDraftId(draftId)
 
@@ -131,7 +207,7 @@ export function DraftingClient({
         router.refresh()
       })
     },
-    [isDeleting, results?.draftId, router]
+    [canWrite, isDeleting, results?.draftId, router]
   )
 
   return (
@@ -178,12 +254,14 @@ export function DraftingClient({
             Create a matter and upload sources before preparing grounded drafts.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <Link
-              href="/app/matters/new"
-              className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-5 py-2.5 text-sm text-white/62 transition-colors duration-200 hover:border-white/[0.18] hover:bg-white/[0.07] hover:text-white/88"
-            >
-              Initialize matter
-            </Link>
+            {canWrite ? (
+              <Link
+                href="/app/matters/new"
+                className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-5 py-2.5 text-sm text-white/62 transition-colors duration-200 hover:border-white/[0.18] hover:bg-white/[0.07] hover:text-white/88"
+              >
+                Initialize matter
+              </Link>
+            ) : null}
             <Link
               href="/app/research"
               className="rounded-lg border border-white/[0.07] bg-white/[0.01] px-5 py-2.5 text-sm text-white/45 transition-colors duration-200 hover:border-white/[0.14] hover:text-white/72"
@@ -194,65 +272,80 @@ export function DraftingClient({
         </div>
       ) : (
         <>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-[180px_1fr]">
-              <div>
-                <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
-                  Draft type
-                </p>
-                <select
-                  value={draftType}
-                  onChange={(event) => setDraftType(event.target.value as DraftType)}
-                  className="w-full cursor-pointer appearance-none rounded-lg border border-white/[0.08] bg-zinc-950 px-4 py-2.5 text-sm text-white/80 focus:border-white/[0.16] focus:outline-none"
-                >
-                  {DRAFT_TYPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+          {canWrite ? (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-[180px_1fr]">
+                <div>
+                  <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
+                    Draft type
+                  </p>
+                  <select
+                    value={draftType}
+                    onChange={(event) => setDraftType(event.target.value as DraftType)}
+                    className="w-full cursor-pointer appearance-none rounded-lg border border-white/[0.08] bg-zinc-950 px-4 py-2.5 text-sm text-white/80 focus:border-white/[0.16] focus:outline-none"
+                  >
+                    {DRAFT_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
+                    Drafting instruction
+                  </p>
+                  <textarea
+                    value={instruction}
+                    onChange={(event) => setInstruction(event.target.value)}
+                    rows={4}
+                    placeholder={EXAMPLE_INSTRUCTIONS[0]}
+                    className="w-full resize-none rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-sm leading-relaxed text-white/85 placeholder:text-white/22 focus:border-white/[0.16] focus:bg-white/[0.03] focus:outline-none"
+                  />
+                </div>
               </div>
-              <div>
-                <p className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
-                  Drafting instruction
-                </p>
-                <textarea
-                  value={instruction}
-                  onChange={(event) => setInstruction(event.target.value)}
-                  rows={4}
-                  placeholder={EXAMPLE_INSTRUCTIONS[0]}
-                  className="w-full resize-none rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-sm leading-relaxed text-white/85 placeholder:text-white/22 focus:border-white/[0.16] focus:bg-white/[0.03] focus:outline-none"
-                />
+
+              <div className="flex flex-wrap gap-2">
+                {EXAMPLE_INSTRUCTIONS.slice(1).map((example) => (
+                  <button
+                    key={example}
+                    type="button"
+                    onClick={() => setInstruction(example)}
+                    className="rounded border border-white/[0.07] bg-white/[0.02] px-3 py-1 text-xs text-white/32 transition-colors hover:border-white/[0.12] hover:text-white/55"
+                  >
+                    {example.slice(0, 48)}…
+                  </button>
+                ))}
               </div>
+
+              {localError && (
+                <div className="rounded-lg border border-red-400/[0.15] bg-red-400/[0.04] px-4 py-3">
+                  <p className="text-sm text-red-400/68">{localError}</p>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={!instruction.trim() || !selectedMatter || isPending}
+                className="rounded-lg border border-white/[0.12] bg-white/[0.05] px-6 py-2.5 text-sm text-white/72 transition-colors hover:border-white/[0.2] hover:bg-white/[0.09] hover:text-white/92 disabled:pointer-events-none disabled:opacity-38"
+              >
+                {isPending ? "Preparing draft…" : "Generate draft →"}
+              </button>
+            </form>
+          ) : (
+            <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-black/20 px-5 py-4">
+              <p className="text-[10px] uppercase tracking-[0.16em] text-white/35">
+                Read-only access
+              </p>
+              <p className="mt-1.5 text-sm leading-relaxed text-white/40">
+                Your organization role can review and export saved drafts, but cannot
+                generate new work product or delete drafts.
+              </p>
+              {localError && (
+                <p className="mt-3 text-sm text-red-400/68">{localError}</p>
+              )}
             </div>
-
-            <div className="flex flex-wrap gap-2">
-              {EXAMPLE_INSTRUCTIONS.slice(1).map((example) => (
-                <button
-                  key={example}
-                  type="button"
-                  onClick={() => setInstruction(example)}
-                  className="rounded border border-white/[0.07] bg-white/[0.02] px-3 py-1 text-xs text-white/32 transition-colors hover:border-white/[0.12] hover:text-white/55"
-                >
-                  {example.slice(0, 48)}…
-                </button>
-              ))}
-            </div>
-
-            {localError && (
-              <div className="rounded-lg border border-red-400/[0.15] bg-red-400/[0.04] px-4 py-3">
-                <p className="text-sm text-red-400/68">{localError}</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={!instruction.trim() || !selectedMatter || isPending}
-              className="rounded-lg border border-white/[0.12] bg-white/[0.05] px-6 py-2.5 text-sm text-white/72 transition-colors hover:border-white/[0.2] hover:bg-white/[0.09] hover:text-white/92 disabled:pointer-events-none disabled:opacity-38"
-            >
-              {isPending ? "Preparing draft…" : "Generate draft →"}
-            </button>
-          </form>
+          )}
 
           <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.015] p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -278,17 +371,7 @@ export function DraftingClient({
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <button
                         type="button"
-                        onClick={() => {
-                          setSelectedMatter(draft.matterId)
-                          setInstruction(draft.instruction)
-                          setDraftType(
-                            (DRAFT_TYPES as readonly string[]).includes(draft.draftType)
-                              ? (draft.draftType as DraftType)
-                              : "advice"
-                          )
-                          setLocalError(null)
-                          setResults(null)
-                        }}
+                        onClick={() => restoreDraft(draft)}
                         className="min-w-0 flex-1 text-left"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -309,16 +392,28 @@ export function DraftingClient({
                             : "No draft content saved."}
                         </p>
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteDraft(draft.id)}
-                        disabled={isDeleting && deletingDraftId === draft.id}
-                        className="shrink-0 rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/30 hover:text-red-300/70 disabled:pointer-events-none disabled:opacity-40"
-                      >
-                        {isDeleting && deletingDraftId === draft.id
-                          ? "Deleting…"
-                          : "Delete"}
-                      </button>
+                      <div className="flex shrink-0 flex-col gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => exportDraft(hydrateDraft(draft))}
+                          disabled={!draft.content}
+                          className="rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/68 disabled:pointer-events-none disabled:opacity-40"
+                        >
+                          Export
+                        </button>
+                        {canWrite ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDraft(draft.id)}
+                            disabled={isDeleting && deletingDraftId === draft.id}
+                            className="rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/30 hover:text-red-300/70 disabled:pointer-events-none disabled:opacity-40"
+                          >
+                            {isDeleting && deletingDraftId === draft.id
+                              ? "Deleting…"
+                              : "Delete"}
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -348,7 +443,7 @@ export function DraftingClient({
             <div className="space-y-6 border-t border-white/[0.06] pt-8">
               <div className="flex flex-wrap items-center gap-3">
                 <p className="text-[10px] uppercase tracking-[0.18em] text-white/38">
-                  Source excerpts
+                  {results.chunks.length > 0 ? "Source excerpts" : "Saved draft"}
                 </p>
                 <span className="rounded-full border border-white/[0.08] px-2.5 py-0.5 text-[10px] text-white/35">
                   {results.retrievalCount} source
@@ -362,6 +457,14 @@ export function DraftingClient({
                     Embeddings not configured
                   </span>
                 )}
+                <button
+                  type="button"
+                  onClick={() => exportDraft(results)}
+                  disabled={!results.content}
+                  className="ml-auto rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/40 transition-colors hover:border-white/[0.16] hover:text-white/72 disabled:pointer-events-none disabled:opacity-40"
+                >
+                  Export Markdown
+                </button>
               </div>
 
               {results.chunks.length > 0 ? (
@@ -397,6 +500,13 @@ export function DraftingClient({
                       </p>
                     </div>
                   ))}
+                </div>
+              ) : results.content ? (
+                <div className="rounded-lg border border-white/[0.06] bg-white/[0.01] px-5 py-6">
+                  <p className="text-sm text-white/40">
+                    Restored from a saved draft. Source excerpts are not re-hydrated; the
+                    grounded draft below is preserved from the original generation.
+                  </p>
                 </div>
               ) : (
                 <div className="rounded-lg border border-white/[0.06] bg-white/[0.01] px-5 py-6">

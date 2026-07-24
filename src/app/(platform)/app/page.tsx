@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import { matterAccessWhere } from "@/lib/auth/rbac"
+import { getHealthReport } from "@/lib/health"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -111,12 +112,25 @@ export default async function DashboardPage() {
     /* Database unavailable in local dev */
   }
 
+  const health = await getHealthReport().catch(() => null)
+
   const systemLayers: SystemLayer[] = [
-    { label: "Authentication layer", status: "operational" },
-    { label: "Data plane", status: dataAvailable ? "operational" : "degraded" },
+    {
+      label: "Authentication layer",
+      status: health?.probes.clerk.status === "ok" ? "operational" : "pending",
+    },
+    {
+      label: "Data plane",
+      status:
+        health?.probes.database.status === "ok"
+          ? "operational"
+          : dataAvailable
+            ? "operational"
+            : "degraded",
+    },
     {
       label: "AI orchestration",
-      status: process.env.OPENAI_API_KEY ? "operational" : "pending",
+      status: health?.probes.openai.status === "ok" ? "operational" : "pending",
     },
     {
       label: "Document index",
@@ -289,9 +303,10 @@ export default async function DashboardPage() {
           Governance
         </p>
         <p className="mt-1.5 text-sm leading-relaxed text-white/40">
-          Sessions are Clerk-bound. Data access routes through your Postgres user row.
-          Ownership-scoped audit trails record key mutations. Org-role RBAC remains
-          available as a future hardening step.
+          Sessions are Clerk-bound. Data access routes through your Postgres user row and
+          organization membership. Ownership-scoped audit trails record key mutations.
+          Organization roles (`owner`, `admin`, `member`, `viewer`) gate write, delete,
+          and membership management across matter workspaces.
         </p>
       </div>
     </div>

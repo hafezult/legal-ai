@@ -1,6 +1,10 @@
 import { auth } from "@clerk/nextjs/server"
 
-import { matterAccessWhere } from "@/lib/auth/rbac"
+import {
+  getActiveOrganization,
+  matterAccessWhere,
+  roleHasPermission,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { DraftingClient } from "./_drafting-client"
 
@@ -22,10 +26,16 @@ export default async function DraftingPage() {
     matterId: string
     matterTitle: string
   }[] = []
+  let canWrite = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
+      const activeOrg = await getActiveOrganization(user.id)
+      canWrite = activeOrg
+        ? roleHasPermission(activeOrg.role, "write")
+        : true
+
       const [matterRows, draftRows] = await Promise.all([
         prisma.matter.findMany({
           where: { AND: [matterAccessWhere(user.id), { status: { not: "archived" } }] },
@@ -71,5 +81,11 @@ export default async function DraftingPage() {
     /* DB unavailable */
   }
 
-  return <DraftingClient matters={matters} recentDrafts={recentDrafts} />
+  return (
+    <DraftingClient
+      matters={matters}
+      recentDrafts={recentDrafts}
+      canWrite={canWrite}
+    />
+  )
 }

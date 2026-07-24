@@ -803,10 +803,14 @@ export function DocumentWorkstation({
   data,
   reindexAction,
   deleteAction,
+  canWrite = true,
+  canDelete = true,
 }: {
   data: WorkstationData
   reindexAction: DocumentIndexAction
   deleteAction: DocumentDeleteAction
+  canWrite?: boolean
+  canDelete?: boolean
 }) {
   const { doc, chunks, sessions, authorities, embeddedCount, signedUrl } = data
   const router = useRouter()
@@ -1020,22 +1024,26 @@ export function DocumentWorkstation({
                     {deleteMessage ?? reindexMessage?.text}
                   </p>
                 )}
-                <button
-                  type="button"
-                  onClick={runReindex}
-                  disabled={isReindexing || isDeleting}
-                  className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.02] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/64 disabled:pointer-events-none disabled:opacity-45"
-                >
-                  {isReindexing ? "Indexing..." : reindexLabel}
-                </button>
-                <button
-                  type="button"
-                  onClick={runDelete}
-                  disabled={isDeleting || isReindexing}
-                  className="shrink-0 rounded-full border border-red-400/15 bg-red-400/[0.04] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-red-200/45 transition-colors hover:border-red-400/28 hover:text-red-200/70 disabled:pointer-events-none disabled:opacity-45"
-                >
-                  {isDeleting ? "Removing..." : "Remove"}
-                </button>
+                {canWrite ? (
+                  <button
+                    type="button"
+                    onClick={runReindex}
+                    disabled={isReindexing || isDeleting}
+                    className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.02] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/64 disabled:pointer-events-none disabled:opacity-45"
+                  >
+                    {isReindexing ? "Indexing..." : reindexLabel}
+                  </button>
+                ) : null}
+                {canDelete ? (
+                  <button
+                    type="button"
+                    onClick={runDelete}
+                    disabled={isDeleting || isReindexing}
+                    className="shrink-0 rounded-full border border-red-400/15 bg-red-400/[0.04] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-red-200/45 transition-colors hover:border-red-400/28 hover:text-red-200/70 disabled:pointer-events-none disabled:opacity-45"
+                  >
+                    {isDeleting ? "Removing..." : "Remove"}
+                  </button>
+                ) : null}
               </div>
             </div>
             <div className="flex gap-0 overflow-x-auto px-3 pt-2">

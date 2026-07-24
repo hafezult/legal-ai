@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { notFound } from "next/navigation"
 
-import { matterAccessWhere } from "@/lib/auth/rbac"
+import { matterAccessWhere, getMatterAccess, roleHasPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities } from "@/lib/legal/authorities"
 import { createSignedUrl } from "@/lib/storage/documents"
@@ -177,6 +177,24 @@ export default async function DocumentViewerPage({
 
   if (!data) notFound()
 
+  let canWrite = false
+  let canDelete = false
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (user) {
+      const access = await getMatterAccess(user.id, matterId)
+      if (access?.role) {
+        canWrite = roleHasPermission(access.role, "write")
+        canDelete = roleHasPermission(access.role, "delete")
+      }
+    }
+  } catch {
+    /* permission probe failed — keep actions hidden */
+  }
+
   const boundReindex = reindexDocument.bind(null, matterId, documentId)
   const boundDelete = deleteDocument.bind(null, matterId, documentId)
 
@@ -185,6 +203,8 @@ export default async function DocumentViewerPage({
       data={data}
       reindexAction={boundReindex}
       deleteAction={boundDelete}
+      canWrite={canWrite}
+      canDelete={canDelete}
     />
   )
 }

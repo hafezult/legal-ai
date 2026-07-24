@@ -101,6 +101,9 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Research session deletion requires write permission on the parent matter and revalidates matter/research surfaces.
 - Key mutations write ownership-scoped `AuditEvent` records (matter, document, research, conversation, draft, organization). Trail writes are non-fatal and surface on Settings.
 - Draft generation and deletion require write permission; drafts persist instruction, type, content, and retrieved chunk ids.
+- Research and drafting history can be restored in-place and exported as Markdown; viewer roles retain read/export access.
+- Failed indexing can be retried from Documents, Workflows, and the document workstation when the actor has write permission.
+- Live readiness is exposed at `/api/health` and mirrored on Settings (configured vs reachable probes).
 - Settings exposes organization roster controls for owners/admins (rename, create organization, add/invite by email, role update, remove, revoke pending invites, transfer ownership, delete organization).
 - Pending invites include a shareable `/app/invites/[token]` acceptance link. With `RESEND_API_KEY` configured, invites are emailed automatically; otherwise copyable links and mailto drafts remain available. Invites also activate automatically when the invited email signs in (14-day expiry).
 - Organization deletion detaches matters (organizationId set null) while preserving creator ownership; memberships and invites cascade away.

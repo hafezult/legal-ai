@@ -1,8 +1,13 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
+import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
-import { matterAccessWhere } from "@/lib/auth/rbac"
+import {
+  getActiveOrganization,
+  matterAccessWhere,
+  roleHasPermission,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -50,10 +55,13 @@ export default async function DocumentsPage() {
   if (!clerkId) return null
 
   let documents: DocumentRow[] = []
+  let canWrite = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
+      const activeOrg = await getActiveOrganization(user.id)
+      canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
       documents = await prisma.document.findMany({
         where: { matter: matterAccessWhere(user.id) },
         orderBy: { uploadedAt: "desc" },
@@ -85,6 +93,7 @@ export default async function DocumentsPage() {
   const retrievalReadyCount = documents.filter(
     (doc) => doc.retrievalStatus === "ready" || doc.indexingStatus === "retrieval-ready"
   ).length
+  const failedCount = documents.filter((doc) => doc.indexingStatus === "failed").length
 
   return (
     <div className="space-y-8">
@@ -100,11 +109,12 @@ export default async function DocumentsPage() {
             Cross-matter source registry with ingestion, indexing, and retrieval readiness.
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-2 text-right">
+        <div className="grid grid-cols-2 gap-2 text-right sm:grid-cols-4">
           {[
             { label: "Sources", value: documents.length },
             { label: "Indexed", value: indexedCount },
             { label: "Retrieval", value: retrievalReadyCount },
+            { label: "Failed", value: failedCount },
           ].map((stat) => (
             <div
               key={stat.label}
@@ -158,22 +168,27 @@ export default async function DocumentsPage() {
             <span className="hidden w-24 shrink-0 text-[10px] uppercase tracking-[0.16em] text-white/32 xl:block">
               Retrieval
             </span>
+            <span className="w-20 shrink-0 text-[10px] uppercase tracking-[0.16em] text-white/32">
+              Action
+            </span>
             <span className="hidden w-24 shrink-0 text-right text-[10px] uppercase tracking-[0.16em] text-white/32 xl:block">
               Uploaded
             </span>
           </div>
 
           {documents.map((doc) => (
-            <Link
+            <div
               key={doc.id}
-              href={`/app/matters/${doc.matter.id}/documents/${doc.id}`}
               className="group flex items-center gap-4 border-t border-white/[0.04] px-5 py-4 transition-colors duration-150 first:border-t-0 hover:bg-white/[0.025]"
             >
-              <div className="min-w-0 flex-1">
+              <Link
+                href={`/app/matters/${doc.matter.id}/documents/${doc.id}`}
+                className="min-w-0 flex-1"
+              >
                 <p className="truncate text-[13px] text-white/75 transition-colors group-hover:text-white/92">
                   {doc.fileName}
                 </p>
-              </div>
+              </Link>
               <span className="hidden w-44 shrink-0 truncate text-xs text-white/38 md:block">
                 {doc.matter.title}
               </span>
@@ -192,10 +207,25 @@ export default async function DocumentsPage() {
               <div className="hidden w-24 shrink-0 xl:block">
                 <DocumentStatusPill status={doc.retrievalStatus} />
               </div>
+              <div className="w-20 shrink-0">
+                {canWrite && doc.indexingStatus === "failed" ? (
+                  <DocumentRetryButton
+                    matterId={doc.matter.id}
+                    documentId={doc.id}
+                  />
+                ) : (
+                  <Link
+                    href={`/app/matters/${doc.matter.id}/documents/${doc.id}`}
+                    className="text-[10px] uppercase tracking-[0.12em] text-white/28 transition-colors hover:text-white/55"
+                  >
+                    Open
+                  </Link>
+                )}
+              </div>
               <span className="hidden w-24 shrink-0 text-right text-xs text-white/25 xl:block">
                 {fmtShortDate(doc.uploadedAt)}
               </span>
-            </Link>
+            </div>
           ))}
         </div>
       )}

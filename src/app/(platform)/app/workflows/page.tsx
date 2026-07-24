@@ -1,8 +1,13 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
+import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
-import { matterAccessWhere } from "@/lib/auth/rbac"
+import {
+  getActiveOrganization,
+  matterAccessWhere,
+  roleHasPermission,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -33,10 +38,13 @@ export default async function WorkflowsPage() {
   if (!clerkId) return null
 
   let documents: WorkflowDocument[] = []
+  let canWrite = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
+      const activeOrg = await getActiveOrganization(user.id)
+      canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
       documents = await prisma.document.findMany({
         where: { matter: matterAccessWhere(user.id) },
         orderBy: { uploadedAt: "desc" },
@@ -73,6 +81,7 @@ export default async function WorkflowsPage() {
     (doc) => doc.retrievalStatus === "ready" || doc.indexingStatus === "retrieval-ready"
   ).length
   const failedCount = statusCounts.failed ?? 0
+  const failedDocuments = documents.filter((doc) => doc.indexingStatus === "failed")
 
   return (
     <div className="space-y-8">
@@ -141,6 +150,38 @@ export default async function WorkflowsPage() {
         </div>
       </div>
 
+      {canWrite && failedDocuments.length > 0 ? (
+        <div className="rounded-[var(--aether-radius-panel)] border border-amber-400/15 bg-amber-400/[0.03] p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-amber-200/55">
+                Failed indexing
+              </p>
+              <p className="mt-1.5 text-sm text-white/45">
+                Retry ingestion for sources that did not complete the pipeline.
+              </p>
+            </div>
+            <span className="rounded-full border border-amber-400/20 px-2.5 py-0.5 text-[10px] text-amber-200/60">
+              {failedDocuments.length} failed
+            </span>
+          </div>
+          <div className="mt-4 space-y-2">
+            {failedDocuments.map((doc) => (
+              <div
+                key={doc.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/[0.06] bg-black/20 px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-white/70">{doc.fileName}</p>
+                  <p className="mt-0.5 text-xs text-white/30">{doc.matter.title}</p>
+                </div>
+                <DocumentRetryButton matterId={doc.matter.id} documentId={doc.id} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {documents.length === 0 ? (
         <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.01] px-8 py-16 text-center">
           <p className="font-serif text-lg text-white/45">No workflow events yet</p>
@@ -169,22 +210,27 @@ export default async function WorkflowsPage() {
             <span className="hidden w-24 shrink-0 text-[10px] uppercase tracking-[0.16em] text-white/32 lg:block">
               Retrieval
             </span>
+            <span className="w-20 shrink-0 text-[10px] uppercase tracking-[0.16em] text-white/32">
+              Action
+            </span>
             <span className="hidden w-28 shrink-0 text-right text-[10px] uppercase tracking-[0.16em] text-white/32 xl:block">
               Uploaded
             </span>
           </div>
 
           {documents.map((doc) => (
-            <Link
+            <div
               key={doc.id}
-              href={`/app/matters/${doc.matter.id}/documents/${doc.id}`}
               className="group flex items-center gap-4 border-t border-white/[0.04] px-5 py-4 transition-colors duration-150 first:border-t-0 hover:bg-white/[0.025]"
             >
-              <div className="min-w-0 flex-1">
+              <Link
+                href={`/app/matters/${doc.matter.id}/documents/${doc.id}`}
+                className="min-w-0 flex-1"
+              >
                 <p className="truncate text-[13px] text-white/75 transition-colors group-hover:text-white/92">
                   {doc.fileName}
                 </p>
-              </div>
+              </Link>
               <span className="hidden w-44 shrink-0 truncate text-xs text-white/38 md:block">
                 {doc.matter.title}
               </span>
@@ -194,10 +240,25 @@ export default async function WorkflowsPage() {
               <div className="hidden w-24 shrink-0 lg:block">
                 <DocumentStatusPill status={doc.retrievalStatus} />
               </div>
+              <div className="w-20 shrink-0">
+                {canWrite && doc.indexingStatus === "failed" ? (
+                  <DocumentRetryButton
+                    matterId={doc.matter.id}
+                    documentId={doc.id}
+                  />
+                ) : (
+                  <Link
+                    href={`/app/matters/${doc.matter.id}/documents/${doc.id}`}
+                    className="text-[10px] uppercase tracking-[0.12em] text-white/28 transition-colors hover:text-white/55"
+                  >
+                    Open
+                  </Link>
+                )}
+              </div>
               <span className="hidden w-28 shrink-0 text-right text-xs text-white/25 xl:block">
                 {fmtShortDate(doc.uploadedAt)}
               </span>
-            </Link>
+            </div>
           ))}
         </div>
       )}
