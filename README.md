@@ -80,13 +80,14 @@ For build-only validation without live service credentials, use syntactically va
 
 ## Database notes
 
-The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history, `AuditEvent` rows for ownership-scoped workspace activity, `DraftDocument` rows for grounded drafting outputs, and `Organization` / `OrganizationMember` tables for role-based workspace sharing. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
+The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history, `AuditEvent` rows for ownership-scoped workspace activity, `DraftDocument` rows for grounded drafting outputs, `Organization` / `OrganizationMember` tables for role-based workspace sharing, `User.activeOrganizationId` for multi-org switching, and `OrganizationInvite` for pre-signup email invites. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
 
 ## Security notes
 
 - Platform routes are protected by Clerk via `src/proxy.ts`.
 - Data access is scoped through the authenticated user's persisted app row and organization membership.
-- Each signed-in user receives a personal organization (owner role). Matters created afterward attach to that organization.
+- Each signed-in user receives a personal organization (owner role). Matters created afterward attach to the user's active organization.
+- Users who belong to multiple organizations can switch the active workspace from the sidebar or Settings; matter creation uses the active organization.
 - Organization roles (`owner`, `admin`, `member`, `viewer`) gate read, write, delete, and membership management.
 - Document upload validates matter write access server-side.
 - Document deletion removes storage objects and cascaded chunks after delete-permission checks.
@@ -97,6 +98,7 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Research session deletion requires write permission on the parent matter and revalidates matter/research surfaces.
 - Key mutations write ownership-scoped `AuditEvent` records (matter, document, research, conversation, draft, organization). Trail writes are non-fatal and surface on Settings.
 - Draft generation and deletion require write permission; drafts persist instruction, type, content, and retrieved chunk ids.
-- Settings exposes organization roster controls for owners/admins (rename, add by email, role update, remove).
+- Settings exposes organization roster controls for owners/admins (rename, add/invite by email, role update, remove, revoke pending invites).
+- Pending invites activate automatically when the invited email signs in for the first time (14-day expiry).
 - `/api/index-document/[documentId]` requires `INDEXING_SECRET` outside local development.
 - Retrieval queries are matter-scoped at the SQL layer.

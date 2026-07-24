@@ -1,11 +1,14 @@
 import { currentUser } from "@clerk/nextjs/server"
 
-import { ensurePersonalOrganization } from "@/lib/auth/rbac"
+import {
+  acceptPendingOrganizationInvites,
+  ensurePersonalOrganization,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
 /**
- * Upserts the signed-in Clerk user into Postgres (idempotent) and ensures a
- * personal organization workspace exists for role-based access control.
+ * Upserts the signed-in Clerk user into Postgres (idempotent), ensures a
+ * personal organization workspace exists, and accepts outstanding invites.
  */
 export async function ensureAppUser() {
   const clerkUser = await currentUser()
@@ -41,6 +44,12 @@ export async function ensureAppUser() {
     await ensurePersonalOrganization(user)
   } catch {
     /* Organization provisioning is best-effort; retries on next navigation */
+  }
+
+  try {
+    await acceptPendingOrganizationInvites(user)
+  } catch {
+    /* Invite acceptance is best-effort; retries on next navigation */
   }
 
   return user

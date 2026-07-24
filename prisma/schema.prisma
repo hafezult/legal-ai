@@ -11,18 +11,23 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  clerkId   String   @unique
-  email     String
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  clerkId              String   @unique
+  email                String
+  name                 String?
+  activeOrganizationId String?
+  activeOrganization   Organization? @relation("UserActiveOrganization", fields: [activeOrganizationId], references: [id], onDelete: SetNull)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   matters              Matter[]
   researchSessions     ResearchSession[]
   draftDocuments       DraftDocument[]
   auditEvents          AuditEvent[]
   organizationMembers  OrganizationMember[]
+  organizationInvites  OrganizationInvite[] @relation("OrganizationInviteInviter")
+
+  @@index([activeOrganizationId])
 }
 
 model Organization {
@@ -32,8 +37,10 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members OrganizationMember[]
-  matters Matter[]
+  members     OrganizationMember[]
+  matters     Matter[]
+  invites     OrganizationInvite[]
+  activeUsers User[]               @relation("UserActiveOrganization")
 }
 
 model OrganizationMember {
@@ -48,6 +55,24 @@ model OrganizationMember {
 
   @@unique([organizationId, userId])
   @@index([userId])
+}
+
+model OrganizationInvite {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email           String
+  role            String       @default("member")
+  token           String       @unique
+  invitedByUserId String
+  invitedBy       User         @relation("OrganizationInviteInviter", fields: [invitedByUserId], references: [id], onDelete: Cascade)
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime     @default(now())
+
+  @@unique([organizationId, email])
+  @@index([email])
+  @@index([invitedByUserId])
 }
 
 model Matter {

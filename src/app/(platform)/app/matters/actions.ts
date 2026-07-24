@@ -6,7 +6,7 @@ import { redirect } from "next/navigation"
 
 import { recordAuditEvent } from "@/lib/audit"
 import {
-  getPrimaryOrganization,
+  getActiveOrganization,
   matterAccessWhere,
   requireMatterPermission,
 } from "@/lib/auth/rbac"
@@ -78,7 +78,7 @@ export async function createMatter(
 
   let matter: { id: string }
   try {
-    const organization = await getPrimaryOrganization(user.id)
+    const organization = await getActiveOrganization(user.id)
     matter = await prisma.matter.create({
       data: {
         title,

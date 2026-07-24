@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react"
 
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppTopbar } from "@/components/layout/app-topbar"
+import type { ShellOrganization } from "@/components/layout/organization-switcher"
 import { cn } from "@/lib/utils"
 
 const STORAGE_KEY = "aether-shell-sidebar-collapsed"
@@ -35,7 +36,15 @@ function resolveMeta(pathname: string): { title: string; subtitle?: string } {
   return { title: "Workspace", subtitle: "Aether" }
 }
 
-export function PlatformShell({ children }: { children: React.ReactNode }) {
+export function PlatformShell({
+  children,
+  organizations = [],
+  activeOrganizationId = null,
+}: {
+  children: React.ReactNode
+  organizations?: ShellOrganization[]
+  activeOrganizationId?: string | null
+}) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -68,6 +77,10 @@ export function PlatformShell({ children }: { children: React.ReactNode }) {
   const closeMobile = useCallback(() => setMobileOpen(false), [])
 
   const meta = resolveMeta(pathname)
+  const activeName = organizations.find((org) => org.id === activeOrganizationId)?.name
+  const subtitle = activeName
+    ? `${meta.subtitle ?? "Aether"} · ${activeName}`
+    : meta.subtitle
 
   return (
     <div className="flex min-h-screen bg-zinc-950 text-white">
@@ -85,12 +98,14 @@ export function PlatformShell({ children }: { children: React.ReactNode }) {
         onToggleCollapse={() => setCollapsed((c) => !c)}
         mobileOpen={mobileOpen}
         onNavigate={closeMobile}
+        organizations={organizations}
+        activeOrganizationId={activeOrganizationId}
       />
 
       <div className="flex min-w-0 flex-1 flex-col lg:pl-0">
         <AppTopbar
           title={meta.title}
-          subtitle={meta.subtitle}
+          subtitle={subtitle}
           onOpenSidebar={() => setMobileOpen(true)}
         />
         <main

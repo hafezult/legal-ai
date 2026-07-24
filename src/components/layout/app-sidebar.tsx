@@ -15,6 +15,10 @@ import {
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
+import {
+  OrganizationSwitcher,
+  type ShellOrganization,
+} from "@/components/layout/organization-switcher"
 import { cn } from "@/lib/utils"
 
 const items = [
@@ -33,6 +37,8 @@ type AppSidebarProps = {
   onToggleCollapse: () => void
   mobileOpen: boolean
   onNavigate?: () => void
+  organizations?: ShellOrganization[]
+  activeOrganizationId?: string | null
 }
 
 export function AppSidebar({
@@ -40,6 +46,8 @@ export function AppSidebar({
   onToggleCollapse,
   mobileOpen,
   onNavigate,
+  organizations = [],
+  activeOrganizationId = null,
 }: AppSidebarProps) {
   const pathname = usePathname()
 
@@ -115,17 +123,11 @@ export function AppSidebar({
       </nav>
 
       <div className="border-t border-white/[0.06] p-3">
-        <p
-          className={cn(
-            "text-[10px] uppercase tracking-[0.18em] text-white/35",
-            collapsed && "lg:hidden"
-          )}
-        >
-          Platform
-        </p>
-        <p className={cn("mt-1 text-[11px] leading-relaxed text-white/40", collapsed && "lg:hidden")}>
-          Matter intelligence workspace
-        </p>
+        <OrganizationSwitcher
+          organizations={organizations}
+          activeOrganizationId={activeOrganizationId}
+          collapsed={collapsed}
+        />
       </div>
     </aside>
   )
