@@ -75,7 +75,7 @@ npm audit --audit-level=high
 npm run build
 ```
 
-For build-only validation without live service credentials, use syntactically valid dummy values for Clerk/Supabase/Postgres and leave `OPENAI_API_KEY` empty. Semantic retrieval requires a real OpenAI key and re-indexed documents. The current Next.js release still reports a moderate nested PostCSS advisory with no available upstream fix; the high-severity audit gate is clean.
+For build-only validation without live service credentials, use syntactically valid dummy values for Clerk/Supabase/Postgres and leave `OPENAI_API_KEY` empty. Semantic retrieval requires a real OpenAI key and re-indexed documents. With the pinned Next.js 16.2.11 release and dependency overrides, `npm audit --audit-level=high` is clean.
 
 ## Database notes
 
@@ -83,7 +83,7 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 
 ## Security notes
 
-- Platform routes are protected by Clerk middleware.
+- Platform routes are protected by Clerk via `src/proxy.ts`.
 - Data access is scoped through the authenticated user's persisted app row.
 - Document upload validates matter ownership server-side.
 - `/api/index-document/[documentId]` requires `INDEXING_SECRET` outside local development.
