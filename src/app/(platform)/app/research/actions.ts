@@ -1,7 +1,10 @@
 "use server"
 
 import { auth } from "@clerk/nextjs/server"
+import { revalidatePath } from "next/cache"
 
+import { recordAuditEvent } from "@/lib/audit"
+import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
@@ -101,7 +104,7 @@ export async function runResearch(
   matterId: string,
   query: string
 ): Promise<ResearchOutput> {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
 
   const emptyResult = (error: string): ResearchOutput => ({
     query,
@@ -121,15 +124,18 @@ export async function runResearch(
   if (!query.trim()) return emptyResult("Research query cannot be empty.")
   if (!matterId) return emptyResult("No matter selected.")
 
-  // Validate ownership
+  // Validate write access
   let user: { id: string } | null = null
   let matter: { id: string; title: string } | null = null
   try {
     user = await prisma.user.findUnique({ where: { clerkId } })
     if (!user) return emptyResult("User session not found.")
 
-    matter = await prisma.matter.findFirst({
-      where: { id: matterId, userId: user.id },
+    const permission = await requireMatterPermission(user.id, matterId, "write")
+    if (!permission.ok) return emptyResult(permission.error)
+
+    matter = await prisma.matter.findUnique({
+      where: { id: matterId },
       select: { id: true, title: true },
     })
     if (!matter) return emptyResult("Matter not found or access denied.")
@@ -195,7 +201,7 @@ export async function runResearch(
   // Grounded LLM response
   const answer = await generateGroundedResponse(query, chunks)
 
-  // Persist research session
+  // Persist research session and open a matter conversation thread
   let sessionId = ""
   try {
     const session = await prisma.researchSession.create({
@@ -208,9 +214,49 @@ export async function runResearch(
       },
     })
     sessionId = session.id
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "research.run",
+      entityType: "research_session",
+      entityId: session.id,
+      matterId,
+      summary: `Ran research query on “${matter.title}”`,
+      metadata: { chunkCount: chunks.length, queryLength: query.length },
+    })
+
+    const conversationTitle = query.replace(/\s+/g, " ").trim()
+    if (conversationTitle) {
+      await prisma.conversation.create({
+        data: {
+          matterId,
+          title:
+            conversationTitle.length > 120
+              ? `${conversationTitle.slice(0, 117)}…`
+              : conversationTitle,
+          messages: {
+            create: [
+              { role: "user", content: query },
+              ...(answer
+                ? [{ role: "assistant", content: answer }]
+                : []),
+            ],
+          },
+        },
+      })
+      await prisma.matter.update({
+        where: { id: matterId },
+        data: { updatedAt: new Date() },
+      })
+    }
   } catch {
     /* Non-fatal — session persistence failure should not break research */
   }
+
+  revalidatePath(`/app/matters/${matterId}`)
+  revalidatePath("/app/memory")
+  revalidatePath("/app/settings")
+  revalidatePath("/app")
 
   return {
     query,
@@ -224,4 +270,68 @@ export async function runResearch(
     indexedChunks,
     embeddingConfigured: true,
   }
+}
+
+export type ResearchSessionDeleteState = {
+  error?: string
+  success?: boolean
+}
+
+export async function deleteResearchSession(
+  sessionId: string
+): Promise<ResearchSessionDeleteState> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { error: "Authentication required." }
+  if (!sessionId) return { error: "Session id is required." }
+
+  let matterId: string | null = null
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const researchSession = await prisma.researchSession.findFirst({
+      where: {
+        id: sessionId,
+        OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }],
+      },
+      select: { id: true, matterId: true },
+    })
+    if (!researchSession) return { error: "Research session not found or access denied." }
+
+    const permission = await requireMatterPermission(
+      user.id,
+      researchSession.matterId,
+      "write"
+    )
+    if (!permission.ok) return { error: permission.error }
+
+    matterId = researchSession.matterId
+    await prisma.researchSession.delete({ where: { id: researchSession.id } })
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "research.delete",
+      entityType: "research_session",
+      entityId: researchSession.id,
+      matterId: researchSession.matterId,
+      summary: "Deleted research session",
+    })
+  } catch {
+    return { error: "Data layer unreachable. Please try again." }
+  }
+
+  revalidatePath("/app/research")
+  revalidatePath("/app")
+  revalidatePath("/app/memory")
+  revalidatePath("/app/workflows")
+  revalidatePath("/app/settings")
+  if (matterId) {
+    revalidatePath(`/app/matters/${matterId}`)
+  }
+
+  return { success: true }
 }
