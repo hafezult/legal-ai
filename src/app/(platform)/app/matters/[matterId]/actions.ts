@@ -16,6 +16,11 @@ export type DocumentIndexState = {
   success?: boolean
 }
 
+export type DocumentDeleteState = {
+  error?: string
+  success?: boolean
+}
+
 const ALLOWED_MIME: Record<string, true> = {
   "application/pdf": true,
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
@@ -235,6 +240,53 @@ export async function reindexDocument(
   revalidatePath(`/app/matters/${matterId}`)
   revalidatePath(`/app/matters/${matterId}/documents/${documentId}`)
   revalidatePath("/app/documents")
+  revalidatePath("/app/workflows")
 
   return result
+}
+
+export async function deleteDocument(
+  matterId: string,
+  documentId: string
+): Promise<DocumentDeleteState> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { error: "Authentication required." }
+
+  let storagePath: string | null = null
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const document = await prisma.document.findFirst({
+      where: {
+        id: documentId,
+        matterId,
+        matter: { userId: user.id },
+      },
+      select: { id: true, storagePath: true },
+    })
+    if (!document) return { error: "Document not found or access denied." }
+
+    storagePath = document.storagePath
+
+    await prisma.document.delete({ where: { id: document.id } })
+  } catch {
+    return { error: "Data layer unreachable. Please try again." }
+  }
+
+  if (storagePath) {
+    await removeFromStorage(storagePath).catch(() => null)
+  }
+
+  revalidatePath(`/app/matters/${matterId}`)
+  revalidatePath("/app/documents")
+  revalidatePath("/app/workflows")
+  revalidatePath("/app/memory")
+  revalidatePath("/app")
+
+  return { success: true }
 }

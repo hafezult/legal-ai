@@ -64,6 +64,11 @@ export type DocumentIndexAction = () => Promise<{
   success?: boolean
 }>
 
+export type DocumentDeleteAction = () => Promise<{
+  error?: string
+  success?: boolean
+}>
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function fmtBytes(n: number | null): string {
@@ -797,9 +802,11 @@ const TABS: { id: Tab; label: string }[] = [
 export function DocumentWorkstation({
   data,
   reindexAction,
+  deleteAction,
 }: {
   data: WorkstationData
   reindexAction: DocumentIndexAction
+  deleteAction: DocumentDeleteAction
 }) {
   const { doc, chunks, sessions, authorities, embeddedCount, signedUrl } = data
   const router = useRouter()
@@ -816,10 +823,12 @@ export function DocumentWorkstation({
   const [mobilePanel, setMobilePanel] = useState<"document" | "intelligence">("document")
 
   const [isReindexing, startReindexTransition] = useTransition()
+  const [isDeleting, startDeleteTransition] = useTransition()
   const [reindexMessage, setReindexMessage] = useState<{
     type: "success" | "error"
     text: string
   } | null>(null)
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null)
 
   const runReindex = useCallback(() => {
     setReindexMessage(null)
@@ -835,6 +844,24 @@ export function DocumentWorkstation({
       router.refresh()
     })
   }, [reindexAction, router])
+
+  const runDelete = useCallback(() => {
+    const confirmed = window.confirm(
+      `Remove "${doc.fileName}" from this matter? Indexed chunks will be deleted.`
+    )
+    if (!confirmed) return
+
+    setDeleteMessage(null)
+    startDeleteTransition(async () => {
+      const result = await deleteAction()
+      if (result.error) {
+        setDeleteMessage(result.error)
+        return
+      }
+      router.push(`/app/matters/${doc.matterId}`)
+      router.refresh()
+    })
+  }, [deleteAction, doc.fileName, doc.matterId, router])
 
   // Restore persisted preferences
   useEffect(() => {
@@ -981,25 +1008,33 @@ export function DocumentWorkstation({
                 ← {doc.matterTitle}
               </Link>
               <div className="flex min-w-0 items-center gap-2">
-                {reindexMessage && (
+                {(reindexMessage || deleteMessage) && (
                   <p
                     className={`hidden truncate text-[10px] sm:block ${
-                      reindexMessage.type === "error"
+                      deleteMessage || reindexMessage?.type === "error"
                         ? "text-red-300/60"
                         : "text-white/36"
                     }`}
-                    title={reindexMessage.text}
+                    title={deleteMessage ?? reindexMessage?.text}
                   >
-                    {reindexMessage.text}
+                    {deleteMessage ?? reindexMessage?.text}
                   </p>
                 )}
                 <button
                   type="button"
                   onClick={runReindex}
-                  disabled={isReindexing}
+                  disabled={isReindexing || isDeleting}
                   className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.02] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/64 disabled:pointer-events-none disabled:opacity-45"
                 >
                   {isReindexing ? "Indexing..." : reindexLabel}
+                </button>
+                <button
+                  type="button"
+                  onClick={runDelete}
+                  disabled={isDeleting || isReindexing}
+                  className="shrink-0 rounded-full border border-red-400/15 bg-red-400/[0.04] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-red-200/45 transition-colors hover:border-red-400/28 hover:text-red-200/70 disabled:pointer-events-none disabled:opacity-45"
+                >
+                  {isDeleting ? "Removing..." : "Remove"}
                 </button>
               </div>
             </div>

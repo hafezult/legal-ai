@@ -1,6 +1,7 @@
 "use server"
 
 import { auth } from "@clerk/nextjs/server"
+import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 
 import { prisma } from "@/lib/prisma"
@@ -88,4 +89,49 @@ export async function createMatter(
   }
 
   redirect(`/app/matters/${matter.id}`)
+}
+
+export type MatterStatusState = {
+  error?: string
+  success?: boolean
+}
+
+export async function updateMatterStatus(
+  matterId: string,
+  status: string
+): Promise<MatterStatusState> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { error: "Authentication required." }
+
+  if (!STATUSES.has(status)) {
+    return { error: "Unsupported matter status." }
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const matter = await prisma.matter.findFirst({
+      where: { id: matterId, userId: user.id },
+      select: { id: true },
+    })
+    if (!matter) return { error: "Matter not found or access denied." }
+
+    await prisma.matter.update({
+      where: { id: matter.id },
+      data: { status },
+    })
+  } catch {
+    return { error: "Unable to update matter status. Please try again." }
+  }
+
+  revalidatePath(`/app/matters/${matterId}`)
+  revalidatePath("/app/matters")
+  revalidatePath("/app/research")
+  revalidatePath("/app")
+
+  return { success: true }
 }

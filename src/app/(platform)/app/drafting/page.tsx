@@ -53,7 +53,6 @@ export default async function DraftingPage() {
     /* DB unavailable */
   }
 
-  const sourceCount = matters.reduce((sum, matter) => sum + matter.documents.length, 0)
   const retrievalReadyCount = matters.reduce(
     (sum, matter) =>
       sum +

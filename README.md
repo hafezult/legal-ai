@@ -86,5 +86,7 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Platform routes are protected by Clerk via `src/proxy.ts`.
 - Data access is scoped through the authenticated user's persisted app row.
 - Document upload validates matter ownership server-side.
+- Document deletion removes storage objects and cascaded chunks after ownership checks.
+- Matter status updates (active / on hold / closed / archived) are ownership-scoped.
 - `/api/index-document/[documentId]` requires `INDEXING_SECRET` outside local development.
 - Retrieval queries are matter-scoped at the SQL layer.

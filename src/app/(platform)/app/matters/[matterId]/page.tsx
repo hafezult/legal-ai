@@ -4,8 +4,10 @@ import { notFound } from "next/navigation"
 
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { DocumentUploadZone } from "@/components/documents/document-upload-zone"
+import { MatterStatusControls } from "@/components/matters/matter-status-controls"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import { prisma } from "@/lib/prisma"
+import { updateMatterStatus } from "../actions"
 import { uploadDocument } from "./actions"
 
 export const dynamic = "force-dynamic"
@@ -175,6 +177,7 @@ export default async function MatterDetailPage({
 
   // Bind server action — safe to pass to client component
   const boundUpload = uploadDocument.bind(null, matter.id)
+  const boundStatusUpdate = updateMatterStatus.bind(null, matter.id)
 
   const hasDocuments = matter.documents.length > 0
   const indexedDocuments = matter.documents.filter((doc) =>
@@ -230,7 +233,13 @@ export default async function MatterDetailPage({
               {matter.title}
             </h1>
           </div>
-          <MatterStatusPill status={matter.status} className="mt-1 shrink-0" />
+          <div className="flex shrink-0 flex-col items-end gap-3">
+            <MatterStatusPill status={matter.status} className="mt-1" />
+            <MatterStatusControls
+              currentStatus={matter.status}
+              updateAction={boundStatusUpdate}
+            />
+          </div>
         </div>
 
         <div className="mt-5 flex flex-wrap gap-x-8 gap-y-4 border-t border-white/[0.05] pt-5">
