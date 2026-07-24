@@ -262,17 +262,19 @@ export async function createConversation(
     })
     if (!matter) return { error: "Matter not found or access denied." }
 
-    await prisma.conversation.create({
+    const conversation = await prisma.conversation.create({
       data: {
         matterId: matter.id,
         title: normalizedTitle,
       },
+      select: { id: true },
     })
 
     await recordAuditEvent({
       userId: user.id,
       action: "conversation.create",
       entityType: "conversation",
+      entityId: conversation.id,
       matterId: matter.id,
       summary: `Opened conversation “${normalizedTitle}”`,
     })
@@ -378,12 +380,13 @@ export async function createConversationMessage(
     if (!conversation) return { error: "Conversation not found or access denied." }
 
     matterId = conversation.matterId
-    await prisma.conversationMessage.create({
+    const message = await prisma.conversationMessage.create({
       data: {
         conversationId: conversation.id,
         role: normalizedRole,
         content: normalizedContent,
       },
+      select: { id: true },
     })
     await prisma.matter.update({
       where: { id: conversation.matterId },
@@ -394,10 +397,14 @@ export async function createConversationMessage(
       userId: user.id,
       action: "conversation.message_create",
       entityType: "conversation_message",
-      entityId: conversation.id,
+      entityId: message.id,
       matterId: conversation.matterId,
       summary: `Added ${normalizedRole} message to conversation`,
-      metadata: { role: normalizedRole, length: normalizedContent.length },
+      metadata: {
+        role: normalizedRole,
+        conversationId: conversation.id,
+        length: normalizedContent.length,
+      },
     })
   } catch {
     return { error: "Unable to add message. Please try again." }
