@@ -47,8 +47,8 @@ Required variables:
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key for server-side document storage. |
 | `SUPABASE_DOCUMENT_BUCKET` | Storage bucket name; defaults to `legal-documents` in code. |
 | `OPENAI_API_KEY` | Enables embeddings, semantic retrieval, and grounded answers. |
-| `NEXT_PUBLIC_APP_URL` | Absolute app URL used to trigger indexing after uploads. |
-| `INDEXING_SECRET` | Shared secret for the internal indexing endpoint outside development. |
+| `NEXT_PUBLIC_APP_URL` | Absolute app URL used for invite acceptance links. |
+| `INDEXING_SECRET` | Shared secret for the optional `/api/index-document` HTTP trigger outside development. Upload/reindex run indexing in-process. |
 | `RESEND_API_KEY` | Optional. When set, pending organization invites are emailed via Resend. |
 | `RESEND_FROM_EMAIL` | Optional Resend from address (defaults to `Aether <onboarding@resend.dev>`). |
 
@@ -83,7 +83,7 @@ For build-only validation without live service credentials, use syntactically va
 
 ## Database notes
 
-The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history, `AuditEvent` rows for ownership-scoped workspace activity, `DraftDocument` rows for grounded drafting outputs, `Organization` / `OrganizationMember` tables for role-based workspace sharing, `User.activeOrganizationId` for multi-org switching, and `OrganizationInvite` for pre-signup email invites. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
+The Prisma schema requires PostgreSQL with the `vector` extension. The initial migration creates the extension and tables for users, matters, conversations, documents, chunks, and research sessions. Later migrations add `ConversationMessage` rows for thread history, `AuditEvent` rows for ownership-scoped workspace activity, `DraftDocument` rows for grounded drafting outputs, `Organization` / `OrganizationMember` tables for role-based workspace sharing, `User.activeOrganizationId` for multi-org switching, `OrganizationInvite` for pre-signup email invites, `AuditEvent.organizationId` for org-scoped activity feeds, and a unique constraint on `User.email`. Document chunk embeddings use `vector(1536)`, matching `text-embedding-3-small`.
 
 ## Security notes
 
@@ -107,10 +107,11 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Draft generation and deletion require write permission; drafts persist instruction, type, content, and retrieved chunk ids.
 - Research and drafting history can be restored in-place with stored provenance excerpts (and authorities for research) and exported as Markdown; viewer roles retain read/export access. Matter detail deep-links into research/drafting with optional session/draft restore, including archived matters.
 - Research queries and draft instructions are capped server-side (8,000 characters). Grounded LLM failures still return retrieved excerpts with an error message. Per-user in-process rate limits throttle research and drafting bursts. Persistence failures surface a non-fatal warning while still returning generated content.
-- Failed indexing, empty/unscannable sources, embedding/retrieval failures, or unreachable indexing triggers can be retried from Documents, Workflows, the matter source registry, and the document workstation when the actor has write permission. Legacy personal matters keep creator write controls even when the active organization role is viewer. Upload now awaits the indexing trigger and surfaces a warning when the trigger fails so retry controls appear immediately.
-- Live readiness is exposed at `/api/health` and mirrored on Settings (configured vs reachable probes).
+- Failed indexing, empty/unscannable sources, embedding/retrieval failures, indexed-but-pending retrieval (no OpenAI key yet), or pipeline errors can be retried from Documents, Workflows, the matter source registry, and the document workstation when the actor has write permission. Legacy personal matters keep creator write controls even when the active organization role is viewer. Upload/reindex run the indexing pipeline in-process and surface a warning when indexing fails so retry controls appear immediately.
+- Public `/api/health` is a cheap process liveness probe (no database fan-out). Settings and the dashboard load full dependency probes via `getHealthReport()`; aggregate readiness ignores optional OpenAI/indexing configuration so missing AI keys do not mark the deployment unhealthy.
+- User emails are stored lowercased and uniquely constrained so invite/member matching cannot collide across accounts.
 - Settings exposes organization roster controls for owners/admins (rename, create organization, add/invite by email, role update, remove, revoke pending invites, transfer ownership, delete organization). Admins can only manage members strictly below their own rank (peer admins cannot demote/remove each other).
-- Pending invites include a shareable `/app/invites/[token]` acceptance link. With `RESEND_API_KEY` configured, invites are emailed automatically; otherwise copyable links and mailto drafts remain available. Invites also activate automatically when the invited email signs in (14-day expiry). Accepting an invite while already a member upgrades the role when the invite outranks the current membership.
+- Pending invites include a shareable `/app/invites/[token]` acceptance link. With `RESEND_API_KEY` configured, invites are emailed automatically; otherwise copyable links and mailto drafts remain available. Invites also activate automatically when the invited email signs in (14-day expiry), and auto-accept writes the same `organization.invite_accept` audit trail as token acceptance. Accepting an invite while already a member upgrades the role when the invite outranks the current membership.
 - Organization deletion detaches matters (organizationId set null) while preserving creator ownership; memberships and invites cascade away.
-- `/api/index-document/[documentId]` requires `INDEXING_SECRET` outside local development.
+- `/api/index-document/[documentId]` requires a non-trivial `INDEXING_SECRET` outside local development (placeholder values such as `change-me` are rejected).
 - Retrieval queries are matter-scoped at the SQL layer.

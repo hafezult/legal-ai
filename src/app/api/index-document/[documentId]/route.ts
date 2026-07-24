@@ -6,20 +6,42 @@ import { runIndexingPipeline } from "@/lib/workflows/indexing"
 // Allow up to 5 minutes for large documents
 export const maxDuration = 300
 
+const WEAK_INDEXING_SECRETS = new Set([
+  "change-me",
+  "changeme",
+  "secret",
+  "password",
+  "test",
+  "indexing",
+  "aether",
+])
+
+function indexingSecretRejectedReason(): string | null {
+  const secret = process.env.INDEXING_SECRET
+  if (process.env.NODE_ENV === "development") {
+    return null
+  }
+  if (!secret) {
+    return "INDEXING_SECRET is not configured"
+  }
+  if (WEAK_INDEXING_SECRETS.has(secret.toLowerCase())) {
+    return "INDEXING_SECRET is too weak for production"
+  }
+  return null
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ documentId: string }> }
 ) {
   // Validate internal secret. Local development may omit it, but deployed
-  // environments must explicitly configure INDEXING_SECRET.
-  const secret = process.env.INDEXING_SECRET
-  if (!secret && process.env.NODE_ENV !== "development") {
-    return NextResponse.json(
-      { error: "INDEXING_SECRET is not configured" },
-      { status: 503 }
-    )
+  // environments must configure a non-trivial INDEXING_SECRET.
+  const rejected = indexingSecretRejectedReason()
+  if (rejected) {
+    return NextResponse.json({ error: rejected }, { status: 503 })
   }
 
+  const secret = process.env.INDEXING_SECRET
   if (secret && request.headers.get("x-aether-secret") !== secret) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }

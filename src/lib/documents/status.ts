@@ -3,5 +3,11 @@ export function documentNeedsRetry(doc: {
   indexingStatus: string
   retrievalStatus: string
 }): boolean {
-  return doc.indexingStatus === "failed" || doc.retrievalStatus === "failed"
+  if (doc.indexingStatus === "failed" || doc.retrievalStatus === "failed") {
+    return true
+  }
+
+  // Parsed/chunked without embeddings (e.g. OPENAI_API_KEY was unset).
+  // Surfaces Retry once a key is configured so lists match the workstation.
+  return doc.indexingStatus === "indexed" && doc.retrievalStatus === "pending"
 }

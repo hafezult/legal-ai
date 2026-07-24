@@ -1,3 +1,4 @@
+import { recordAuditEvent } from "@/lib/audit"
 import { prisma } from "@/lib/prisma"
 
 /** Organization membership roles, ordered from least to most privileged. */
@@ -374,6 +375,7 @@ export async function acceptPendingOrganizationInvites(user: {
       id: true,
       organizationId: true,
       role: true,
+      organization: { select: { name: true } },
     },
   })
 
@@ -392,6 +394,8 @@ export async function acceptPendingOrganizationInvites(user: {
       select: { id: true, role: true },
     })
 
+    let effectiveRole = role
+
     if (!existing) {
       await prisma.organizationMember.create({
         data: {
@@ -400,6 +404,8 @@ export async function acceptPendingOrganizationInvites(user: {
           role,
         },
       })
+    } else if (isOrgRole(existing.role) && existing.role === "owner") {
+      effectiveRole = "owner"
     } else if (
       isOrgRole(existing.role) &&
       existing.role !== "owner" &&
@@ -410,6 +416,8 @@ export async function acceptPendingOrganizationInvites(user: {
         where: { id: existing.id },
         data: { role },
       })
+    } else if (isOrgRole(existing.role)) {
+      effectiveRole = existing.role
     }
 
     await prisma.organizationInvite.update({
@@ -417,6 +425,16 @@ export async function acceptPendingOrganizationInvites(user: {
       data: { acceptedAt: now },
     })
     accepted += 1
+
+    await recordAuditEvent({
+      userId: user.id,
+      action: "organization.invite_accept",
+      entityType: "organization_invite",
+      entityId: invite.organizationId,
+      organizationId: invite.organizationId,
+      summary: `Accepted invite to “${invite.organization.name}” as ${effectiveRole}`,
+      metadata: { role: effectiveRole, via: "auto_email_match" },
+    })
   }
 
   return accepted

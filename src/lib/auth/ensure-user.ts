@@ -20,7 +20,9 @@ export async function ensureAppUser() {
     clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)
       ?.emailAddress ?? clerkUser.emailAddresses[0]?.emailAddress
 
-  const email = primary ?? ""
+  // Normalize for unique matching against invites / member-add lookups.
+  // Clerk users without an email address get a stable per-user placeholder.
+  const email = primary?.trim().toLowerCase() || `unverified+${clerkUser.id}@users.invalid`
 
   const name =
     clerkUser.fullName ||

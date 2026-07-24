@@ -8,6 +8,7 @@ import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import { ensureBucket, removeFromStorage, uploadToStorage } from "@/lib/storage/documents"
+import { runIndexingPipeline } from "@/lib/workflows/indexing"
 
 const UPLOAD_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const REINDEX_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
@@ -91,12 +92,6 @@ function sanitizeName(name: string): string {
     .slice(0, 120)
 }
 
-function appBaseUrl(): string {
-  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
-  return `http://localhost:${process.env.PORT ?? 3000}`
-}
-
 async function markIndexingTriggerFailed(documentId: string) {
   await prisma.document.update({
     where: { id: documentId },
@@ -107,30 +102,34 @@ async function markIndexingTriggerFailed(documentId: string) {
   })
 }
 
+/** Run the indexing pipeline in-process (no HTTP self-fetch / URL dependency). */
 async function triggerIndexing(documentId: string): Promise<DocumentIndexState> {
   try {
-    const response = await fetch(`${appBaseUrl()}/api/index-document/${documentId}`, {
-      method: "POST",
-      headers: { "x-aether-secret": process.env.INDEXING_SECRET ?? "" },
-      cache: "no-store",
-    })
+    await runIndexingPipeline(documentId)
+    return { success: true }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message.slice(0, 240) : "Indexing failed."
+    // Pipeline already stamps failed/pending states for parse/embed errors;
+    // only force-fail when the runner itself aborts before status updates.
+    const doc = await prisma.document
+      .findUnique({
+        where: { id: documentId },
+        select: { indexingStatus: true, retrievalStatus: true },
+      })
+      .catch(() => null)
 
-    if (!response.ok) {
-      let error = `Indexing request failed with status ${response.status}.`
-      try {
-        const body = (await response.json()) as { error?: unknown }
-        if (typeof body.error === "string") error = body.error
-      } catch {
-        /* non-JSON response */
-      }
+    if (
+      doc &&
+      doc.indexingStatus !== "failed" &&
+      doc.retrievalStatus !== "failed" &&
+      doc.indexingStatus !== "indexed" &&
+      doc.indexingStatus !== "retrieval-ready"
+    ) {
       await markIndexingTriggerFailed(documentId).catch(() => null)
-      return { error }
     }
 
-    return { success: true }
-  } catch {
-    await markIndexingTriggerFailed(documentId).catch(() => null)
-    return { error: "Indexing service unreachable. Check NEXT_PUBLIC_APP_URL and retry." }
+    return { error: message }
   }
 }
 
