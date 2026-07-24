@@ -1,9 +1,10 @@
 "use client"
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useCallback, useState, useTransition } from "react"
 
-import { runResearch, type ResearchOutput } from "./actions"
+import { deleteResearchSession, runResearch, type ResearchOutput } from "./actions"
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -84,11 +85,14 @@ export function ResearchClient({
   matters: Matter[]
   recentSessions: RecentSession[]
 }) {
+  const router = useRouter()
   const [isPending, startTransition] = useTransition()
+  const [isDeleting, startDeleteTransition] = useTransition()
   const [selectedMatter, setSelectedMatter] = useState(matters[0]?.id ?? "")
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<ResearchOutput | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
 
   const matterSessions = recentSessions.filter(
     (session) => !selectedMatter || session.matterId === selectedMatter
@@ -105,9 +109,35 @@ export function ResearchClient({
         const output = await runResearch(selectedMatter, query)
         if (output.error) setLocalError(output.error)
         else setResults(output)
+        router.refresh()
       })
     },
-    [query, selectedMatter, isPending]
+    [query, selectedMatter, isPending, router]
+  )
+
+  const handleDeleteSession = useCallback(
+    (sessionId: string) => {
+      if (isDeleting) return
+      setLocalError(null)
+      setDeletingSessionId(sessionId)
+
+      startDeleteTransition(async () => {
+        const result = await deleteResearchSession(sessionId)
+        if (result.error) {
+          setLocalError(result.error)
+          setDeletingSessionId(null)
+          return
+        }
+
+        if (results?.sessionId === sessionId) {
+          setResults(null)
+        }
+
+        setDeletingSessionId(null)
+        router.refresh()
+      })
+    },
+    [isDeleting, results?.sessionId, router]
   )
 
   const hasAuthorities = results
@@ -236,33 +266,49 @@ export function ResearchClient({
             ) : (
               <div className="mt-4 space-y-2">
                 {matterSessions.map((session) => (
-                  <button
+                  <div
                     key={session.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedMatter(session.matterId)
-                      setQuery(session.query)
-                      setLocalError(null)
-                      setResults(null)
-                    }}
-                    className="block w-full rounded-lg border border-white/[0.05] bg-black/20 px-4 py-3 text-left transition-colors hover:border-white/[0.1] hover:bg-black/30"
+                    className="rounded-lg border border-white/[0.05] bg-black/20 px-4 py-3 transition-colors hover:border-white/[0.1] hover:bg-black/30"
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[10px] uppercase tracking-[0.14em] text-white/30">
-                        {session.matterTitle}
-                      </p>
-                      <p className="text-[10px] text-white/22">
-                        {fmtShortDate(session.createdAt)} · {session.chunkIds.length}{" "}
-                        chunk{session.chunkIds.length !== 1 ? "s" : ""}
-                      </p>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedMatter(session.matterId)
+                          setQuery(session.query)
+                          setLocalError(null)
+                          setResults(null)
+                        }}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-[10px] uppercase tracking-[0.14em] text-white/30">
+                            {session.matterTitle}
+                          </p>
+                          <p className="text-[10px] text-white/22">
+                            {fmtShortDate(session.createdAt)} · {session.chunkIds.length}{" "}
+                            chunk{session.chunkIds.length !== 1 ? "s" : ""}
+                          </p>
+                        </div>
+                        <p className="mt-2 text-sm text-white/62">{excerpt(session.query)}</p>
+                        <p className="mt-1.5 text-xs text-white/28">
+                          {session.response
+                            ? excerpt(session.response, 120)
+                            : "No grounded response saved for this session."}
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSession(session.id)}
+                        disabled={isDeleting && deletingSessionId === session.id}
+                        className="shrink-0 rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/30 hover:text-red-300/70 disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        {isDeleting && deletingSessionId === session.id
+                          ? "Deleting…"
+                          : "Delete"}
+                      </button>
                     </div>
-                    <p className="mt-2 text-sm text-white/62">{excerpt(session.query)}</p>
-                    <p className="mt-1.5 text-xs text-white/28">
-                      {session.response
-                        ? excerpt(session.response, 120)
-                        : "No grounded response saved for this session."}
-                    </p>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}

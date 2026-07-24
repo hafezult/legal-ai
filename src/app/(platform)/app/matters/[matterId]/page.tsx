@@ -104,6 +104,8 @@ export default async function MatterDetailPage({
   type ResearchSessionRow = {
     id: string
     query: string
+    response: string | null
+    chunkIds: string[]
     createdAt: Date
   }
 
@@ -162,6 +164,8 @@ export default async function MatterDetailPage({
             select: {
               id: true,
               query: true,
+              response: true,
+              chunkIds: true,
               createdAt: true,
             },
           },
@@ -394,12 +398,23 @@ export default async function MatterDetailPage({
             {hasResearchSessions
               ? matter.researchSessions.map((session) => (
                   <div key={session.id} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">
-                      {fmtShortDate(session.createdAt)}
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">
+                        {fmtShortDate(session.createdAt)}
+                      </p>
+                      <p className="text-[10px] text-white/22">
+                        {session.chunkIds.length} chunk{session.chunkIds.length !== 1 ? "s" : ""}
+                        {session.response ? " · response saved" : ""}
+                      </p>
+                    </div>
                     <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/42">
                       {session.query}
                     </p>
+                    {session.response && (
+                      <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-white/26">
+                        {session.response}
+                      </p>
+                    )}
                   </div>
                 ))
               : [
@@ -414,6 +429,14 @@ export default async function MatterDetailPage({
                   </div>
                 ))}
           </div>
+          {hasResearchSessions && (
+            <Link
+              href="/app/research"
+              className="mt-4 inline-flex text-[11px] text-white/30 transition-colors hover:text-white/55"
+            >
+              Open research workspace →
+            </Link>
+          )}
         </div>
 
         {/* Intelligence Readiness Panel */}
