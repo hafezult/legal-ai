@@ -367,15 +367,12 @@ export function OrganizationAccessPanel({
         </div>
         {members.map((member) => {
           const locked = member.role === "owner"
+          // Admins may only manage members strictly below their rank (not peer admins).
           const canEditMember =
             canManage &&
             !locked &&
-            (isOwner || assignableRoles.includes(member.role as (typeof ROLE_OPTIONS)[number]))
-          const memberRoleOptions =
-            canEditMember &&
-            !assignableRoles.includes(member.role as (typeof ROLE_OPTIONS)[number])
-              ? ([member.role, ...assignableRoles] as string[])
-              : assignableRoles
+            (isOwner ||
+              assignableRoles.includes(member.role as (typeof ROLE_OPTIONS)[number]))
           return (
             <div
               key={member.id}
@@ -409,7 +406,7 @@ export function OrganizationAccessPanel({
                   }
                   className="w-28 shrink-0 rounded-md border border-white/[0.08] bg-black/25 px-2 py-1.5 text-xs text-white/65 outline-none"
                 >
-                  {memberRoleOptions.map((role) => (
+                  {assignableRoles.map((role) => (
                     <option key={role} value={role}>
                       {role}
                     </option>
