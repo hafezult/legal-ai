@@ -200,8 +200,14 @@ export async function runResearch(
       distance: c.distance,
     }))
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Retrieval failed."
-    return { ...emptyResult(msg), matterTitle: matter.title, embeddingConfigured }
+    if (err instanceof Error) {
+      console.error("[runResearch] retrieval", err.message.slice(0, 240))
+    }
+    return {
+      ...emptyResult("Retrieval failed. Verify embeddings and try again."),
+      matterTitle: matter.title,
+      embeddingConfigured,
+    }
   }
 
   // Extract authorities from retrieved excerpts
@@ -223,8 +229,10 @@ export async function runResearch(
   try {
     answer = await generateGroundedResponse(query, chunks)
   } catch (err) {
-    generationError =
-      err instanceof Error ? err.message.slice(0, 240) : "Grounded response generation failed."
+    if (err instanceof Error) {
+      console.error("[runResearch] generation", err.message.slice(0, 240))
+    }
+    generationError = "Grounded response generation failed."
     answer =
       "Retrieved excerpts are shown below, but grounded analysis failed. Retry the query or verify OPENAI_API_KEY."
   }

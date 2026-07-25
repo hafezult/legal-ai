@@ -108,6 +108,7 @@ model Matter {
   auditEvents      AuditEvent[]
 
   @@index([organizationId])
+  @@index([userId])
 }
 
 model Conversation {
@@ -118,6 +119,8 @@ model Conversation {
   createdAt DateTime @default(now())
 
   messages ConversationMessage[]
+
+  @@index([matterId])
 }
 
 model ConversationMessage {
@@ -152,6 +155,8 @@ model Document {
   updatedAt           DateTime @default(now()) @updatedAt
 
   chunks DocumentChunk[]
+
+  @@index([matterId])
 }
 
 model DocumentChunk {
@@ -182,6 +187,9 @@ model ResearchSession {
   response  String?
   chunkIds  String[]
   createdAt DateTime @default(now())
+
+  @@index([matterId])
+  @@index([userId, createdAt])
 }
 
 model DraftDocument {

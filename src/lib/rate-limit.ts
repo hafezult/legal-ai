@@ -6,6 +6,38 @@ const buckets = new Map<string, Bucket>()
 
 type RateLimitResult = { ok: true } | { ok: false; retryAfterMs: number }
 
+export type UpstashPipelineDecision =
+  | { ok: true }
+  | { ok: false; retryAfterMs: number; rejectMember: string }
+
+/**
+ * Interpret an Upstash pipeline response for the sliding-window limiter.
+ * When over limit, callers must ZREM `rejectMember` so denied retries do not
+ * accumulate timestamps and extend the lockout window.
+ */
+export function decideUpstashRateLimit(args: {
+  count: number
+  limit: number
+  windowMs: number
+  now: number
+  member: string
+  oldestScore: number | null
+}): UpstashPipelineDecision {
+  if (!Number.isFinite(args.count) || args.count <= args.limit) {
+    return { ok: true }
+  }
+
+  const oldest = Number.isFinite(args.oldestScore)
+    ? (args.oldestScore as number)
+    : args.now
+
+  return {
+    ok: false,
+    retryAfterMs: Math.max(1000, args.windowMs - (args.now - oldest)),
+    rejectMember: args.member,
+  }
+}
+
 function consumeInMemory(
   key: string,
   options: { limit: number; windowMs: number }
@@ -31,6 +63,27 @@ function upstashConfigured(): boolean {
     process.env.UPSTASH_REDIS_REST_URL?.trim() &&
       process.env.UPSTASH_REDIS_REST_TOKEN?.trim()
   )
+}
+
+async function upstashCommand(
+  base: string,
+  token: string,
+  command: unknown[]
+): Promise<boolean> {
+  try {
+    const response = await fetch(`${base}/pipeline`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify([command]),
+      cache: "no-store",
+    })
+    return response.ok
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -71,21 +124,33 @@ async function consumeUpstash(
 
     const rows = (await response.json()) as Array<{ result?: unknown }>
     const count = Number(rows[2]?.result ?? 0)
-    if (!Number.isFinite(count) || count <= options.limit) {
-      return { ok: true }
-    }
-
     const oldestRow = rows[4]?.result
-    let oldest = now
+    let oldestScore: number | null = null
     if (Array.isArray(oldestRow) && oldestRow.length >= 2) {
       const score = Number(oldestRow[1])
-      if (Number.isFinite(score)) oldest = score
+      if (Number.isFinite(score)) oldestScore = score
     }
 
-    return {
-      ok: false,
-      retryAfterMs: Math.max(1000, options.windowMs - (now - oldest)),
+    const decision = decideUpstashRateLimit({
+      count,
+      limit: options.limit,
+      windowMs: options.windowMs,
+      now,
+      member,
+      oldestScore,
+    })
+
+    if (!decision.ok) {
+      // Drop the rejected attempt so retries do not inflate the window.
+      await upstashCommand(base, token, [
+        "ZREM",
+        redisKey,
+        decision.rejectMember,
+      ])
+      return { ok: false, retryAfterMs: decision.retryAfterMs }
     }
+
+    return { ok: true }
   } catch {
     return null
   }

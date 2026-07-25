@@ -295,7 +295,10 @@ export default async function SettingsPage() {
               Secret values are never displayed. Configure missing services in the
               deployment environment or local `.env.local`. Public{" "}
               <code className="text-white/55">/api/health</code> is process
-              liveness only; the dependency probes below are Settings-private.
+              liveness only; public{" "}
+              <code className="text-white/55">/api/ready</code> returns status
+              without probe details. The dependency probes below are
+              Settings-private.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

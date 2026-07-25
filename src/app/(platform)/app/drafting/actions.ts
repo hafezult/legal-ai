@@ -228,8 +228,15 @@ export async function generateDraft(
       distance: chunk.distance,
     }))
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Retrieval failed."
-    return { ...emptyResult(msg), matterTitle: matter.title, draftType, embeddingConfigured }
+    if (err instanceof Error) {
+      console.error("[generateDraft] retrieval", err.message.slice(0, 240))
+    }
+    return {
+      ...emptyResult("Retrieval failed. Verify embeddings and try again."),
+      matterTitle: matter.title,
+      draftType,
+      embeddingConfigured,
+    }
   }
 
   let content = ""
@@ -237,8 +244,10 @@ export async function generateDraft(
   try {
     content = await generateGroundedDraft(draftType, instruction.trim(), chunks)
   } catch (err) {
-    generationError =
-      err instanceof Error ? err.message.slice(0, 240) : "Draft generation failed."
+    if (err instanceof Error) {
+      console.error("[generateDraft] generation", err.message.slice(0, 240))
+    }
+    generationError = "Draft generation failed."
     content =
       "Retrieved source excerpts are listed below, but draft generation failed. Retry or verify OPENAI_API_KEY."
   }

@@ -68,8 +68,9 @@ async function triggerIndexing(documentId: string): Promise<DocumentIndexState> 
       }
     }
 
-    const message =
-      error instanceof Error ? error.message.slice(0, 240) : "Indexing failed."
+    if (error instanceof Error) {
+      console.error(`[triggerIndexing/${documentId}]`, error.message.slice(0, 240))
+    }
     // Pipeline already stamps failed/pending states for parse/embed errors;
     // only force-fail when the runner itself aborts before status updates.
     const doc = await prisma.document
@@ -94,7 +95,7 @@ async function triggerIndexing(documentId: string): Promise<DocumentIndexState> 
       await markIndexingTriggerFailed(documentId).catch(() => null)
     }
 
-    return { error: message }
+    return { error: "Indexing failed. Retry from the document workflow queue." }
   }
 }
 
@@ -147,11 +148,14 @@ export async function uploadDocument(
   try {
     await ensureBucket()
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Storage not configured."
-    return { error: msg }
+    if (e instanceof Error) {
+      console.error("[uploadDocument] ensureBucket", e.message.slice(0, 240))
+    }
+    return { error: "Document storage is unavailable. Check Supabase configuration." }
   }
 
-  const storagePath = `${clerkId}/${matterId}/${Date.now()}-${sanitizeUploadName(file.name)}`
+  const safeFileName = sanitizeUploadName(file.name).slice(0, 180) || "document"
+  const storagePath = `${clerkId}/${matterId}/${Date.now()}-${safeFileName}`
 
   const { error: storageErr } = await uploadToStorage(
     storagePath,
@@ -159,7 +163,8 @@ export async function uploadDocument(
     documentType.mimeType
   )
   if (storageErr) {
-    return { error: `Ingestion failed: ${storageErr.message}` }
+    console.error("[uploadDocument] storage", storageErr.message.slice(0, 240))
+    return { error: "Ingestion failed. Document storage rejected the upload." }
   }
 
   let documentId: string
@@ -167,7 +172,7 @@ export async function uploadDocument(
     const created = await prisma.document.create({
       data: {
         matterId,
-        fileName: file.name,
+        fileName: safeFileName,
         storagePath,
         mimeType: documentType.mimeType,
         fileSize: file.size,

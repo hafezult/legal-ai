@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 
 import { indexingSecretRejectedReason } from "@/lib/indexing/secret"
 import { prisma } from "@/lib/prisma"
+import { consumeRateLimit } from "@/lib/rate-limit"
 import {
   isIndexingInProgressError,
   runIndexingPipeline,
@@ -9,6 +10,8 @@ import {
 
 // Allow up to 5 minutes for large documents
 export const maxDuration = 300
+
+const INDEX_HTTP_RATE_LIMIT = { limit: 30, windowMs: 60_000 }
 
 export async function POST(
   request: Request,
@@ -35,6 +38,22 @@ export async function POST(
     return NextResponse.json({ error: "documentId required" }, { status: 400 })
   }
 
+  const throttle = await consumeRateLimit(
+    `index-http:${documentId}`,
+    INDEX_HTTP_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return NextResponse.json(
+      { error: "Indexing rate limit exceeded" },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.ceil(throttle.retryAfterMs / 1000)),
+        },
+      }
+    )
+  }
+
   const document = await prisma.document.findUnique({
     where: { id: documentId },
     select: { id: true },
@@ -55,6 +74,6 @@ export async function POST(
     }
     const msg = error instanceof Error ? error.message : "Indexing failed"
     console.error(`[/api/index-document/${documentId}]`, msg)
-    return NextResponse.json({ error: msg }, { status: 500 })
+    return NextResponse.json({ error: "Indexing failed" }, { status: 500 })
   }
 }

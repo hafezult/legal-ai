@@ -619,16 +619,40 @@ export async function transferOrganizationOwnership(
     return { ok: false, error: "You already own this organization." }
   }
 
-  await prisma.$transaction([
-    prisma.organizationMember.update({
-      where: { id: target.id },
-      data: { role: "owner" },
-    }),
-    prisma.organizationMember.update({
-      where: { id: actorMembership.id },
-      data: { role: "admin" },
-    }),
-  ])
+  try {
+    // Demote the current owner only while they still hold that role, then
+    // promote the target. Concurrent transfers race on the demote step so
+    // exactly one transfer can succeed and the org never ends with two owners.
+    await prisma.$transaction(async (tx) => {
+      const demoted = await tx.organizationMember.updateMany({
+        where: {
+          id: actorMembership.id,
+          organizationId,
+          role: "owner",
+        },
+        data: { role: "admin" },
+      })
+      if (demoted.count !== 1) {
+        throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
+      }
+
+      await tx.organizationMember.update({
+        where: { id: target.id },
+        data: { role: "owner" },
+      })
+    })
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "CONCURRENT_OWNERSHIP_CHANGE"
+    ) {
+      return {
+        ok: false,
+        error: "Ownership changed concurrently. Refresh and try again.",
+      }
+    }
+    throw error
+  }
 
   return {
     ok: true,

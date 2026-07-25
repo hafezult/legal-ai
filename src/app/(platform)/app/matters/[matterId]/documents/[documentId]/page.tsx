@@ -100,7 +100,7 @@ export default async function DocumentViewerPage({
     if (chunkIds.length > 0) {
       try {
         rawSessions = await prisma.researchSession.findMany({
-          where: { chunkIds: { hasSome: chunkIds } },
+          where: { matterId, chunkIds: { hasSome: chunkIds } },
           orderBy: { createdAt: "desc" },
           take: 20,
           select: { id: true, query: true, chunkIds: true, createdAt: true },
