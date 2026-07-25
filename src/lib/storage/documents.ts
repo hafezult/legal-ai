@@ -64,7 +64,8 @@ export async function cleanupStoragePaths(
   }
 }
 
-export async function createSignedUrl(path: string, expiresIn = 3600) {
+/** Default TTL matches the workstation preview budget (15 minutes). */
+export async function createSignedUrl(path: string, expiresIn = 900) {
   const client = getSupabaseAdmin()
   return client.storage.from(STORAGE_BUCKET).createSignedUrl(path, expiresIn)
 }
