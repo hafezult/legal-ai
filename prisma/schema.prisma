@@ -154,6 +154,8 @@ model Document {
   parseStatus         String   @default("pending")
   /// Lease id for the active indexing claim; status publishes require a match.
   indexingRunId       String?
+  /// Run id whose chunks are live for semantic retrieval (survives mid-reindex).
+  publishedRunId      String?
   parsedText          String?
   pageCount           Int?
   chunkCount          Int      @default(0)
@@ -168,6 +170,7 @@ model Document {
   @@unique([id, matterId])
   @@index([matterId])
   @@index([indexingRunId])
+  @@index([publishedRunId])
 }
 
 model DocumentChunk {
@@ -177,6 +180,8 @@ model DocumentChunk {
   document    Document                    @relation(fields: [documentId, matterId], references: [id, matterId], onDelete: Cascade)
   matterId    String
   matter      Matter                      @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  /// Indexing run that produced this chunk; retrieval uses Document.publishedRunId.
+  indexingRunId String?
   content     String
   chunkIndex  Int
   tokenCount  Int                         @default(0)
@@ -187,6 +192,7 @@ model DocumentChunk {
 
   @@index([documentId])
   @@index([matterId])
+  @@index([documentId, indexingRunId])
 }
 
 model ResearchSession {

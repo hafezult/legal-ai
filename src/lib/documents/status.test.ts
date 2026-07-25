@@ -5,9 +5,11 @@ import {
   STALE_INDEXING_MS,
   documentIndexingBusy,
   documentNeedsRetry,
+  documentRetrievalReadyWhere,
   documentRetryOr,
   isDocumentRetrievalReady,
   RETRYABLE_IN_PROGRESS_STATUSES,
+  ACTIVE_INDEXING_STATUSES,
 } from "./status.ts"
 
 describe("documentNeedsRetry", () => {
@@ -139,6 +141,40 @@ describe("isDocumentRetrievalReady", () => {
       }),
       false
     )
+  })
+
+  it("keeps mid-reindex docs ready when a publishedRunId is live", () => {
+    assert.equal(
+      isDocumentRetrievalReady({
+        indexingStatus: "embedding",
+        retrievalStatus: "ready",
+        publishedRunId: "run-prior",
+      }),
+      true
+    )
+    assert.equal(
+      isDocumentRetrievalReady({
+        indexingStatus: "parsing",
+        retrievalStatus: "pending",
+        publishedRunId: "run-prior",
+      }),
+      false
+    )
+  })
+})
+
+describe("documentRetrievalReadyWhere", () => {
+  it("includes published mid-reindex generations", () => {
+    assert.deepEqual(documentRetrievalReadyWhere(), {
+      retrievalStatus: "ready",
+      OR: [
+        { indexingStatus: "retrieval-ready" },
+        {
+          publishedRunId: { not: null },
+          indexingStatus: { in: [...ACTIVE_INDEXING_STATUSES] },
+        },
+      ],
+    })
   })
 })
 

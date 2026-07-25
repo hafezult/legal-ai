@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - cursor/overall-project-finalization-29a4
+      - cursor/overall-project-finalization-f313
 
 jobs:
   validate:
@@ -21,7 +21,7 @@ jobs:
       SUPABASE_DOCUMENT_BUCKET: legal-documents
       OPENAI_API_KEY: ""
       NEXT_PUBLIC_APP_URL: http://localhost:3000
-      INDEXING_SECRET: ci-indexing-secret-29a4-min-32chars!
+      INDEXING_SECRET: ci-indexing-secret-f313-min-32chars!
 
     steps:
       - name: Check out repository

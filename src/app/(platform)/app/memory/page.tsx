@@ -19,6 +19,7 @@ type MemoryMatter = {
   documents: {
     indexingStatus: string
     retrievalStatus: string
+    publishedRunId: string | null
   }[]
   conversations: {
     _count: { messages: number }
@@ -66,6 +67,7 @@ export default async function MemoryPage() {
               select: {
                 indexingStatus: true,
                 retrievalStatus: true,
+                publishedRunId: true,
               },
             },
             conversations: {

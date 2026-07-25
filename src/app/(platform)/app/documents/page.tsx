@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth/rbac"
 import {
   documentNeedsRetry,
+  documentRetrievalReadyWhere,
   documentRetryOr,
   STALE_INDEXING_MS,
 } from "@/lib/documents/status"
@@ -123,8 +124,7 @@ export default async function DocumentsPage() {
         prisma.document.count({
           where: {
             ...documentWhere,
-            retrievalStatus: "ready",
-            indexingStatus: "retrieval-ready",
+            ...documentRetrievalReadyWhere(),
           },
         }),
         prisma.document.count({ where: retryWhere }),

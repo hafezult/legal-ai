@@ -7,6 +7,7 @@ import {
   matterAccessWhereForActiveOrg,
   roleAtLeast,
 } from "@/lib/auth/rbac"
+import { documentRetrievalReadyWhere } from "@/lib/documents/status"
 import { getHealthReport } from "@/lib/health"
 import { prisma } from "@/lib/prisma"
 
@@ -86,8 +87,7 @@ export default async function DashboardPage() {
           prisma.document.count({
             where: {
               matter: matterWhere,
-              retrievalStatus: "ready",
-              indexingStatus: "retrieval-ready",
+              ...documentRetrievalReadyWhere(),
             },
           }),
           prisma.researchSession.count({ where: { matter: matterWhere } }),

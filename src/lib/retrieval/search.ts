@@ -38,6 +38,10 @@ export async function semanticSearch(
 /**
  * Raw vector retrieval — accepts a pre-computed embedding.
  * Matter isolation is enforced at the SQL level.
+ *
+ * Only chunks belonging to Document.publishedRunId are searchable, so a
+ * mid-reindex staging generation cannot surface incomplete embeddings while
+ * the prior published index remains available.
  */
 export async function retrieveByEmbedding(
   embedding: number[],
@@ -52,8 +56,6 @@ export async function retrieveByEmbedding(
 
   let rows: Row[]
 
-  // Only publish retrieval-ready documents so mid-pipeline embeddings cannot
-  // surface incomplete indexes during a concurrent embed run.
   if (options.documentIds?.length) {
     rows = await prisma.$queryRaw<Row[]>`
       SELECT
@@ -71,7 +73,8 @@ export async function retrieveByEmbedding(
       WHERE dc."matterId" = ${matterId}
         AND dc."documentId" = ANY(${options.documentIds}::text[])
         AND d."retrievalStatus" = 'ready'
-        AND d."indexingStatus" = 'retrieval-ready'
+        AND d."publishedRunId" IS NOT NULL
+        AND dc."indexingRunId" = d."publishedRunId"
         AND dc.embedding IS NOT NULL
         AND (dc.embedding <=> ${vectorLiteral}::vector) < ${threshold}
       ORDER BY distance ASC
@@ -93,7 +96,8 @@ export async function retrieveByEmbedding(
       JOIN "Document" d ON d.id = dc."documentId"
       WHERE dc."matterId" = ${matterId}
         AND d."retrievalStatus" = 'ready'
-        AND d."indexingStatus" = 'retrieval-ready'
+        AND d."publishedRunId" IS NOT NULL
+        AND dc."indexingRunId" = d."publishedRunId"
         AND dc.embedding IS NOT NULL
         AND (dc.embedding <=> ${vectorLiteral}::vector) < ${threshold}
       ORDER BY distance ASC
@@ -104,7 +108,7 @@ export async function retrieveByEmbedding(
   return rows.map((r) => ({ ...r, distance: Number(r.distance) }))
 }
 
-/** Returns count of indexed chunks on retrieval-ready documents for a matter. */
+/** Returns count of indexed chunks on published retrieval generations for a matter. */
 export async function indexedChunkCount(matterId: string): Promise<number> {
   const result = await prisma.$queryRaw<[{ count: bigint }]>`
     SELECT COUNT(*) AS count
@@ -112,7 +116,8 @@ export async function indexedChunkCount(matterId: string): Promise<number> {
     JOIN "Document" d ON d.id = dc."documentId"
     WHERE dc."matterId" = ${matterId}
       AND d."retrievalStatus" = 'ready'
-      AND d."indexingStatus" = 'retrieval-ready'
+      AND d."publishedRunId" IS NOT NULL
+      AND dc."indexingRunId" = d."publishedRunId"
       AND dc.embedding IS NOT NULL
   `
   return Number(result[0]?.count ?? 0)

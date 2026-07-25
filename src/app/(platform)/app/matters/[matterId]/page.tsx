@@ -115,6 +115,7 @@ export default async function MatterDetailPage({
     fileSize: number | null
     indexingStatus: string
     retrievalStatus: string
+    publishedRunId: string | null
     uploadStatus: string
     uploadedAt: Date
     updatedAt: Date
@@ -204,6 +205,7 @@ export default async function MatterDetailPage({
               fileSize: true,
               indexingStatus: true,
               retrievalStatus: true,
+              publishedRunId: true,
               uploadStatus: true,
               uploadedAt: true,
               updatedAt: true,

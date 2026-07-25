@@ -43,11 +43,43 @@ export function documentIndexingBusy(
 export function isDocumentRetrievalReady(doc: {
   indexingStatus: string
   retrievalStatus: string
+  publishedRunId?: string | null
 }): boolean {
-  return (
-    doc.retrievalStatus === "ready" &&
-    doc.indexingStatus === "retrieval-ready"
-  )
+  if (doc.retrievalStatus !== "ready") return false
+  // Mid-reindex: a prior publishedRunId stays searchable while the pipeline runs.
+  if (doc.publishedRunId) {
+    return (
+      doc.indexingStatus === "retrieval-ready" ||
+      ACTIVE_INDEXING.has(doc.indexingStatus)
+    )
+  }
+  return doc.indexingStatus === "retrieval-ready"
+}
+
+/**
+ * Prisma filter matching {@link isDocumentRetrievalReady} for aggregate counts.
+ * Prefer `publishedRunId` so reindex claims do not drop corpus readiness.
+ */
+export function documentRetrievalReadyWhere(): {
+  retrievalStatus: "ready"
+  OR: Array<
+    | { indexingStatus: "retrieval-ready" }
+    | {
+        publishedRunId: { not: null }
+        indexingStatus: { in: string[] }
+      }
+  >
+} {
+  return {
+    retrievalStatus: "ready",
+    OR: [
+      { indexingStatus: "retrieval-ready" },
+      {
+        publishedRunId: { not: null },
+        indexingStatus: { in: [...ACTIVE_INDEXING_STATUSES] },
+      },
+    ],
+  }
 }
 
 /**

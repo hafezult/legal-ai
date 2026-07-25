@@ -1,4 +1,5 @@
 // Document indexing pipeline: upload → parse → chunk → embed → index → retrieval-ready
+// Reindex keeps the prior published generation searchable until the new run publishes.
 
 import { randomUUID } from "node:crypto"
 
@@ -17,6 +18,7 @@ import {
   isIndexingInProgressError,
   isIndexingRunSupersededError,
 } from "@/lib/workflows/indexing-errors"
+import { shouldPreservePublishedIndex } from "@/lib/workflows/indexing-publish"
 
 export type PipelineStatus =
   | "pending"
@@ -61,6 +63,70 @@ async function assertRunActive(documentId: string, runId: string) {
   }
 }
 
+/** Drop only this run's staged chunks (never the published generation). */
+async function discardRunChunks(documentId: string, runId: string) {
+  await prisma.$executeRaw`
+    DELETE FROM "DocumentChunk" AS c
+    USING "Document" AS d
+    WHERE c."documentId" = d.id
+      AND d.id = ${documentId}
+      AND d."indexingRunId" = ${runId}
+      AND c."indexingRunId" = ${runId}
+  `
+}
+
+/**
+ * After a failed reindex that preserved a published generation, restore
+ * retrieval-ready status so search keeps serving publishedRunId chunks.
+ */
+async function restorePublishedReady(documentId: string, runId: string) {
+  await discardRunChunks(documentId, runId)
+  await prisma.document.updateMany({
+    where: {
+      id: documentId,
+      indexingRunId: runId,
+      publishedRunId: { not: null },
+    },
+    data: {
+      indexingStatus: "retrieval-ready",
+      retrievalStatus: "ready",
+    },
+  })
+}
+
+/**
+ * Atomically swap publishedRunId to this run and delete superseded chunks.
+ */
+async function publishRun(
+  documentId: string,
+  runId: string,
+  extra: Record<string, unknown> = {}
+) {
+  await prisma.$transaction(async (tx) => {
+    const published = await tx.document.updateMany({
+      where: { id: documentId, indexingRunId: runId },
+      data: {
+        indexingStatus: "retrieval-ready",
+        retrievalStatus: "ready",
+        publishedRunId: runId,
+        ...extra,
+      },
+    })
+    if (published.count !== 1) {
+      throw new IndexingRunSupersededError(documentId, runId)
+    }
+    await tx.$executeRaw`
+      DELETE FROM "DocumentChunk" AS c
+      USING "Document" AS d
+      WHERE c."documentId" = d.id
+        AND d.id = ${documentId}
+        AND d."indexingRunId" = ${runId}
+        AND d."publishedRunId" = ${runId}
+        AND (c."indexingRunId" IS DISTINCT FROM ${runId})
+    `
+  })
+}
+
 /**
  * Atomically claim a document for indexing so parallel upload/reindex/HTTP
  * triggers cannot interleave chunk deletes and embedding writes.
@@ -68,12 +134,29 @@ async function assertRunActive(documentId: string, runId: string) {
  * Each successful claim receives a unique indexingRunId lease; later status
  * and publish steps are conditional on that run id so a long embed cannot be
  * overwritten by a stale reclaim that started afterward.
+ *
+ * When a publishedRunId already serves retrieval, the claim keeps
+ * retrievalStatus=ready so the prior generation stays searchable.
  */
 async function claimDocumentForIndexing(
   documentId: string
-): Promise<string | null> {
+): Promise<{ runId: string; preservePublished: boolean } | null> {
   const staleBefore = new Date(Date.now() - STALE_INDEXING_MS)
   const runId = randomUUID()
+
+  const current = await prisma.document.findUnique({
+    where: { id: documentId },
+    select: {
+      publishedRunId: true,
+      retrievalStatus: true,
+      indexingStatus: true,
+      updatedAt: true,
+    },
+  })
+  if (!current) return null
+
+  const preservePublished = shouldPreservePublishedIndex(current)
+
   const claimed = await prisma.document.updateMany({
     where: {
       id: documentId,
@@ -85,11 +168,11 @@ async function claimDocumentForIndexing(
     data: {
       indexingStatus: "parsing",
       parseStatus: "parsing",
-      retrievalStatus: "pending",
       indexingRunId: runId,
+      ...(preservePublished ? {} : { retrievalStatus: "pending" }),
     },
   })
-  return claimed.count === 1 ? runId : null
+  return claimed.count === 1 ? { runId, preservePublished } : null
 }
 
 export async function runIndexingPipeline(documentId: string): Promise<void> {
@@ -108,9 +191,21 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     throw new Error(`Document ${documentId}: missing storage path or MIME type.`)
   }
 
-  const runId = await claimDocumentForIndexing(documentId)
-  if (!runId) {
+  const claim = await claimDocumentForIndexing(documentId)
+  if (!claim) {
     throw new IndexingInProgressError(documentId)
+  }
+  const { runId, preservePublished } = claim
+
+  const failOrRestore = async (
+    indexingStatus: PipelineStatus,
+    extra: Record<string, unknown> = {}
+  ) => {
+    if (preservePublished) {
+      await restorePublishedReady(documentId, runId)
+      return
+    }
+    await setStatus(documentId, runId, indexingStatus, extra)
   }
 
   // ── 1. Parse ────────────────────────────────────────────────────────────
@@ -126,7 +221,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   try {
     parsed = await extractText(doc.storagePath, doc.mimeType, doc.fileName)
   } catch (err) {
-    await setStatus(documentId, runId, "failed", { parseStatus: "failed" })
+    await failOrRestore("failed", { parseStatus: "failed" })
     throw err
   } finally {
     clearInterval(parseHeartbeat)
@@ -142,20 +237,23 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   // ── 2. Chunk ────────────────────────────────────────────────────────────
   const chunks = chunkDocument(parsed.text, parsed.headings, parsed.pageCount)
 
-  // Clear previous chunks only while this run still owns the lease. A plain
-  // deleteMany would wipe a reclaiming run's rows if the original lease went
-  // stale mid-pipeline.
+  // Remove unpublished leftovers from earlier failed runs. Never delete the
+  // published generation — that stays live until publishRun swaps it.
   await prisma.$executeRaw`
     DELETE FROM "DocumentChunk" AS c
     USING "Document" AS d
     WHERE c."documentId" = d.id
       AND d.id = ${documentId}
       AND d."indexingRunId" = ${runId}
+      AND (
+        d."publishedRunId" IS NULL
+        OR c."indexingRunId" IS DISTINCT FROM d."publishedRunId"
+      )
   `
   await assertRunActive(documentId, runId)
 
   if (chunks.length === 0) {
-    await setStatus(documentId, runId, "failed", {
+    await failOrRestore("failed", {
       parseStatus: "parsed",
       chunkCount: 0,
       retrievalStatus: "failed",
@@ -165,8 +263,8 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     )
   }
 
-  // Persist chunks without embeddings. Each batch re-checks the lease inside
-  // the same transaction as the inserts so a superseded run cannot leave
+  // Persist staged chunks tagged with this run. Each batch re-checks the lease
+  // inside the same transaction as the inserts so a superseded run cannot leave
   // orphan DocumentChunk rows after a stale reclaim.
   const created: { id: string }[] = []
   const CREATE_BATCH = 40
@@ -186,6 +284,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
             data: {
               documentId,
               matterId: doc.matterId,
+              indexingRunId: runId,
               content: c.content,
               chunkIndex: c.chunkIndex,
               tokenCount: c.tokenCount,
@@ -209,7 +308,11 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
 
   // ── 3. Embed ────────────────────────────────────────────────────────────
   if (!isEmbeddingConfigured()) {
-    // No API key — mark as indexed without semantic retrieval
+    // No API key — keep staged chunks for retry; restore prior publish if any.
+    if (preservePublished) {
+      await restorePublishedReady(documentId, runId)
+      return
+    }
     await setStatus(documentId, runId, "indexed", { retrievalStatus: "pending" })
     return
   }
@@ -233,10 +336,9 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     )
   } catch (err) {
     if (isIndexingRunSupersededError(err)) throw err
-    // Chunks remain for retry, but surface the failure to upload/reindex callers.
     const message =
       err instanceof Error ? err.message.slice(0, 240) : "Embedding provider failed"
-    await setStatus(documentId, runId, "indexed", { retrievalStatus: "failed" })
+    await failOrRestore("indexed", { retrievalStatus: "failed" })
     console.error(`[indexing] embedding failed for ${documentId}:`, message)
     throw new Error(`Embedding failed: ${message}`)
   }
@@ -244,7 +346,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   const expectedDimensions = DEFAULT_CONFIG.dimensions
   if (embeddings.length !== chunks.length) {
     const message = `Embedding provider returned ${embeddings.length} vectors for ${chunks.length} chunks`
-    await setStatus(documentId, runId, "indexed", { retrievalStatus: "failed" })
+    await failOrRestore("indexed", { retrievalStatus: "failed" })
     console.error(`[indexing] embedding shape failed for ${documentId}:`, message)
     throw new Error(`Embedding failed: ${message}`)
   }
@@ -252,7 +354,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     const emb = embeddings[i]
     if (!emb || emb.length !== expectedDimensions) {
       const message = `Embedding ${i} has ${emb?.length ?? 0} dimensions; expected ${expectedDimensions}`
-      await setStatus(documentId, runId, "indexed", { retrievalStatus: "failed" })
+      await failOrRestore("indexed", { retrievalStatus: "failed" })
       console.error(`[indexing] embedding shape failed for ${documentId}:`, message)
       throw new Error(`Embedding failed: ${message}`)
     }
@@ -261,7 +363,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   // Abort before publishing vectors if a newer claim took the lease.
   await assertRunActive(documentId, runId)
 
-  // ── 4. Store embeddings (pgvector, raw SQL) ─────────────────────────────
+  // ── 4. Store embeddings on this run's staged chunks only ────────────────
   for (let i = 0; i < created.length; i++) {
     const emb = embeddings[i]
     const vec = `[${emb.join(",")}]`
@@ -271,6 +373,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
       FROM "Document" AS d
       WHERE c.id = ${created[i].id}
         AND c."documentId" = d.id
+        AND c."indexingRunId" = ${runId}
         AND d."indexingRunId" = ${runId}
     `
     if (Number(updated) !== 1) {
@@ -285,8 +388,9 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     }
   }
 
+  // ── 5. Atomic publish: swap publishedRunId, drop superseded chunks ──────
   // Authorities are extracted at research time from retrieved chunk content.
-  await setStatus(documentId, runId, "retrieval-ready", {
-    retrievalStatus: "ready",
+  await publishRun(documentId, runId, {
+    chunkCount: chunks.length,
   })
 }
