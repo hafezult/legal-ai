@@ -59,7 +59,7 @@ Initialize the database:
 
 ```bash
 npm run db:generate
-npx prisma migrate deploy
+npm run db:deploy
 ```
 
 For local prototypes where migration history is not required, `npm run db:push` can also synchronize the schema.
@@ -76,7 +76,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 1. Provision PostgreSQL with the `vector` extension, a Supabase (or S3-compatible) bucket for `SUPABASE_DOCUMENT_BUCKET`, and Clerk application credentials with sign-in/sign-up URLs pointing at your deployment.
 2. Set all required environment variables from `.env.example`. Generate a long random `INDEXING_SECRET` (≥32 characters, ≥10 distinct). Prefer a separate `HEALTH_DETAIL_SECRET` for readiness detail unlocks.
-3. Run `npx prisma migrate deploy` against `DIRECT_URL`, then start with `npm run build && npm run start` (or your host’s Next.js build pipeline).
+3. Run `npm run db:deploy` against `DIRECT_URL`, then start with `npm run build && npm run start` (or your host’s Next.js build pipeline).
 4. Point load balancers at `GET /api/health` for liveness and `GET /api/ready` for dependency readiness (HTTP 503 when critical probes fail). Use `x-aether-health-secret` only for detailed probe JSON.
 5. Configure Clerk authorized origins / redirect URLs for your production host. Optionally set `RESEND_API_KEY` + verified `RESEND_FROM_EMAIL` for invite email delivery, and Upstash Redis for multi-instance rate limits.
 6. Smoke-test the loop: sign up → create matter → upload a PDF/DOCX/TXT → confirm retrieval-ready → run research/draft → invite a teammate.
