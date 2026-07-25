@@ -12,6 +12,7 @@ import {
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
 import { consumeRateLimit } from "@/lib/rate-limit"
+import { buildCitationSnapshot } from "@/lib/retrieval/citation-snapshot"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
@@ -252,6 +253,7 @@ export async function runResearch(
         query,
         response: answer,
         chunkIds: chunks.map((c) => c.id),
+        citationSnapshot: buildCitationSnapshot(chunks),
       },
     })
     sessionId = session.id
@@ -356,6 +358,7 @@ export async function restoreResearchSession(
         query: true,
         response: true,
         chunkIds: true,
+        citationSnapshot: true,
         matterId: true,
         matter: { select: { title: true } },
       },
@@ -365,7 +368,11 @@ export async function restoreResearchSession(
     const permission = await requireMatterPermission(user.id, session.matterId, "read")
     if (!permission.ok) return emptyResult(permission.error)
 
-    const chunks = await loadProvenanceChunks(session.matterId, session.chunkIds)
+    const chunks = await loadProvenanceChunks(
+      session.matterId,
+      session.chunkIds,
+      session.citationSnapshot
+    )
     const combinedText = chunks.map((chunk) => chunk.content).join("\n\n")
     const grouped = groupAuthorities(extractAuthorities(combinedText))
     const authorities: ResearchAuthorities = {

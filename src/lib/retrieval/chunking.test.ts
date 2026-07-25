@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { chunkDocument, estimateTokens } from "./chunking.ts"
+import {
+  MAX_CHUNKS_PER_DOCUMENT,
+  chunkDocument,
+  estimateTokens,
+  splitOversizedParagraph,
+} from "./chunking.ts"
 
 describe("estimateTokens", () => {
   it("approximates tokens from character length", () => {
@@ -75,5 +80,50 @@ describe("chunkDocument", () => {
       assert.ok((chunk.pageRef ?? 0) >= previous)
       previous = chunk.pageRef ?? previous
     }
+  })
+
+  it("hard-splits a single oversized paragraph without newlines", () => {
+    const text = `Operative clause. ${"indemnity ".repeat(900)}`.trim()
+    const chunks = chunkDocument(text, [], 1, { chunkSize: 80, overlap: 10 })
+
+    assert.ok(chunks.length >= 3)
+    const charBudget = 80 * 4
+    for (const chunk of chunks) {
+      assert.ok(
+        chunk.content.length <= charBudget * 1.25,
+        `chunk exceeded budget: ${chunk.content.length}`
+      )
+    }
+  })
+
+  it("caps the number of chunks for pathological extractions", () => {
+    const paragraphs = Array.from({ length: 80 }, (_, i) =>
+      `Clause ${i + 1}. ${"word ".repeat(100)}`.trim()
+    )
+    const text = paragraphs.join("\n\n")
+    const chunks = chunkDocument(text, [], 1, {
+      chunkSize: 40,
+      overlap: 5,
+      maxChunks: 12,
+    })
+
+    assert.equal(chunks.length, 12)
+    assert.equal(chunks[11]?.chunkIndex, 11)
+    assert.ok(MAX_CHUNKS_PER_DOCUMENT >= 12)
+  })
+})
+
+describe("splitOversizedParagraph", () => {
+  it("returns the paragraph unchanged when within budget", () => {
+    assert.deepEqual(splitOversizedParagraph("short clause text", 100), [
+      "short clause text",
+    ])
+  })
+
+  it("prefers sentence boundaries when splitting", () => {
+    const text = `${"A".repeat(40)}. ${"B".repeat(40)}. ${"C".repeat(40)}.`
+    const parts = splitOversizedParagraph(text, 50)
+    assert.ok(parts.length >= 2)
+    assert.ok(parts.every((part) => part.length <= 50))
   })
 })

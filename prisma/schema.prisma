@@ -164,6 +164,8 @@ model Document {
 
   chunks DocumentChunk[]
 
+  /// Enables composite FK from DocumentChunk(documentId, matterId).
+  @@unique([id, matterId])
   @@index([matterId])
   @@index([indexingRunId])
 }
@@ -171,7 +173,8 @@ model Document {
 model DocumentChunk {
   id          String                      @id @default(cuid())
   documentId  String
-  document    Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  /// Composite FK keeps chunk.matterId aligned with its parent document.
+  document    Document                    @relation(fields: [documentId, matterId], references: [id, matterId], onDelete: Cascade)
   matterId    String
   matter      Matter                      @relation(fields: [matterId], references: [id], onDelete: Cascade)
   content     String
@@ -196,6 +199,8 @@ model ResearchSession {
   query     String
   response  String?
   chunkIds  String[]
+  /// Immutable JSON citation excerpts so reindex/delete cannot erase provenance.
+  citationSnapshot String?
   createdAt DateTime @default(now())
 
   @@index([matterId])
@@ -214,6 +219,8 @@ model DraftDocument {
   instruction String
   content     String?
   chunkIds    String[]
+  /// Immutable JSON citation excerpts so reindex/delete cannot erase provenance.
+  citationSnapshot String?
   status      String   @default("ready")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -224,8 +231,13 @@ model DraftDocument {
 
 model AuditEvent {
   id             String        @id @default(cuid())
-  userId         String
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Nullable so deleting a user retains the legal audit trail.
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Snapshot of the actor at write time (survives user deletion).
+  actorClerkId   String?
+  actorEmail     String?
+  actorName      String?
   action         String
   entityType     String
   entityId       String?

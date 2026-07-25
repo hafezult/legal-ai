@@ -17,6 +17,9 @@ export type AuditEventInput = {
  *
  * When organizationId is omitted but matterId is present, the matter's
  * organization is resolved so org-scoped activity feeds stay accurate.
+ *
+ * Actor clerkId/email/name are snapshotted so the trail survives user deletion
+ * (AuditEvent.userId uses onDelete: SetNull).
  */
 export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
   try {
@@ -43,9 +46,17 @@ export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
       organizationId = org?.id ?? null
     }
 
+    const actor = await prisma.user.findUnique({
+      where: { id: input.userId },
+      select: { clerkId: true, email: true, name: true },
+    })
+
     await prisma.auditEvent.create({
       data: {
         userId: input.userId,
+        actorClerkId: actor?.clerkId ?? null,
+        actorEmail: actor?.email ? actor.email.slice(0, 320) : null,
+        actorName: actor?.name ? actor.name.slice(0, 200) : null,
         action: input.action,
         entityType: input.entityType,
         entityId: input.entityId ?? null,

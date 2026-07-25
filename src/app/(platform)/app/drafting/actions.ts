@@ -18,6 +18,7 @@ import {
 } from "@/lib/drafting/types"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
+import { buildCitationSnapshot } from "@/lib/retrieval/citation-snapshot"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
 
@@ -269,6 +270,7 @@ export async function generateDraft(
         instruction: instruction.trim(),
         content,
         chunkIds: chunks.map((chunk) => chunk.id),
+        citationSnapshot: buildCitationSnapshot(chunks),
         status: generationError ? "failed" : "ready",
       },
     })
@@ -356,6 +358,7 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
         instruction: true,
         content: true,
         chunkIds: true,
+        citationSnapshot: true,
         matterId: true,
         matter: { select: { title: true } },
       },
@@ -366,7 +369,11 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
     if (!permission.ok) return emptyResult(permission.error)
 
     const draftType: DraftType = isDraftType(draft.draftType) ? draft.draftType : "advice"
-    const chunks = await loadProvenanceChunks(draft.matterId, draft.chunkIds)
+    const chunks = await loadProvenanceChunks(
+      draft.matterId,
+      draft.chunkIds,
+      draft.citationSnapshot
+    )
     const indexedChunks = await indexedChunkCount(draft.matterId).catch(() => chunks.length)
 
     return {
