@@ -1,6 +1,10 @@
 import { currentUser } from "@clerk/nextjs/server"
 
 import {
+  selectVerifiedClerkEmail,
+  unverifiedClerkEmailPlaceholder,
+} from "@/lib/auth/clerk-email"
+import {
   acceptPendingOrganizationInvites,
   ensurePersonalOrganization,
 } from "@/lib/auth/rbac"
@@ -16,13 +20,17 @@ export async function ensureAppUser() {
     return null
   }
 
-  const primary =
-    clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)
-      ?.emailAddress ?? clerkUser.emailAddresses[0]?.emailAddress
-
-  // Normalize for unique matching against invites / member-add lookups.
-  // Clerk users without an email address get a stable per-user placeholder.
-  const email = primary?.trim().toLowerCase() || `unverified+${clerkUser.id}@users.invalid`
+  // Only verified Clerk emails are safe for invite auto-accept matching.
+  const verifiedEmail = selectVerifiedClerkEmail(
+    clerkUser.emailAddresses.map((entry) => ({
+      id: entry.id,
+      emailAddress: entry.emailAddress,
+      verificationStatus: entry.verification?.status ?? null,
+    })),
+    clerkUser.primaryEmailAddressId
+  )
+  const email =
+    verifiedEmail || unverifiedClerkEmailPlaceholder(clerkUser.id)
 
   const name =
     clerkUser.fullName ||
@@ -51,7 +59,7 @@ export async function ensureAppUser() {
       where: { clerkId: clerkUser.id },
       create: {
         clerkId: clerkUser.id,
-        email: `unverified+${clerkUser.id}@users.invalid`,
+        email: unverifiedClerkEmailPlaceholder(clerkUser.id),
         name,
       },
       update: {

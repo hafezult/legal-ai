@@ -495,9 +495,7 @@ export async function createConversation(
     })
     if (!user) return { error: "Session not found. Please sign in again." }
 
-    const permission = await requireMatterPermission(user.id, matterId, "write")
-    if (!permission.ok) return { error: permission.error }
-
+    // Throttle before matter permission lookups so arbitrary ids cannot fan out DB work.
     const throttle = await consumeRateLimit(
       `conversation-create:${user.id}`,
       CONVERSATION_RATE_LIMIT
@@ -507,6 +505,9 @@ export async function createConversation(
         error: "Conversation creation rate limit exceeded. Please wait and try again.",
       }
     }
+
+    const permission = await requireMatterPermission(user.id, matterId, "write")
+    if (!permission.ok) return { error: permission.error }
 
     const conversation = await prisma.conversation.create({
       data: {
@@ -631,6 +632,17 @@ export async function createConversationMessage(
     })
     if (!user) return { error: "Session not found. Please sign in again." }
 
+    // Throttle before conversation/matter lookups so probing cannot fan out DB work.
+    const throttle = await consumeRateLimit(
+      `conversation-message:${user.id}`,
+      MESSAGE_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return {
+        error: "Message rate limit exceeded. Please wait and try again.",
+      }
+    }
+
     const conversation = await prisma.conversation.findFirst({
       where: {
         id: conversationId,
@@ -646,16 +658,6 @@ export async function createConversationMessage(
       "write"
     )
     if (!permission.ok) return { error: permission.error }
-
-    const throttle = await consumeRateLimit(
-      `conversation-message:${user.id}`,
-      MESSAGE_RATE_LIMIT
-    )
-    if (!throttle.ok) {
-      return {
-        error: "Message rate limit exceeded. Please wait and try again.",
-      }
-    }
 
     matterId = conversation.matterId
     const message = await prisma.conversationMessage.create({

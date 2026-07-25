@@ -69,19 +69,37 @@ export async function createSignedUrl(path: string, expiresIn = 3600) {
   return client.storage.from(STORAGE_BUCKET).createSignedUrl(path, expiresIn)
 }
 
+function isBucketAlreadyExistsError(error: { message?: string } | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? ""
+  return (
+    message.includes("already exists") ||
+    message.includes("duplicate") ||
+    message.includes("resource already exists")
+  )
+}
+
 export async function ensureBucket() {
   const client = getSupabaseAdmin()
-  const { data: buckets } = await client.storage.listBuckets()
+  const { data: buckets, error: listError } = await client.storage.listBuckets()
+  if (listError) {
+    throw new Error(`Unable to list storage buckets: ${listError.message}`)
+  }
+
   const exists = buckets?.some((b) => b.name === STORAGE_BUCKET)
-  if (!exists) {
-    await client.storage.createBucket(STORAGE_BUCKET, {
-      public: false,
-      allowedMimeTypes: [
-        "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "text/plain",
-      ],
-      fileSizeLimit: 52428800,
-    })
+  if (exists) return
+
+  const { error: createError } = await client.storage.createBucket(STORAGE_BUCKET, {
+    public: false,
+    allowedMimeTypes: [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "text/plain",
+    ],
+    fileSizeLimit: 52428800,
+  })
+
+  // Concurrent first uploads can race createBucket; treat exists as success.
+  if (createError && !isBucketAlreadyExistsError(createError)) {
+    throw new Error(`Unable to create storage bucket: ${createError.message}`)
   }
 }

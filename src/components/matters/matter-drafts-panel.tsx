@@ -25,10 +25,12 @@ export function MatterDraftsPanel({
   matterId,
   drafts,
   totalCount,
+  canWrite = true,
 }: {
   matterId: string
   drafts: MatterDraftPreview[]
   totalCount: number
+  canWrite?: boolean
 }) {
   const hasDrafts = totalCount > 0
 
@@ -39,7 +41,7 @@ export function MatterDraftsPanel({
           Grounded drafting
         </p>
         <span className="rounded-full border border-white/[0.06] px-2.5 py-0.5 text-[10px] text-white/22">
-          {hasDrafts ? "Active" : "Available"}
+          {hasDrafts ? "Active" : canWrite ? "Available" : "Read only"}
         </span>
       </div>
       <p className="mt-4 font-serif text-[14px] text-white/42">
@@ -50,7 +52,9 @@ export function MatterDraftsPanel({
       <p className="mt-1.5 text-xs leading-relaxed text-white/25">
         {hasDrafts
           ? "Advice notes, skeletons, memos, and clause analyses generated from matter sources."
-          : "Open the drafting workspace to generate evidence-bound work product for this matter."}
+          : canWrite
+            ? "Open the drafting workspace to generate evidence-bound work product for this matter."
+            : "Your organization role is read-only for this matter. Draft history remains available when present."}
       </p>
 
       {hasDrafts ? (
@@ -79,7 +83,7 @@ export function MatterDraftsPanel({
         href={`/app/drafting?matter=${matterId}`}
         className="mt-4 inline-flex text-[11px] text-white/30 transition-colors hover:text-white/55"
       >
-        Open drafting workspace →
+        {canWrite ? "Open drafting workspace →" : "Review drafting history →"}
       </Link>
     </div>
   )

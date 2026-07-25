@@ -191,6 +191,7 @@ export function MatterConversationsPanel({
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="e.g. Disclosure obligations thread"
+            aria-label="Conversation thread title"
             maxLength={120}
             disabled={isPending}
             className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-sm text-white/80 placeholder:text-white/22 focus:border-white/[0.16] focus:outline-none disabled:opacity-50"
@@ -207,6 +208,8 @@ export function MatterConversationsPanel({
 
       {message ? (
         <p
+          role="status"
+          aria-live="polite"
           className={`mt-3 text-[11px] ${
             message.type === "error" ? "text-red-300/60" : "text-white/36"
           }`}
@@ -345,6 +348,7 @@ export function MatterConversationsPanel({
                           maxLength={8000}
                           disabled={isPending}
                           placeholder="Add a working note to this thread…"
+                          aria-label={`Add note to ${conversation.title}`}
                           className="w-full resize-y rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-sm text-white/80 placeholder:text-white/22 focus:border-white/[0.16] focus:outline-none disabled:opacity-50"
                         />
                         <div className="flex justify-end">

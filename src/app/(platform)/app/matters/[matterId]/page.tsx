@@ -532,6 +532,7 @@ export default async function MatterDetailPage({
         matterId={matter.id}
         drafts={matter.draftDocuments}
         totalCount={matter._count.draftDocuments}
+        canWrite={canWrite}
       />
 
       {/* ── Section D — Intelligence Readiness ───────────────────── */}

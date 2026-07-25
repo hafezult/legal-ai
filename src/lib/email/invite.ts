@@ -57,6 +57,9 @@ export async function sendOrganizationInviteEmail(
     </div>
   `.trim()
 
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+
   try {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -71,6 +74,7 @@ export async function sendOrganizationInviteEmail(
         text,
         html,
       }),
+      signal: controller.signal,
     })
 
     if (!response.ok) {
@@ -84,11 +88,22 @@ export async function sendOrganizationInviteEmail(
 
     return { sent: true, provider: "resend" }
   } catch (error) {
+    const aborted =
+      (error instanceof Error && error.name === "AbortError") ||
+      (typeof DOMException !== "undefined" &&
+        error instanceof DOMException &&
+        error.name === "AbortError")
     return {
       sent: false,
       reason: "request_failed",
-      detail: error instanceof Error ? error.message : "Unknown email error",
+      detail: aborted
+        ? "Resend request timed out"
+        : error instanceof Error
+          ? error.message
+          : "Unknown email error",
     }
+  } finally {
+    clearTimeout(timeout)
   }
 }
 

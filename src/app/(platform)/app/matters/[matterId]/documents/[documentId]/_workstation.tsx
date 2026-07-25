@@ -184,6 +184,8 @@ function DocViewer({
             src={signedUrl}
             className="h-full w-full border-0"
             title={doc.fileName}
+            sandbox="allow-same-origin allow-scripts"
+            referrerPolicy="no-referrer"
           />
         ) : (
           /* TXT / DOCX — render parsed text */

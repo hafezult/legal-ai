@@ -73,9 +73,16 @@ export default async function SettingsPage() {
 
   const readiness: ReadinessItem[] = [
     {
-      label: "Postgres",
-      configured: Boolean(process.env.DATABASE_URL && process.env.DIRECT_URL),
-      description: "Prisma runtime and migration connections.",
+      label: "Postgres (runtime)",
+      configured: Boolean(process.env.DATABASE_URL),
+      description:
+        "Prisma runtime connection used by the app and /api/ready. Matches the readiness probe DATABASE_URL check.",
+    },
+    {
+      label: "Postgres (migrations)",
+      configured: Boolean(process.env.DIRECT_URL),
+      description:
+        "Direct PostgreSQL URL for prisma migrate deploy. Required for schema changes; not probed by /api/ready.",
     },
     {
       label: "Clerk",
@@ -112,7 +119,7 @@ export default async function SettingsPage() {
       label: "App URL",
       configured: isAppUrlConfigured(),
       description:
-        "Absolute origin for invite acceptance links and email copy. Outside development, localhost / loopback hosts do not count as configured.",
+        "Absolute origin for invite acceptance links and email copy. Outside development, localhost / loopback / private network hosts do not count as configured.",
     },
     {
       label: "Invite email (Resend)",
