@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - cursor/overall-project-finalization-4db2
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: postgresql://user:password@localhost:5432/aether?schema=public
+      DIRECT_URL: postgresql://user:password@localhost:5432/aether?schema=public
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2xlcmsuZXhhbXBsZS5jb20k
+      CLERK_SECRET_KEY: sk_test_dummy
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: dummy-service-role
+      SUPABASE_DOCUMENT_BUCKET: legal-documents
+      OPENAI_API_KEY: ""
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      # Intentionally denylisted prefix — CI must not use a production-strong secret.
+      INDEXING_SECRET: aether-ci-validate-4db2-r7k3n9p2w5x8z!
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Audit high-severity dependencies
+        run: npm audit --audit-level=high
+
+      - name: Build
+        run: npm run build

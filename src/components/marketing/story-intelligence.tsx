@@ -36,15 +36,15 @@ export function IntelligenceNarrative() {
                 {[
                   {
                     label: "AI Research",
-                    title: "Cross-jurisdictional authority analysis",
+                    title: "English and Welsh authority analysis",
                   },
                   {
                     label: "Drafting Intelligence",
-                    title: "Automated contract and litigation workflows",
+                    title: "Grounded contract and litigation drafts",
                   },
                   {
-                    label: "Enterprise Orchestration",
-                    title: "AI-native legal operating infrastructure",
+                    label: "Document Intelligence",
+                    title: "Matter-scoped retrieval and inspection",
                   },
                 ].map((row) => (
                   <div
