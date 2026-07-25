@@ -32,7 +32,12 @@ export type { OrgPermission, OrgRole }
 
 export { matterAccessWhere, matterAccessWhereForActiveOrg }
 
-export { canWriteListedMatter } from "@/lib/auth/matter-write"
+export {
+  canDeleteListedMatter,
+  canWriteListedMatter,
+} from "@/lib/auth/matter-write"
+
+export { canDeleteWorkProduct } from "@/lib/auth/work-product-delete"
 
 export { inviteExpiryDate }
 
@@ -566,18 +571,20 @@ export async function rejectOrganizationInviteByToken(
   if (!invite) {
     return { ok: false, error: "Invite not found or link is invalid." }
   }
-  if (invite.acceptedAt) {
-    return { ok: false, error: "This invite was already accepted." }
-  }
-  if (invite.expiresAt.getTime() <= Date.now()) {
-    return { ok: false, error: "This invite has expired." }
-  }
+  // Email match before accepted/expired details so a leaked token cannot probe
+  // invite lifecycle state for the wrong signed-in account.
   if (!user.email || invite.email.toLowerCase() !== user.email.toLowerCase()) {
     return {
       ok: false,
       error:
         "Sign in with the email address that received this invite to decline it.",
     }
+  }
+  if (invite.acceptedAt) {
+    return { ok: false, error: "This invite was already accepted." }
+  }
+  if (invite.expiresAt.getTime() <= Date.now()) {
+    return { ok: false, error: "This invite has expired." }
   }
 
   // Conditional delete — only pending, unexpired invites for this id.
@@ -632,12 +639,8 @@ export async function acceptOrganizationInviteByToken(
   if (!invite) {
     return { ok: false, error: "Invite not found or link is invalid." }
   }
-  if (invite.acceptedAt) {
-    return { ok: false, error: "This invite was already accepted." }
-  }
-  if (invite.expiresAt.getTime() <= Date.now()) {
-    return { ok: false, error: "This invite has expired." }
-  }
+  // Email match before accepted/expired details so a leaked token cannot probe
+  // invite lifecycle state for the wrong signed-in account.
   if (!user.email || invite.email.toLowerCase() !== user.email.toLowerCase()) {
     // Do not reveal the invitee email to the wrong signed-in account.
     return {
@@ -645,6 +648,12 @@ export async function acceptOrganizationInviteByToken(
       error:
         "Sign in with the email address that received this invite to accept it.",
     }
+  }
+  if (invite.acceptedAt) {
+    return { ok: false, error: "This invite was already accepted." }
+  }
+  if (invite.expiresAt.getTime() <= Date.now()) {
+    return { ok: false, error: "This invite has expired." }
   }
 
   const role: OrgRole =

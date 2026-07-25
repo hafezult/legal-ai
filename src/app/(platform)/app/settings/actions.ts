@@ -1,9 +1,10 @@
 "use server"
 
-import { auth } from "@clerk/nextjs/server"
+import { auth, currentUser } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
+import { selectVerifiedClerkEmail } from "@/lib/auth/clerk-email"
 import {
   generateInviteToken,
   hashInviteToken,
@@ -75,6 +76,31 @@ async function requireActor() {
   })
   if (!user) return { error: "Session not found. Please sign in again." as const }
   return { user }
+}
+
+/** Prefer the currently verified Clerk email for invite authorization. */
+async function resolveInviteActorEmail(
+  fallbackEmail: string | null | undefined
+): Promise<string | null> {
+  try {
+    const clerkUser = await currentUser()
+    if (clerkUser) {
+      const verified = selectVerifiedClerkEmail(
+        clerkUser.emailAddresses.map((entry) => ({
+          id: entry.id,
+          emailAddress: entry.emailAddress,
+          verificationStatus: entry.verification?.status ?? null,
+        })),
+        clerkUser.primaryEmailAddressId
+      )
+      if (verified) return verified
+    }
+  } catch {
+    /* fall through to persisted email */
+  }
+  const fallback = fallbackEmail?.trim().toLowerCase()
+  if (!fallback || fallback.endsWith("@users.invalid")) return null
+  return fallback
 }
 
 async function requireOrgAdmin(userId: string, organizationId: string) {
@@ -217,7 +243,17 @@ export async function acceptInviteByToken(
   }
 
   try {
-    const result = await acceptOrganizationInviteByToken(actor.user, trimmed)
+    const inviteEmail = await resolveInviteActorEmail(actor.user.email)
+    if (!inviteEmail) {
+      return {
+        error:
+          "Verify the email address on your account before accepting an invite.",
+      }
+    }
+    const result = await acceptOrganizationInviteByToken(
+      { id: actor.user.id, email: inviteEmail },
+      trimmed
+    )
     if (!result.ok) return { error: result.error }
 
     await recordAuditEvent({
@@ -260,7 +296,17 @@ export async function rejectInviteByToken(
   }
 
   try {
-    const result = await rejectOrganizationInviteByToken(actor.user, trimmed)
+    const inviteEmail = await resolveInviteActorEmail(actor.user.email)
+    if (!inviteEmail) {
+      return {
+        error:
+          "Verify the email address on your account before declining an invite.",
+      }
+    }
+    const result = await rejectOrganizationInviteByToken(
+      { id: actor.user.id, email: inviteEmail },
+      trimmed
+    )
     if (!result.ok) return { error: result.error }
 
     await recordAuditEvent({
@@ -666,9 +712,17 @@ export async function refreshOrganizationInviteLink(
         acceptedAt: null,
         expiresAt: { gt: new Date() },
       },
-      select: { id: true, email: true },
+      select: { id: true, email: true, role: true },
     })
     if (!invite) return { error: "Invite not found or already accepted." }
+    if (
+      !isOrgRole(invite.role) ||
+      !roleStrictlyAbove(admin.role, invite.role)
+    ) {
+      return {
+        error: "You can only manage invites for roles below your own.",
+      }
+    }
 
     const token = generateInviteToken()
     await prisma.organizationInvite.update({
@@ -723,11 +777,19 @@ export async function revokeOrganizationInvite(
 
     const invite = await prisma.organizationInvite.findFirst({
       where: { id: inviteId, organizationId },
-      select: { id: true, email: true, acceptedAt: true },
+      select: { id: true, email: true, role: true, acceptedAt: true },
     })
     if (!invite) return { error: "Invite not found." }
     if (invite.acceptedAt) {
       return { error: "That invite was already accepted." }
+    }
+    if (
+      !isOrgRole(invite.role) ||
+      !roleStrictlyAbove(admin.role, invite.role)
+    ) {
+      return {
+        error: "You can only manage invites for roles below your own.",
+      }
     }
 
     await prisma.organizationInvite.delete({ where: { id: invite.id } })

@@ -7,6 +7,7 @@ import {
   listUserOrganizations,
   roleAtLeast,
   roleHasPermission,
+  roleStrictlyAbove,
 } from "@/lib/auth/rbac"
 import { isAppUrlConfigured } from "@/lib/app-url"
 import { getHealthReport, type HealthReport } from "@/lib/health"
@@ -273,12 +274,18 @@ export default async function SettingsPage() {
               isSelf,
             }
           }),
-          invites: inviteRows.map((invite) => ({
-            id: invite.id,
-            email: invite.email,
-            role: invite.role,
-            expiresAt: invite.expiresAt.toISOString(),
-          })),
+          invites: inviteRows
+            .filter(
+              (invite) =>
+                isOrgRole(invite.role) &&
+                roleStrictlyAbove(activeRole, invite.role)
+            )
+            .map((invite) => ({
+              id: invite.id,
+              email: invite.email,
+              role: invite.role,
+              expiresAt: invite.expiresAt.toISOString(),
+            })),
         }
       }
     }

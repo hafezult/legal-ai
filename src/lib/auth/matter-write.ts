@@ -13,3 +13,18 @@ export function canWriteListedMatter(
   }
   return activeOrgCanWrite
 }
+
+/**
+ * Whether the actor can delete others' work product / the matter itself on a
+ * listed matter. Personal-matter creators get owner-equivalent delete.
+ */
+export function canDeleteListedMatter(
+  matter: { userId: string | null; organizationId: string | null },
+  actorUserId: string,
+  activeOrgCanDelete: boolean
+): boolean {
+  if (matter.organizationId === null) {
+    return Boolean(matter.userId && matter.userId === actorUserId)
+  }
+  return activeOrgCanDelete
+}

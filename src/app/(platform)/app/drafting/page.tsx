@@ -1,6 +1,8 @@
 import { auth } from "@clerk/nextjs/server"
 
 import {
+  canDeleteListedMatter,
+  canDeleteWorkProduct,
   canWriteListedMatter,
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
@@ -31,6 +33,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
     id: string
     title: string
     canWrite: boolean
+    canDelete: boolean
     _count: { documents: number }
   }[] = []
   let recentDrafts: {
@@ -43,6 +46,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
     createdAt: Date
     matterId: string
     matterTitle: string
+    canDelete: boolean
   }[] = []
   let canWrite = false
   let initialResults: DraftOutput | null = null
@@ -53,6 +57,9 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
       const activeOrg = await getActiveOrganization(user.id)
       const orgCanWrite = activeOrg
         ? roleHasPermission(activeOrg.role, "write")
+        : true
+      const orgCanDelete = activeOrg
+        ? roleHasPermission(activeOrg.role, "delete")
         : true
       canWrite = orgCanWrite
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
@@ -87,7 +94,14 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
               chunkIds: true,
               createdAt: true,
               matterId: true,
-              matter: { select: { title: true } },
+              createdByUserId: true,
+              matter: {
+                select: {
+                  title: true,
+                  userId: true,
+                  organizationId: true,
+                },
+              },
             },
           }),
           initialDraftId
@@ -105,7 +119,14 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
                   chunkIds: true,
                   createdAt: true,
                   matterId: true,
-                  matter: { select: { title: true } },
+                  createdByUserId: true,
+                  matter: {
+                    select: {
+                      title: true,
+                      userId: true,
+                      organizationId: true,
+                    },
+                  },
                 },
               })
             : Promise.resolve(null),
@@ -127,6 +148,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
         id: matter.id,
         title: matter.title,
         canWrite: canWriteListedMatter(matter, user.id, orgCanWrite),
+        canDelete: canDeleteListedMatter(matter, user.id, orgCanDelete),
         _count: matter._count,
       }))
       if (
@@ -137,6 +159,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
           id: focusedMatter.id,
           title: focusedMatter.title,
           canWrite: canWriteListedMatter(focusedMatter, user.id, orgCanWrite),
+          canDelete: canDeleteListedMatter(focusedMatter, user.id, orgCanDelete),
           _count: focusedMatter._count,
         })
       }
@@ -144,29 +167,39 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
       canWrite =
         orgCanWrite || mappedMatters.some((matter) => matter.canWrite)
 
-      const mapped = draftRows.map((draft) => ({
-        id: draft.id,
-        title: draft.title,
-        draftType: draft.draftType,
-        instruction: draft.instruction,
-        content: draft.content,
-        chunkIds: draft.chunkIds,
-        createdAt: draft.createdAt,
-        matterId: draft.matterId,
-        matterTitle: draft.matter.title,
-      }))
+      const mapDraft = (draft: (typeof draftRows)[number]) => {
+        const matterCanWrite = canWriteListedMatter(
+          draft.matter,
+          user.id,
+          orgCanWrite
+        )
+        const matterCanDelete = canDeleteListedMatter(
+          draft.matter,
+          user.id,
+          orgCanDelete
+        )
+        return {
+          id: draft.id,
+          title: draft.title,
+          draftType: draft.draftType,
+          instruction: draft.instruction,
+          content: draft.content,
+          chunkIds: draft.chunkIds,
+          createdAt: draft.createdAt,
+          matterId: draft.matterId,
+          matterTitle: draft.matter.title,
+          canDelete: canDeleteWorkProduct({
+            actorUserId: user.id,
+            createdByUserId: draft.createdByUserId,
+            matterCanWrite,
+            matterCanDelete,
+          }),
+        }
+      }
+
+      const mapped = draftRows.map(mapDraft)
       if (focusedDraft && !mapped.some((draft) => draft.id === focusedDraft.id)) {
-        mapped.unshift({
-          id: focusedDraft.id,
-          title: focusedDraft.title,
-          draftType: focusedDraft.draftType,
-          instruction: focusedDraft.instruction,
-          content: focusedDraft.content,
-          chunkIds: focusedDraft.chunkIds,
-          createdAt: focusedDraft.createdAt,
-          matterId: focusedDraft.matterId,
-          matterTitle: focusedDraft.matter.title,
-        })
+        mapped.unshift(mapDraft(focusedDraft))
       }
       recentDrafts = mapped
 

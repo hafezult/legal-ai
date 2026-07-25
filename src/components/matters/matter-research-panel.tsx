@@ -12,6 +12,7 @@ export type MatterResearchSession = {
   response: string | null
   chunkIds: string[]
   createdAt: Date | string
+  canDelete?: boolean
 }
 
 function fmtShortDate(value: Date | string) {
@@ -70,8 +71,8 @@ export function MatterResearchPanel({
   )
 
   const handleDelete = useCallback(
-    (sessionId: string) => {
-      if (!canWrite || isDeleting) return
+    (sessionId: string, allowed: boolean) => {
+      if (!allowed || isDeleting) return
       const confirmed = window.confirm(
         "Delete this research session? The saved query and grounded response will be removed."
       )
@@ -88,7 +89,7 @@ export function MatterResearchPanel({
         router.refresh()
       })
     },
-    [canWrite, isDeleting, router]
+    [isDeleting, router]
   )
 
   const hasSessions = totalCount > 0
@@ -157,10 +158,10 @@ export function MatterResearchPanel({
                   >
                     Export
                   </button>
-                  {canWrite ? (
+                  {session.canDelete ? (
                     <button
                       type="button"
-                      onClick={() => handleDelete(session.id)}
+                      onClick={() => handleDelete(session.id, Boolean(session.canDelete))}
                       disabled={isDeleting && deletingId === session.id}
                       className="rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-red-400/30 hover:text-red-300/70 disabled:pointer-events-none disabled:opacity-40"
                     >

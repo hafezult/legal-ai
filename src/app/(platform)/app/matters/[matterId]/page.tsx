@@ -12,7 +12,12 @@ import { MatterEditControls } from "@/components/matters/matter-edit-controls"
 import { MatterResearchPanel } from "@/components/matters/matter-research-panel"
 import { MatterStatusControls } from "@/components/matters/matter-status-controls"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
-import { getMatterAccess, matterAccessWhere, roleHasPermission } from "@/lib/auth/rbac"
+import {
+  canDeleteWorkProduct,
+  getMatterAccess,
+  matterAccessWhere,
+  roleHasPermission,
+} from "@/lib/auth/rbac"
 import {
   documentNeedsRetry,
   isDocumentCorpusIndexed,
@@ -130,6 +135,7 @@ export default async function MatterDetailPage({
     response: string | null
     chunkIds: string[]
     createdAt: Date
+    canDelete: boolean
   }
 
   type DraftRow = {
@@ -152,6 +158,7 @@ export default async function MatterDetailPage({
     createdAt: Date
     messages: ConversationMessageRow[]
     _count: { messages: number }
+    canDelete: boolean
   }
 
   type MatterData = {
@@ -223,6 +230,7 @@ export default async function MatterDetailPage({
               response: true,
               chunkIds: true,
               createdAt: true,
+              createdByUserId: true,
             },
           },
           draftDocuments: {
@@ -242,6 +250,7 @@ export default async function MatterDetailPage({
               id: true,
               title: true,
               createdAt: true,
+              createdByUserId: true,
               messages: {
                 orderBy: { createdAt: "asc" },
                 take: 40,
@@ -269,6 +278,35 @@ export default async function MatterDetailPage({
         const access = await getMatterAccess(user.id, matter.id)
         canWrite = Boolean(access?.role && roleHasPermission(access.role, "write"))
         canDelete = Boolean(access?.role && roleHasPermission(access.role, "delete"))
+        matter = {
+          ...matter,
+          researchSessions: matter.researchSessions.map((session) => ({
+            id: session.id,
+            query: session.query,
+            response: session.response,
+            chunkIds: session.chunkIds,
+            createdAt: session.createdAt,
+            canDelete: canDeleteWorkProduct({
+              actorUserId: user.id,
+              createdByUserId: session.createdByUserId,
+              matterCanWrite: canWrite,
+              matterCanDelete: canDelete,
+            }),
+          })),
+          conversations: matter.conversations.map((conversation) => ({
+            id: conversation.id,
+            title: conversation.title,
+            createdAt: conversation.createdAt,
+            messages: conversation.messages,
+            _count: conversation._count,
+            canDelete: canDeleteWorkProduct({
+              actorUserId: user.id,
+              createdByUserId: conversation.createdByUserId,
+              matterCanWrite: canWrite,
+              matterCanDelete: canDelete,
+            }),
+          })),
+        }
       }
     }
   } catch {

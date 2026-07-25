@@ -16,6 +16,7 @@ type ConversationRow = {
   createdAt: Date | string
   messages: ConversationMessageRow[]
   _count: { messages: number }
+  canDelete?: boolean
 }
 
 type ConversationCreateAction = (title: string) => Promise<{
@@ -257,7 +258,7 @@ export function MatterConversationsPanel({
                       {conversation._count.messages === 1 ? "" : "s"}
                     </p>
                   </button>
-                  {!readOnly ? (
+                  {conversation.canDelete ? (
                     confirmingDeleteId === conversation.id ? (
                       <div className="flex shrink-0 items-center gap-1.5">
                         <button

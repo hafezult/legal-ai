@@ -35,6 +35,7 @@ type Matter = {
   id: string
   title: string
   canWrite?: boolean
+  canDelete?: boolean
   _count: { documents: number }
 }
 
@@ -48,6 +49,7 @@ type RecentDraft = {
   createdAt: Date | string
   matterId: string
   matterTitle: string
+  canDelete?: boolean
 }
 
 function fmtShortDate(value: Date | string) {
@@ -474,8 +476,7 @@ export function DraftingClient({
                         >
                           {isRestoring ? "…" : "Export"}
                         </button>
-                        {matters.find((matter) => matter.id === draft.matterId)
-                          ?.canWrite ?? canWrite ? (
+                        {draft.canDelete ? (
                           <button
                             type="button"
                             onClick={() => handleDeleteDraft(draft.id, draft.matterId)}

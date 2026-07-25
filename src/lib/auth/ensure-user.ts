@@ -83,9 +83,14 @@ export async function ensureAppUser(options: EnsureAppUserOptions = {}) {
     /* Organization provisioning is best-effort; retries on next navigation */
   }
 
-  if (shouldAcceptPendingInvites(options)) {
+  // Invite matching must use the currently verified Clerk email, never a
+  // collision-fallback / placeholder persisted on the User row.
+  if (shouldAcceptPendingInvites(options) && verifiedEmail) {
     try {
-      await acceptPendingOrganizationInvites(user)
+      await acceptPendingOrganizationInvites({
+        id: user.id,
+        email: verifiedEmail,
+      })
     } catch {
       /* Invite acceptance is best-effort; retries on next navigation */
     }

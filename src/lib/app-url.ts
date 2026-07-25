@@ -17,6 +17,49 @@ function parseIpv4Octets(host: string): number[] | null {
   return octets
 }
 
+function expandIpv6(host: string): number[] | null {
+  const raw = host.toLowerCase()
+  if (!raw.includes(":")) return null
+
+  // IPv4-mapped dotted form handled by callers before expansion.
+  const sides = raw.split("::")
+  if (sides.length > 2) return null
+
+  const parseSide = (side: string): number[] | null => {
+    if (!side) return []
+    const parts = side.split(":")
+    const out: number[] = []
+    for (const part of parts) {
+      if (!/^[0-9a-f]{1,4}$/i.test(part)) return null
+      out.push(parseInt(part, 16))
+    }
+    return out
+  }
+
+  if (sides.length === 1) {
+    const parts = parseSide(sides[0])
+    if (!parts || parts.length !== 8) return null
+    return parts
+  }
+
+  const left = parseSide(sides[0])
+  const right = parseSide(sides[1])
+  if (!left || !right) return null
+  const missing = 8 - left.length - right.length
+  if (missing < 0) return null
+  return [...left, ...Array.from({ length: missing }, () => 0), ...right]
+}
+
+function ipv4FromMappedHex(hextets: number[]): string | null {
+  // ::ffff:x.x.x.x stored as 0:0:0:0:0:ffff:HHHH:LLLL
+  if (hextets.length !== 8) return null
+  const prefixZero = hextets.slice(0, 5).every((part) => part === 0)
+  if (!prefixZero || hextets[5] !== 0xffff) return null
+  const hi = hextets[6]
+  const lo = hextets[7]
+  return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`
+}
+
 /** True for loopback, RFC1918, link-local, and common metadata ranges. */
 export function isNonPublicAppHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "")
@@ -32,24 +75,47 @@ export function isNonPublicAppHostname(hostname: string): boolean {
   }
 
   if (host.includes(":")) {
-    if (host === "::1" || host === "0:0:0:0:0:0:0:1") {
+    // IPv4-mapped IPv6 (::ffff:x.x.x.x dotted)
+    const mappedDotted = host.match(
+      /^(?:0:)*:?ffff:((?:\d{1,3}\.){3}\d{1,3})$/i
+    )
+    if (mappedDotted) {
+      return isNonPublicAppHostname(mappedDotted[1])
+    }
+
+    const hextets = expandIpv6(host)
+    if (!hextets) {
+      // Unparseable IPv6 literals are unsafe as a public app origin.
       return true
     }
 
-    // Unique-local (fc00::/7) / link-local (fe80::/10) IPv6
+    // Unspecified :: and loopback ::1
+    if (hextets.every((part) => part === 0)) return true
     if (
-      host.startsWith("fc") ||
-      host.startsWith("fd") ||
-      host.startsWith("fe80:")
+      hextets[0] === 0 &&
+      hextets[1] === 0 &&
+      hextets[2] === 0 &&
+      hextets[3] === 0 &&
+      hextets[4] === 0 &&
+      hextets[5] === 0 &&
+      hextets[6] === 0 &&
+      hextets[7] === 1
     ) {
       return true
     }
 
-    // IPv4-mapped IPv6 (::ffff:x.x.x.x)
-    const mapped = host.match(/^(?:0:)*:?ffff:((?:\d{1,3}\.){3}\d{1,3})$/i)
-    if (mapped) {
-      return isNonPublicAppHostname(mapped[1])
-    }
+    const mapped = ipv4FromMappedHex(hextets)
+    if (mapped) return isNonPublicAppHostname(mapped)
+
+    const first = hextets[0]
+    // Unique-local fc00::/7
+    if ((first & 0xfe00) === 0xfc00) return true
+    // Link-local fe80::/10
+    if ((first & 0xffc0) === 0xfe80) return true
+    // Deprecated site-local fec0::/10
+    if ((first & 0xffc0) === 0xfec0) return true
+    // Multicast ff00::/8
+    if ((first & 0xff00) === 0xff00) return true
 
     return false
   }

@@ -86,12 +86,20 @@ export function chunkDocument(
   const overlapChars = overlapTokens * AVG_CHARS_PER_TOKEN
 
   // Split on double newlines (paragraph/clause boundaries), then hard-split
-  // any single paragraph that still exceeds the chunk budget.
-  const paragraphs = text
-    .split(/\n\n+/)
-    .map((p) => p.trim())
-    .filter((p) => p.length > 15)
-    .flatMap((p) => splitOversizedParagraph(p, charBudget))
+  // any single paragraph that still exceeds the chunk budget. Stop once we
+  // have enough segments to fill maxChunks so pathological extracts cannot
+  // allocate tens of thousands of intermediate strings.
+  const maxSegments = Math.max(maxChunks * 2, maxChunks + 8)
+  const paragraphs: string[] = []
+  for (const raw of text.split(/\n\n+/)) {
+    const paragraph = raw.trim()
+    if (paragraph.length <= 15) continue
+    for (const segment of splitOversizedParagraph(paragraph, charBudget)) {
+      paragraphs.push(segment)
+      if (paragraphs.length >= maxSegments) break
+    }
+    if (paragraphs.length >= maxSegments) break
+  }
 
   const chunks: Chunk[] = []
   let buffer = ""

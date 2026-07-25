@@ -1,6 +1,8 @@
 import { auth } from "@clerk/nextjs/server"
 
 import {
+  canDeleteListedMatter,
+  canDeleteWorkProduct,
   canWriteListedMatter,
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
@@ -31,6 +33,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
     id: string
     title: string
     canWrite: boolean
+    canDelete: boolean
     _count: { documents: number }
   }[] = []
   let recentSessions: {
@@ -41,6 +44,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
     createdAt: Date
     matterId: string
     matterTitle: string
+    canDelete: boolean
   }[] = []
   let canWrite = false
   let initialResults: ResearchOutput | null = null
@@ -51,6 +55,9 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
       const activeOrg = await getActiveOrganization(user.id)
       const orgCanWrite = activeOrg
         ? roleHasPermission(activeOrg.role, "write")
+        : true
+      const orgCanDelete = activeOrg
+        ? roleHasPermission(activeOrg.role, "delete")
         : true
       canWrite = orgCanWrite
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
@@ -83,7 +90,14 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
               chunkIds: true,
               createdAt: true,
               matterId: true,
-              matter: { select: { title: true } },
+              createdByUserId: true,
+              matter: {
+                select: {
+                  title: true,
+                  userId: true,
+                  organizationId: true,
+                },
+              },
             },
           }),
           initialSessionId
@@ -99,7 +113,14 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
                   chunkIds: true,
                   createdAt: true,
                   matterId: true,
-                  matter: { select: { title: true } },
+                  createdByUserId: true,
+                  matter: {
+                    select: {
+                      title: true,
+                      userId: true,
+                      organizationId: true,
+                    },
+                  },
                 },
               })
             : Promise.resolve(null),
@@ -122,6 +143,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
         id: matter.id,
         title: matter.title,
         canWrite: canWriteListedMatter(matter, user.id, orgCanWrite),
+        canDelete: canDeleteListedMatter(matter, user.id, orgCanDelete),
         _count: matter._count,
       }))
       if (
@@ -132,6 +154,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
           id: focusedMatter.id,
           title: focusedMatter.title,
           canWrite: canWriteListedMatter(focusedMatter, user.id, orgCanWrite),
+          canDelete: canDeleteListedMatter(focusedMatter, user.id, orgCanDelete),
           _count: focusedMatter._count,
         })
       }
@@ -139,25 +162,37 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
       canWrite =
         orgCanWrite || mappedMatters.some((matter) => matter.canWrite)
 
-      const mapped = sessionRows.map((session) => ({
-        id: session.id,
-        query: session.query,
-        response: session.response,
-        chunkIds: session.chunkIds,
-        createdAt: session.createdAt,
-        matterId: session.matterId,
-        matterTitle: session.matter.title,
-      }))
+      const mapSession = (session: (typeof sessionRows)[number]) => {
+        const matterCanWrite = canWriteListedMatter(
+          session.matter,
+          user.id,
+          orgCanWrite
+        )
+        const matterCanDelete = canDeleteListedMatter(
+          session.matter,
+          user.id,
+          orgCanDelete
+        )
+        return {
+          id: session.id,
+          query: session.query,
+          response: session.response,
+          chunkIds: session.chunkIds,
+          createdAt: session.createdAt,
+          matterId: session.matterId,
+          matterTitle: session.matter.title,
+          canDelete: canDeleteWorkProduct({
+            actorUserId: user.id,
+            createdByUserId: session.createdByUserId,
+            matterCanWrite,
+            matterCanDelete,
+          }),
+        }
+      }
+
+      const mapped = sessionRows.map(mapSession)
       if (focusedSession && !mapped.some((session) => session.id === focusedSession.id)) {
-        mapped.unshift({
-          id: focusedSession.id,
-          query: focusedSession.query,
-          response: focusedSession.response,
-          chunkIds: focusedSession.chunkIds,
-          createdAt: focusedSession.createdAt,
-          matterId: focusedSession.matterId,
-          matterTitle: focusedSession.matter.title,
-        })
+        mapped.unshift(mapSession(focusedSession))
       }
       recentSessions = mapped
 

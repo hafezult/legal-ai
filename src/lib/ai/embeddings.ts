@@ -49,13 +49,28 @@ export async function generateEmbedding(
 export async function generateBatchEmbeddings(
   texts: string[],
   config: Partial<EmbeddingConfig> = {},
-  options: { onBatchComplete?: () => void | Promise<void> } = {}
+  options: {
+    onBatchComplete?: () => void | Promise<void>
+    /** Wall-clock deadline so multi-batch embeds fail before serverless maxDuration. */
+    deadlineMs?: number
+  } = {}
 ): Promise<number[][]> {
   const cfg = { ...DEFAULT_CONFIG, ...config }
   const BATCH = 100 // OpenAI max batch size
   const results: number[][] = []
+  const startedAt = Date.now()
 
   for (let i = 0; i < texts.length; i += BATCH) {
+    if (
+      typeof options.deadlineMs === "number" &&
+      options.deadlineMs > 0 &&
+      Date.now() - startedAt >= options.deadlineMs
+    ) {
+      throw new Error(
+        `Embedding deadline exceeded after ${i} of ${texts.length} texts.`
+      )
+    }
+
     const batch = texts.slice(i, i + BATCH)
     let batchResult: number[][]
 

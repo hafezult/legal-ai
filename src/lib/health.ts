@@ -1,4 +1,8 @@
 import { isIndexingSecretStrong } from "@/lib/indexing/secret"
+import {
+  aggregateHealthStatus,
+  CRITICAL_HEALTH_PROBES,
+} from "@/lib/health-aggregate"
 import { probeClerk, probeSupabaseStorage } from "@/lib/health-probes"
 import { prisma } from "@/lib/prisma"
 
@@ -8,6 +12,11 @@ export {
 } from "@/lib/health-liveness"
 
 export type { HealthProbe, ProbeStatus } from "@/lib/health-probes"
+
+export {
+  aggregateHealthStatus,
+  CRITICAL_HEALTH_PROBES,
+} from "@/lib/health-aggregate"
 
 import type { HealthProbe } from "@/lib/health-probes"
 
@@ -23,9 +32,6 @@ export type HealthReport = {
     upstash: HealthProbe
   }
 }
-
-/** Probes that must be healthy for the deployment to be considered ready. */
-const CRITICAL_PROBES = ["database", "clerk", "storage"] as const
 
 function configuredProbe(
   configured: boolean,
@@ -117,15 +123,8 @@ export async function getHealthReport(): Promise<HealthReport> {
     ),
   }
 
-  // Optional AI/indexing/Upstash probes stay informational; missing keys must not
-  // mark the whole deployment unhealthy for load balancers / Settings banner.
-  const degraded = CRITICAL_PROBES.some((key) => {
-    const probe = probes[key]
-    return probe.status === "degraded" || probe.status === "missing"
-  })
-
   return {
-    status: degraded ? "degraded" : "ok",
+    status: aggregateHealthStatus(probes),
     checkedAt: new Date().toISOString(),
     probes,
   }

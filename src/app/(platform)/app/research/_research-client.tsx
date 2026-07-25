@@ -62,6 +62,7 @@ type Matter = {
   id: string
   title: string
   canWrite?: boolean
+  canDelete?: boolean
   _count: { documents: number }
 }
 
@@ -73,6 +74,7 @@ type RecentSession = {
   createdAt: Date | string
   matterId: string
   matterTitle: string
+  canDelete?: boolean
 }
 
 function fmtShortDate(value: Date | string) {
@@ -482,8 +484,7 @@ export function ResearchClient({
                         >
                           {isRestoring ? "…" : "Export"}
                         </button>
-                        {matters.find((matter) => matter.id === session.matterId)
-                          ?.canWrite ?? canWrite ? (
+                        {session.canDelete ? (
                           <button
                             type="button"
                             onClick={() =>

@@ -394,6 +394,9 @@ export async function runIndexingPipeline(
             data: { updatedAt: new Date() },
           })
         },
+        // Leave headroom under the 300s page/route maxDuration for parse +
+        // vector writes; fail cleanly so the lease can restore/retry.
+        deadlineMs: 240_000,
       }
     )
   } catch (err) {

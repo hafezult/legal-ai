@@ -21,7 +21,10 @@ export default clerkMiddleware(async (auth, req) => {
   }
 
   // Stamp the request (not response) so RSC `headers()` can read it.
+  // Always strip a client-supplied skip header first so only invite routes
+  // can suppress email auto-accept.
   const requestHeaders = new Headers(req.headers)
+  requestHeaders.delete(SKIP_INVITE_AUTO_ACCEPT_HEADER)
   if (isInviteRoute(req)) {
     requestHeaders.set(SKIP_INVITE_AUTO_ACCEPT_HEADER, "1")
   }

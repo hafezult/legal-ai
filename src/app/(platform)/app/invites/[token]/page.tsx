@@ -1,7 +1,9 @@
 import type { ReactNode } from "react"
 import Link from "next/link"
+import { currentUser } from "@clerk/nextjs/server"
 import { notFound } from "next/navigation"
 
+import { selectVerifiedClerkEmail } from "@/lib/auth/clerk-email"
 import { ensureAppUser } from "@/lib/auth/ensure-user"
 import { hashInviteToken, isInviteTokenShape } from "@/lib/auth/invite-token"
 import { prisma } from "@/lib/prisma"
@@ -94,9 +96,30 @@ export default async function InviteAcceptPage({
     )
   }
 
+  // Prefer the live verified Clerk email so collision-fallback DB rows cannot
+  // hide a legitimate invite or authorize against a stale address.
+  let signedInEmail = user.email
+  try {
+    const clerkUser = await currentUser()
+    const verified = clerkUser
+      ? selectVerifiedClerkEmail(
+          clerkUser.emailAddresses.map((entry) => ({
+            id: entry.id,
+            emailAddress: entry.emailAddress,
+            verificationStatus: entry.verification?.status ?? null,
+          })),
+          clerkUser.primaryEmailAddressId
+        )
+      : null
+    if (verified) signedInEmail = verified
+  } catch {
+    /* keep persisted email */
+  }
+
   const emailMatches =
-    Boolean(user.email) &&
-    invite.email.toLowerCase() === user.email.toLowerCase()
+    Boolean(signedInEmail) &&
+    !signedInEmail.toLowerCase().endsWith("@users.invalid") &&
+    invite.email.toLowerCase() === signedInEmail.toLowerCase()
 
   // Do not reveal organization name, role, or invited email until the signed-in
   // account matches the invite target.
@@ -108,8 +131,11 @@ export default async function InviteAcceptPage({
       >
         <div className="rounded-[var(--aether-radius-panel)] border border-amber-400/15 bg-amber-400/[0.04] px-5 py-5">
           <p className="text-sm text-amber-100/70">
-            Signed in as {user.email || "an unmatched account"}. Switch accounts
-            to continue.
+            Signed in as{" "}
+            {signedInEmail && !signedInEmail.toLowerCase().endsWith("@users.invalid")
+              ? signedInEmail
+              : "an unmatched account"}
+            . Switch accounts to continue.
           </p>
           <Link
             href="/sign-in"

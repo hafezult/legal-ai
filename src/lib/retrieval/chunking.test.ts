@@ -133,6 +133,16 @@ describe("chunkDocument", () => {
     assert.equal(chunks[11]?.chunkIndex, 11)
     assert.ok(MAX_CHUNKS_PER_DOCUMENT >= 12)
   })
+
+  it("stops segmenting early for huge single-paragraph extracts", () => {
+    const text = `Operative clause. ${"indemnity ".repeat(50_000)}`.trim()
+    const chunks = chunkDocument(text, [], 1, {
+      chunkSize: 40,
+      overlap: 5,
+      maxChunks: 8,
+    })
+    assert.equal(chunks.length, 8)
+  })
 })
 
 describe("splitOversizedParagraph", () => {

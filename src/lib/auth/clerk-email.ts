@@ -37,3 +37,12 @@ export function selectVerifiedClerkEmail(
 export function unverifiedClerkEmailPlaceholder(clerkId: string): string {
   return `unverified+${clerkId}@users.invalid`
 }
+
+/**
+ * True when the stored/user-facing email is a placeholder, not a real invite
+ * matching address.
+ */
+export function isUnverifiedClerkEmailPlaceholder(email: string | null | undefined): boolean {
+  if (!email) return true
+  return email.toLowerCase().endsWith("@users.invalid")
+}
