@@ -38,6 +38,7 @@ export type DocumentUploadState = {
 export type DocumentIndexState = {
   error?: string
   success?: boolean
+  warning?: string
 }
 
 export type DocumentDeleteState = {
@@ -67,6 +68,23 @@ async function markIndexingTriggerFailed(documentId: string) {
 async function triggerIndexing(documentId: string): Promise<DocumentIndexState> {
   try {
     await runIndexingPipeline(documentId)
+    const doc = await prisma.document
+      .findUnique({
+        where: { id: documentId },
+        select: { indexingStatus: true, retrievalStatus: true },
+      })
+      .catch(() => null)
+
+    // Parsed/chunked without embeddings (e.g. OPENAI_API_KEY unset) looks like
+    // success to the runner — surface a clear next step instead of silent OK.
+    if (doc?.indexingStatus === "indexed" && doc.retrievalStatus === "pending") {
+      return {
+        success: true,
+        warning:
+          "Document parsed and chunked, but embeddings are unavailable. Configure OPENAI_API_KEY and retry indexing to enable retrieval.",
+      }
+    }
+
     return { success: true }
   } catch (error) {
     // Concurrent claim conflict / superseded lease — leave the newer run alone.
@@ -231,7 +249,7 @@ export async function uploadDocument(
     success: true,
     warning: indexing.error
       ? `${indexing.error} The document was saved — use Retry indexing when ready.`
-      : undefined,
+      : indexing.warning,
   }
 }
 

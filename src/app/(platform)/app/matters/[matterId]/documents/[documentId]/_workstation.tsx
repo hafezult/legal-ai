@@ -64,6 +64,7 @@ export type WorkstationData = {
 export type DocumentIndexAction = () => Promise<{
   error?: string
   success?: boolean
+  warning?: string
 }>
 
 export type DocumentDeleteAction = () => Promise<{
@@ -847,7 +848,10 @@ export function DocumentWorkstation({
         return
       }
 
-      setReindexMessage({ type: "success", text: "Indexing completed." })
+      setReindexMessage({
+        type: "success",
+        text: result.warning ?? "Indexing completed.",
+      })
       router.refresh()
     })
   }, [reindexAction, router])

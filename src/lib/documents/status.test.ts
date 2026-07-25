@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 
 import {
   STALE_INDEXING_MS,
+  documentCorpusIndexedWhere,
   documentIndexingBusy,
   documentNeedsRetry,
   documentRetrievalReadyWhere,
@@ -172,6 +173,20 @@ describe("documentRetrievalReadyWhere", () => {
         {
           publishedRunId: { not: null },
           indexingStatus: { in: [...ACTIVE_INDEXING_STATUSES] },
+        },
+      ],
+    })
+  })
+})
+
+describe("documentCorpusIndexedWhere", () => {
+  it("includes finished rows and mid-reindex published documents", () => {
+    assert.deepEqual(documentCorpusIndexedWhere(), {
+      OR: [
+        { indexingStatus: { in: ["indexed", "retrieval-ready"] } },
+        {
+          retrievalStatus: "ready",
+          publishedRunId: { not: null },
         },
       ],
     })

@@ -18,7 +18,10 @@ import {
   isIndexingInProgressError,
   isIndexingRunSupersededError,
 } from "@/lib/workflows/indexing-errors"
-import { shouldPreservePublishedIndex } from "@/lib/workflows/indexing-publish"
+import {
+  shouldPreservePublishedIndex,
+  shouldStageChunkCount,
+} from "@/lib/workflows/indexing-publish"
 
 export type PipelineStatus =
   | "pending"
@@ -78,18 +81,39 @@ async function discardRunChunks(documentId: string, runId: string) {
 /**
  * After a failed reindex that preserved a published generation, restore
  * retrieval-ready status so search keeps serving publishedRunId chunks.
+ * Also restores chunkCount from the live published generation so registry
+ * totals do not keep a discarded staging size.
  */
 async function restorePublishedReady(documentId: string, runId: string) {
   await discardRunChunks(documentId, runId)
-  await prisma.document.updateMany({
+
+  const current = await prisma.document.findFirst({
     where: {
       id: documentId,
       indexingRunId: runId,
       publishedRunId: { not: null },
     },
+    select: { publishedRunId: true },
+  })
+  if (!current?.publishedRunId) return
+
+  const chunkCount = await prisma.documentChunk.count({
+    where: {
+      documentId,
+      indexingRunId: current.publishedRunId,
+    },
+  })
+
+  await prisma.document.updateMany({
+    where: {
+      id: documentId,
+      indexingRunId: runId,
+      publishedRunId: current.publishedRunId,
+    },
     data: {
       indexingStatus: "retrieval-ready",
       retrievalStatus: "ready",
+      chunkCount,
     },
   })
 }
@@ -304,7 +328,16 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     created.push(...batch)
   }
 
-  await setStatus(documentId, runId, "embedding", { chunkCount: chunks.length })
+  // Do not stamp chunkCount while a published generation is live — a failed
+  // embed would otherwise leave the registry showing the discarded stage size.
+  await setStatus(
+    documentId,
+    runId,
+    "embedding",
+    shouldStageChunkCount(preservePublished)
+      ? { chunkCount: chunks.length }
+      : {}
+  )
 
   // ── 3. Embed ────────────────────────────────────────────────────────────
   if (!isEmbeddingConfigured()) {
@@ -313,7 +346,10 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
       await restorePublishedReady(documentId, runId)
       return
     }
-    await setStatus(documentId, runId, "indexed", { retrievalStatus: "pending" })
+    await setStatus(documentId, runId, "indexed", {
+      retrievalStatus: "pending",
+      chunkCount: chunks.length,
+    })
     return
   }
 

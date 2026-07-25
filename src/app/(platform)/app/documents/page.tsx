@@ -10,6 +10,7 @@ import {
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import {
+  documentCorpusIndexedWhere,
   documentNeedsRetry,
   documentRetrievalReadyWhere,
   documentRetryOr,
@@ -118,7 +119,7 @@ export default async function DocumentsPage() {
         prisma.document.count({
           where: {
             ...documentWhere,
-            indexingStatus: { in: ["indexed", "retrieval-ready"] },
+            ...documentCorpusIndexedWhere(),
           },
         }),
         prisma.document.count({

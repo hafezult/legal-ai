@@ -102,6 +102,12 @@ export default async function SettingsPage() {
         "Optional HTTP indexing route protection (upload/reindex run in-process). Secrets shorter than 32 characters, with fewer than 10 distinct characters, or placeholders such as change-me do not count as configured.",
     },
     {
+      label: "Health detail secret",
+      configured: isIndexingSecretStrong(process.env.HEALTH_DETAIL_SECRET),
+      description:
+        "Optional preferred secret for full /api/ready probe details via x-aether-health-secret. Same strength rules as INDEXING_SECRET; when unset, a strong INDEXING_SECRET remains an accepted fallback.",
+    },
+    {
       label: "App URL",
       configured: Boolean(process.env.NEXT_PUBLIC_APP_URL),
       description: "Absolute origin for invite acceptance links and email copy.",

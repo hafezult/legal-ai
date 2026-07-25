@@ -20,10 +20,11 @@ type MemoryMatter = {
     indexingStatus: string
     retrievalStatus: string
     publishedRunId: string | null
+    chunkCount: number
   }[]
   messageCount: number
+  publishedChunkCount: number
   _count: {
-    chunks: number
     researchSessions: number
     conversations: number
     draftDocuments: number
@@ -67,11 +68,12 @@ export default async function MemoryPage() {
                   indexingStatus: true,
                   retrievalStatus: true,
                   publishedRunId: true,
+                  // Document.chunkCount tracks the published generation size.
+                  chunkCount: true,
                 },
               },
               _count: {
                 select: {
-                  chunks: true,
                   researchSessions: true,
                   conversations: true,
                   draftDocuments: true,
@@ -103,6 +105,10 @@ export default async function MemoryPage() {
       matters = matterRows.map((matter) => ({
         ...matter,
         messageCount: messagesByMatter.get(matter.id) ?? 0,
+        publishedChunkCount: matter.documents.reduce(
+          (sum, doc) => sum + doc.chunkCount,
+          0
+        ),
       }))
       messageCount = messageTotal
     }
@@ -111,7 +117,10 @@ export default async function MemoryPage() {
   }
 
   const documentCount = matters.reduce((sum, matter) => sum + matter.documents.length, 0)
-  const chunkCount = matters.reduce((sum, matter) => sum + matter._count.chunks, 0)
+  const chunkCount = matters.reduce(
+    (sum, matter) => sum + matter.publishedChunkCount,
+    0
+  )
   const researchSessionCount = matters.reduce(
     (sum, matter) => sum + matter._count.researchSessions,
     0
@@ -268,7 +277,7 @@ export default async function MemoryPage() {
                 {matter.documents.length}
               </span>
               <span className="w-20 shrink-0 text-right text-xs tabular-nums text-white/45">
-                {matter._count.chunks}
+                {matter.publishedChunkCount}
               </span>
               <span className="hidden w-24 shrink-0 text-right text-xs text-white/25 lg:block">
                 {fmtShortDate(matter.updatedAt)}

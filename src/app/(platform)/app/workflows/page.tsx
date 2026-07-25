@@ -11,10 +11,10 @@ import {
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import {
+  ACTIVE_INDEXING_STATUSES,
   documentNeedsRetry,
   documentRetrievalReadyWhere,
   documentRetryOr,
-  RETRYABLE_IN_PROGRESS_STATUSES,
   STALE_INDEXING_MS,
 } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
@@ -146,7 +146,8 @@ export default async function WorkflowsPage() {
           prisma.document.count({
             where: {
               ...documentWhere,
-              indexingStatus: { in: [...RETRYABLE_IN_PROGRESS_STATUSES] },
+              // Fresh claimed pipeline only — queued `pending` is not active work.
+              indexingStatus: { in: [...ACTIVE_INDEXING_STATUSES] },
               updatedAt: { gte: staleBefore },
             },
           }),

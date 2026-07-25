@@ -83,6 +83,27 @@ export function documentRetrievalReadyWhere(): {
 }
 
 /**
+ * Prisma filter for corpus “Indexed” totals: finished/pending-embed rows plus
+ * mid-reindex documents that still serve a published generation.
+ */
+export function documentCorpusIndexedWhere(): {
+  OR: Array<
+    | { indexingStatus: { in: string[] } }
+    | { retrievalStatus: "ready"; publishedRunId: { not: null } }
+  >
+} {
+  return {
+    OR: [
+      { indexingStatus: { in: ["indexed", "retrieval-ready"] } },
+      {
+        retrievalStatus: "ready",
+        publishedRunId: { not: null },
+      },
+    ],
+  }
+}
+
+/**
  * Prisma `OR` branches matching {@link documentNeedsRetry}.
  * Compose with access filters via top-level AND semantics
  * (`{ ...accessWhere, OR: documentRetryOr(staleBefore) }`).

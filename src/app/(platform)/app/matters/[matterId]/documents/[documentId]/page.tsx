@@ -5,6 +5,7 @@ import { matterAccessWhere, getMatterAccess, roleHasPermission } from "@/lib/aut
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities } from "@/lib/legal/authorities"
 import { createSignedUrl } from "@/lib/storage/documents"
+import { inspectionChunkWhere } from "@/lib/workflows/indexing-publish"
 import { deleteDocument, reindexDocument } from "../../actions"
 import { DocumentWorkstation } from "./_workstation"
 import type { WorkstationData } from "./_workstation"
@@ -50,16 +51,22 @@ export default async function DocumentViewerPage({
         createdAt: true,
         updatedAt: true,
         matterId: true,
+        publishedRunId: true,
+        indexingRunId: true,
         matter: { select: { title: true, clientName: true } },
-        _count: { select: { chunks: true } },
       },
     })
 
     if (!doc) return notFound()
 
-    // Fetch all chunks ordered by index
+    // Prefer published generation so mid-reindex staging rows stay hidden.
+    const chunkWhere = inspectionChunkWhere({
+      id: documentId,
+      publishedRunId: doc.publishedRunId,
+      indexingRunId: doc.indexingRunId,
+    })
     const rawChunks = await prisma.documentChunk.findMany({
-      where: { documentId },
+      where: chunkWhere,
       orderBy: { chunkIndex: "asc" },
       select: {
         id: true,
@@ -134,7 +141,7 @@ export default async function DocumentViewerPage({
         mimeType: doc.mimeType,
         fileSize: doc.fileSize,
         pageCount: doc.pageCount,
-        chunkCount: doc._count.chunks,
+        chunkCount: rawChunks.length,
         extractionConf: doc.extractionConf,
         uploadStatus: doc.uploadStatus,
         indexingStatus: doc.indexingStatus,
