@@ -67,41 +67,29 @@ export function documentRetrievalReadyWhere(): {
 }
 
 /**
- * True for corpus “Indexed” totals: fully retrieval-ready generations plus
- * mid-reindex (or failed-reindex) documents that still serve a published
- * searchable generation. Embedding-pending `indexed` rows are excluded —
- * they surface under Retry until embeddings complete.
+ * True for corpus “Indexed” totals: documents that serve a published
+ * searchable generation. Aligns with {@link isDocumentRetrievalReady} so
+ * bare `indexingStatus: "retrieval-ready"` without `publishedRunId` (legacy
+ * or inconsistent rows) is excluded. Embedding-pending `indexed` rows stay
+ * out of Indexed and surface under Retry until embeddings complete.
  */
 export function isDocumentCorpusIndexed(doc: {
   indexingStatus: string
   retrievalStatus: string
   publishedRunId?: string | null
 }): boolean {
-  if (doc.indexingStatus === "retrieval-ready") {
-    return true
-  }
   return isDocumentRetrievalReady(doc)
 }
 
 /**
- * Prisma filter for corpus “Indexed” totals: finished retrieval-ready rows
- * plus mid-reindex documents that still serve a published generation.
+ * Prisma filter for corpus “Indexed” totals — same gate as retrieval readiness
+ * (`retrievalStatus=ready` + non-null `publishedRunId`).
  */
 export function documentCorpusIndexedWhere(): {
-  OR: Array<
-    | { indexingStatus: string }
-    | { retrievalStatus: "ready"; publishedRunId: { not: null } }
-  >
+  retrievalStatus: "ready"
+  publishedRunId: { not: null }
 } {
-  return {
-    OR: [
-      { indexingStatus: "retrieval-ready" },
-      {
-        retrievalStatus: "ready",
-        publishedRunId: { not: null },
-      },
-    ],
-  }
+  return documentRetrievalReadyWhere()
 }
 
 /** Published-generation chunk contribution for memory/registry aggregates. */

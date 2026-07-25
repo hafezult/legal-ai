@@ -19,6 +19,12 @@ import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
 import { MAX_RESEARCH_QUERY_CHARS } from "@/lib/research/limits"
 
 const RESEARCH_RATE_LIMIT = { limit: 12, windowMs: 60_000 } as const
+const RESEARCH_DELETE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
+
+function rateLimitMessage(action: string, retryAfterMs: number): string {
+  const seconds = Math.ceil(retryAfterMs / 1000)
+  return `${action} rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -421,6 +427,16 @@ export async function deleteResearchSession(
       select: { id: true },
     })
     if (!user) return { error: "Session not found. Please sign in again." }
+
+    const throttle = await consumeRateLimit(
+      `research-delete:${user.id}`,
+      RESEARCH_DELETE_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return {
+        error: rateLimitMessage("Research delete", throttle.retryAfterMs),
+      }
+    }
 
     const researchSession = await prisma.researchSession.findFirst({
       where: {

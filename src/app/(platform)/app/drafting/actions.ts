@@ -23,6 +23,12 @@ import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
 
 const DRAFT_RATE_LIMIT = { limit: 12, windowMs: 60_000 } as const
+const DRAFT_DELETE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
+
+function rateLimitMessage(action: string, retryAfterMs: number): string {
+  const seconds = Math.ceil(retryAfterMs / 1000)
+  return `${action} rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`
+}
 
 export type DraftSourceChunk = {
   id: string
@@ -412,6 +418,14 @@ export async function deleteDraft(draftId: string): Promise<DraftDeleteState> {
       select: { id: true },
     })
     if (!user) return { error: "Session not found. Please sign in again." }
+
+    const throttle = await consumeRateLimit(
+      `draft-delete:${user.id}`,
+      DRAFT_DELETE_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return { error: rateLimitMessage("Draft delete", throttle.retryAfterMs) }
+    }
 
     const draft = await prisma.draftDocument.findFirst({
       where: {

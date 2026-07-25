@@ -28,6 +28,12 @@ import {
 
 const UPLOAD_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const REINDEX_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
+const DOCUMENT_DELETE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
+
+function rateLimitMessage(action: string, retryAfterMs: number): string {
+  const seconds = Math.ceil(retryAfterMs / 1000)
+  return `${action} rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`
+}
 
 export type DocumentUploadState = {
   error?: string
@@ -327,6 +333,14 @@ export async function deleteDocument(
       select: { id: true },
     })
     if (!user) return { error: "Session not found. Please sign in again." }
+
+    const throttle = await consumeRateLimit(
+      `document-delete:${user.id}`,
+      DOCUMENT_DELETE_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return { error: rateLimitMessage("Document delete", throttle.retryAfterMs) }
+    }
 
     const permission = await requireMatterPermission(user.id, matterId, "delete")
     if (!permission.ok) return { error: permission.error }

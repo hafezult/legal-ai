@@ -1,6 +1,14 @@
 import { resolveAppBaseUrl } from "@/lib/app-url"
 import { recordAuditEvent } from "@/lib/audit"
 import { hashInviteToken, isInviteTokenShape } from "@/lib/auth/invite-token"
+import {
+  INVITE_PURGE_BATCH_SIZE,
+  claimInvitePurgeSlot,
+} from "@/lib/auth/invite-retention"
+import {
+  matterAccessWhere,
+  matterAccessWhereForActiveOrg,
+} from "@/lib/auth/matter-access"
 import { prisma } from "@/lib/prisma"
 import {
   ORG_ROLES,
@@ -21,48 +29,46 @@ export {
 }
 export type { OrgPermission, OrgRole }
 
-/**
- * Prisma `where` clause for matters the user may access.
- * Legacy personal matters (no organizationId) remain creator-scoped.
- * Organization matters require current membership — creators who are
- * removed or demoted no longer bypass org RBAC via the userId fallback.
- */
-export function matterAccessWhere(userId: string) {
-  return {
-    OR: [
-      { userId, organizationId: null },
-      { organization: { members: { some: { userId } } } },
-    ],
-  }
-}
-
-/**
- * Matters visible in the user's active organization workspace.
- * Includes matters attached to that org, plus legacy creator-owned matters
- * with no organizationId (pre-RBAC personal workspaces).
- */
-export function matterAccessWhereForActiveOrg(
-  userId: string,
-  organizationId: string | null | undefined
-) {
-  if (!organizationId) {
-    return matterAccessWhere(userId)
-  }
-
-  return {
-    AND: [
-      matterAccessWhere(userId),
-      {
-        OR: [
-          { organizationId },
-          { userId, organizationId: null },
-        ],
-      },
-    ],
-  }
-}
+export { matterAccessWhere, matterAccessWhereForActiveOrg }
 
 export { canWriteListedMatter } from "@/lib/auth/matter-write"
+
+/**
+ * Delete expired, unaccepted organization invites (bounded batch).
+ * Accepted invites are left alone — they are historical membership evidence.
+ */
+export async function purgeExpiredOrganizationInvites(
+  options: { now?: Date; take?: number } = {}
+): Promise<number> {
+  const now = options.now ?? new Date()
+  const take = options.take ?? INVITE_PURGE_BATCH_SIZE
+  const expired = await prisma.organizationInvite.findMany({
+    where: {
+      acceptedAt: null,
+      expiresAt: { lt: now },
+    },
+    select: { id: true },
+    orderBy: { expiresAt: "asc" },
+    take,
+  })
+  if (expired.length === 0) return 0
+
+  const result = await prisma.organizationInvite.deleteMany({
+    where: { id: { in: expired.map((row) => row.id) } },
+  })
+  return result.count
+}
+
+/**
+ * Best-effort opportunistic purge of expired invites — at most once per
+ * process hour so invite mutations stay non-blocking.
+ */
+export function maybePurgeExpiredOrganizationInvites(): void {
+  if (!claimInvitePurgeSlot()) return
+  void purgeExpiredOrganizationInvites().catch(() => {
+    /* Non-fatal */
+  })
+}
 
 export type MatterAccess = {
   matterId: string

@@ -193,21 +193,16 @@ describe("documentRetrievalReadyWhere", () => {
 })
 
 describe("documentCorpusIndexedWhere", () => {
-  it("includes retrieval-ready and mid-reindex published documents", () => {
-    assert.deepEqual(documentCorpusIndexedWhere(), {
-      OR: [
-        { indexingStatus: "retrieval-ready" },
-        {
-          retrievalStatus: "ready",
-          publishedRunId: { not: null },
-        },
-      ],
-    })
+  it("matches retrieval readiness (ready + publishedRunId)", () => {
+    assert.deepEqual(
+      documentCorpusIndexedWhere(),
+      documentRetrievalReadyWhere()
+    )
   })
 })
 
 describe("isDocumentCorpusIndexed", () => {
-  it("counts retrieval-ready and published mid/failed reindex docs", () => {
+  it("counts only published searchable generations", () => {
     assert.equal(
       isDocumentCorpusIndexed({
         indexingStatus: "indexed",
@@ -222,6 +217,14 @@ describe("isDocumentCorpusIndexed", () => {
         publishedRunId: "run-a",
       }),
       true
+    )
+    assert.equal(
+      isDocumentCorpusIndexed({
+        indexingStatus: "retrieval-ready",
+        retrievalStatus: "ready",
+        publishedRunId: null,
+      }),
+      false
     )
     assert.equal(
       isDocumentCorpusIndexed({

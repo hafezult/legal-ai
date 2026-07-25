@@ -24,8 +24,17 @@ import { consumeRateLimit } from "@/lib/rate-limit"
 import { cleanupStoragePaths } from "@/lib/storage/documents"
 
 const MATTER_CREATE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
+/** Shared throttle for matter metadata / status edits. */
+const MATTER_MUTATION_RATE_LIMIT = { limit: 30, windowMs: 60_000 } as const
+/** Shared throttle for cascading / work-product deletes. */
+const DESTRUCTIVE_MUTATION_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const CONVERSATION_RATE_LIMIT = { limit: 40, windowMs: 60_000 } as const
 const MESSAGE_RATE_LIMIT = { limit: 60, windowMs: 60_000 } as const
+
+function rateLimitMessage(action: string, retryAfterMs: number): string {
+  const seconds = Math.ceil(retryAfterMs / 1000)
+  return `${action} rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`
+}
 
 export type MatterFormState = {
   error?: string
@@ -234,6 +243,14 @@ export async function updateMatterStatus(
     })
     if (!user) return { error: "Session not found. Please sign in again." }
 
+    const throttle = await consumeRateLimit(
+      `matter-mutate:${user.id}`,
+      MATTER_MUTATION_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return { error: rateLimitMessage("Matter update", throttle.retryAfterMs) }
+    }
+
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) return { error: permission.error }
 
@@ -299,6 +316,14 @@ export async function updateMatter(
       select: { id: true },
     })
     if (!user) return { error: "Session not found. Please sign in again." }
+
+    const throttle = await consumeRateLimit(
+      `matter-mutate:${user.id}`,
+      MATTER_MUTATION_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return { error: rateLimitMessage("Matter update", throttle.retryAfterMs) }
+    }
 
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) return { error: permission.error }
@@ -366,6 +391,14 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
       select: { id: true },
     })
     if (!user) return { error: "Session not found. Please sign in again." }
+
+    const throttle = await consumeRateLimit(
+      `matter-delete:${user.id}`,
+      DESTRUCTIVE_MUTATION_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return { error: rateLimitMessage("Matter delete", throttle.retryAfterMs) }
+    }
 
     const permission = await requireMatterPermission(user.id, matterId, "delete")
     if (!permission.ok) return { error: permission.error }
@@ -519,6 +552,16 @@ export async function deleteConversation(
       select: { id: true },
     })
     if (!user) return { error: "Session not found. Please sign in again." }
+
+    const throttle = await consumeRateLimit(
+      `conversation-delete:${user.id}`,
+      DESTRUCTIVE_MUTATION_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return {
+        error: rateLimitMessage("Conversation delete", throttle.retryAfterMs),
+      }
+    }
 
     const conversation = await prisma.conversation.findFirst({
       where: {

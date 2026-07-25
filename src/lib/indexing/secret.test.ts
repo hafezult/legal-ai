@@ -11,8 +11,8 @@ import {
   secretsMatch,
 } from "./secret.ts"
 
-const STRONG_SECRET = "aether-ci-validate-9b4d-x7k9m2p4q8w1!"
-const STRONG_DETAIL = "ready-detail-secret-9b4d-min-32chars!"
+const STRONG_SECRET = "aether-ci-validate-c498-x7k9m2p4q8w1!"
+const STRONG_DETAIL = "ready-detail-secret-c498-min-32chars!"
 
 describe("indexing secret helpers", () => {
   it("rejects empty, short, placeholder, and low-entropy secrets", () => {

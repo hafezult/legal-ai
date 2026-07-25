@@ -19,6 +19,7 @@ import {
   inviteExpiryDate,
   isOrgRole,
   listUserOrganizations,
+  maybePurgeExpiredOrganizationInvites,
   ORG_ROLES,
   roleAtLeast,
   roleStrictlyAbove,
@@ -516,6 +517,8 @@ export async function addOrganizationMember(
       },
     })
 
+    maybePurgeExpiredOrganizationInvites()
+
     revalidatePath("/app/settings")
     return {
       success: true,
@@ -660,7 +663,12 @@ export async function refreshOrganizationInviteLink(
     const token = generateInviteToken()
     await prisma.organizationInvite.update({
       where: { id: invite.id },
-      data: { tokenHash: hashInviteToken(token) },
+      data: {
+        tokenHash: hashInviteToken(token),
+        // Refreshing a pending link also renews the acceptance window so a
+        // near-expiry invite does not stay short-lived after rotation.
+        expiresAt: inviteExpiryDate(),
+      },
     })
 
     await recordAuditEvent({
@@ -671,6 +679,8 @@ export async function refreshOrganizationInviteLink(
       organizationId,
       summary: "Rotated pending invite acceptance link",
     })
+
+    maybePurgeExpiredOrganizationInvites()
 
     revalidatePath("/app/settings")
     return {
@@ -720,6 +730,8 @@ export async function revokeOrganizationInvite(
       organizationId,
       summary: `Revoked invite for ${invite.email}`,
     })
+
+    maybePurgeExpiredOrganizationInvites()
   } catch {
     return { error: "Unable to revoke invite. Please try again." }
   }
