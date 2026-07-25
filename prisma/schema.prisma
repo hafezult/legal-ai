@@ -11,44 +11,133 @@ datasource db {
 }
 
 model User {
+  id                   String   @id @default(cuid())
+  clerkId              String   @unique
+  email                String   @unique
+  name                 String?
+  activeOrganizationId String?
+  activeOrganization   Organization? @relation("UserActiveOrganization", fields: [activeOrganizationId], references: [id], onDelete: SetNull)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  matters              Matter[]
+  researchSessions     ResearchSession[]
+  draftDocuments       DraftDocument[]
+  auditEvents          AuditEvent[]
+  organizationMembers  OrganizationMember[]
+  organizationInvites  OrganizationInvite[] @relation("OrganizationInviteInviter")
+
+  @@index([activeOrganizationId])
+}
+
+enum OrganizationRole {
+  viewer
+  member
+  admin
+  owner
+}
+
+model Organization {
   id        String   @id @default(cuid())
-  clerkId   String   @unique
-  email     String
-  name      String?
+  name      String
+  slug      String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  matters          Matter[]
-  researchSessions ResearchSession[]
+  members     OrganizationMember[]
+  matters     Matter[]
+  invites     OrganizationInvite[]
+  activeUsers User[]               @relation("UserActiveOrganization")
+  auditEvents AuditEvent[]
+}
+
+model OrganizationMember {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           OrganizationRole @default(member)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  // Single-owner invariant is enforced by a partial unique index in SQL:
+  // OrganizationMember_one_owner_per_org ON (organizationId) WHERE role = 'owner'
+}
+
+model OrganizationInvite {
+  id              String           @id @default(cuid())
+  organizationId  String
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email           String
+  role            OrganizationRole @default(member)
+  /// SHA-256 hex digest of the opaque invite token (raw token never stored).
+  tokenHash       String           @unique
+  invitedByUserId String
+  invitedBy       User             @relation("OrganizationInviteInviter", fields: [invitedByUserId], references: [id], onDelete: Cascade)
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime         @default(now())
+
+  @@unique([organizationId, email])
+  @@index([email])
+  @@index([invitedByUserId])
 }
 
 model Matter {
-  id           String   @id @default(cuid())
-  title        String
-  description  String?
-  clientName   String?
-  practiceArea String?
-  jurisdiction String?
-  riskLevel    String   @default("medium")
-  billingCode  String?
-  status       String   @default("active")
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @default(now()) @updatedAt
+  id             String        @id @default(cuid())
+  title          String
+  description    String?
+  clientName     String?
+  practiceArea   String?
+  jurisdiction   String?
+  riskLevel      String        @default("medium")
+  billingCode    String?
+  status         String        @default("active")
+  /// Original creator; nullable so org-shared matters survive user deletion.
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @default(now()) @updatedAt
 
   conversations    Conversation[]
   documents        Document[]
   chunks           DocumentChunk[]
   researchSessions ResearchSession[]
+  draftDocuments   DraftDocument[]
+  auditEvents      AuditEvent[]
+
+  @@index([organizationId])
+  @@index([userId])
 }
 
 model Conversation {
-  id        String   @id @default(cuid())
-  matterId  String
-  matter    Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
-  title     String
-  createdAt DateTime @default(now())
+  id              String   @id @default(cuid())
+  matterId        String
+  matter          Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  title           String
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  messages ConversationMessage[]
+
+  @@index([matterId])
+  @@index([createdByUserId])
+}
+
+model ConversationMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
 }
 
 model Document {
@@ -63,6 +152,10 @@ model Document {
   indexingStatus      String   @default("pending")
   retrievalStatus     String   @default("pending")
   parseStatus         String   @default("pending")
+  /// Lease id for the active indexing claim; status publishes require a match.
+  indexingRunId       String?
+  /// Run id whose chunks are live for semantic retrieval (survives mid-reindex).
+  publishedRunId      String?
   parsedText          String?
   pageCount           Int?
   chunkCount          Int      @default(0)
@@ -72,14 +165,23 @@ model Document {
   updatedAt           DateTime @default(now()) @updatedAt
 
   chunks DocumentChunk[]
+
+  /// Enables composite FK from DocumentChunk(documentId, matterId).
+  @@unique([id, matterId])
+  @@index([matterId])
+  @@index([indexingRunId])
+  @@index([publishedRunId])
 }
 
 model DocumentChunk {
   id          String                      @id @default(cuid())
   documentId  String
-  document    Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  /// Composite FK keeps chunk.matterId aligned with its parent document.
+  document    Document                    @relation(fields: [documentId, matterId], references: [id, matterId], onDelete: Cascade)
   matterId    String
   matter      Matter                      @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  /// Indexing run that produced this chunk; retrieval uses Document.publishedRunId.
+  indexingRunId String?
   content     String
   chunkIndex  Int
   tokenCount  Int                         @default(0)
@@ -90,16 +192,70 @@ model DocumentChunk {
 
   @@index([documentId])
   @@index([matterId])
+  @@index([documentId, indexingRunId])
 }
 
 model ResearchSession {
   id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Creator; nullable so org matter work product survives user deletion.
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   matterId  String
   matter    Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
   query     String
   response  String?
   chunkIds  String[]
+  /// Immutable JSON citation excerpts so reindex/delete cannot erase provenance.
+  citationSnapshot String?
   createdAt DateTime @default(now())
+
+  @@index([matterId])
+  @@index([userId, createdAt])
+}
+
+model DraftDocument {
+  id          String   @id @default(cuid())
+  /// Creator; nullable so org matter work product survives user deletion.
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  matterId    String
+  matter      Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  title       String
+  draftType   String
+  instruction String
+  content     String?
+  chunkIds    String[]
+  /// Immutable JSON citation excerpts so reindex/delete cannot erase provenance.
+  citationSnapshot String?
+  status      String   @default("ready")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([matterId])
+}
+
+model AuditEvent {
+  id             String        @id @default(cuid())
+  /// Nullable so deleting a user retains the legal audit trail.
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Snapshot of the actor at write time (survives user deletion).
+  actorClerkId   String?
+  actorEmail     String?
+  actorName      String?
+  action         String
+  entityType     String
+  entityId       String?
+  matterId       String?
+  matter         Matter?       @relation(fields: [matterId], references: [id], onDelete: SetNull)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  summary        String
+  metadata       String?
+  createdAt      DateTime      @default(now())
+
+  @@index([userId, createdAt])
+  @@index([matterId])
+  @@index([organizationId, createdAt])
 }

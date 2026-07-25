@@ -23,7 +23,7 @@ export function DocumentStory() {
           <GlassPanel className="divide-y divide-white/[0.06] overflow-hidden p-0">
             <div className="flex items-center justify-between px-6 py-4 text-xs uppercase tracking-[0.18em] text-white/45">
               <span>Matter bundle</span>
-              <span className="text-white/30">Live</span>
+              <span className="text-white/30">Preview</span>
             </div>
             {[
               { name: "MSA — Cloud Services", meta: "12 sections · 3 deviations" },
