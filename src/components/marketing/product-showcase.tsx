@@ -28,7 +28,7 @@ function DashboardMock() {
               <div className="mt-1 text-lg text-white/90">Matter intelligence</div>
             </div>
             <div className="rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-[10px] uppercase tracking-wider text-white/50">
-              Live
+              Preview
             </div>
           </div>
           <div className="mt-6 grid gap-3 sm:grid-cols-3">
