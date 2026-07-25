@@ -1,9 +1,14 @@
 import { currentUser } from "@clerk/nextjs/server"
 
+import {
+  acceptPendingOrganizationInvites,
+  ensurePersonalOrganization,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
 /**
- * Upserts the signed-in Clerk user into Postgres (idempotent).
+ * Upserts the signed-in Clerk user into Postgres (idempotent), ensures a
+ * personal organization workspace exists, and accepts outstanding invites.
  */
 export async function ensureAppUser() {
   const clerkUser = await currentUser()
@@ -15,14 +20,16 @@ export async function ensureAppUser() {
     clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)
       ?.emailAddress ?? clerkUser.emailAddresses[0]?.emailAddress
 
-  const email = primary ?? ""
+  // Normalize for unique matching against invites / member-add lookups.
+  // Clerk users without an email address get a stable per-user placeholder.
+  const email = primary?.trim().toLowerCase() || `unverified+${clerkUser.id}@users.invalid`
 
   const name =
     clerkUser.fullName ||
     [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
     null
 
-  return prisma.user.upsert({
+  const user = await prisma.user.upsert({
     where: { clerkId: clerkUser.id },
     create: {
       clerkId: clerkUser.id,
@@ -34,4 +41,18 @@ export async function ensureAppUser() {
       name,
     },
   })
+
+  try {
+    await ensurePersonalOrganization(user)
+  } catch {
+    /* Organization provisioning is best-effort; retries on next navigation */
+  }
+
+  try {
+    await acceptPendingOrganizationInvites(user)
+  } catch {
+    /* Invite acceptance is best-effort; retries on next navigation */
+  }
+
+  return user
 }

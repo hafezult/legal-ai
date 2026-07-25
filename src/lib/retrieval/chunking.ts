@@ -78,11 +78,13 @@ export function chunkDocument(
 
     if (wouldExceed && buffer.length > 0 && !endsInCitation(buffer)) {
       flush()
-      totalCharsConsumed += buffer.length
-      // Carry overlap window into next chunk
+      // Carry overlap into the next chunk, but only advance page progress by
+      // the unique portion so overlap is not double-counted in pageRef.
       const words = buffer.split(/\s+/)
       const overlapWords = Math.ceil(overlapChars / 6) // avg 6 chars/word
-      buffer = words.slice(-overlapWords).join(" ") + "\n\n" + para
+      const overlap = words.slice(-overlapWords).join(" ")
+      totalCharsConsumed += Math.max(0, buffer.length - overlap.length)
+      buffer = overlap ? `${overlap}\n\n${para}` : para
     } else {
       buffer = buffer ? buffer + "\n\n" + para : para
     }
