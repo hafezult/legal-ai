@@ -19,7 +19,7 @@ import {
   MAX_MATTER_TITLE_CHARS,
 } from "@/lib/matters/limits"
 import { prisma } from "@/lib/prisma"
-import { removeManyFromStorage } from "@/lib/storage/documents"
+import { cleanupStoragePaths } from "@/lib/storage/documents"
 
 export type MatterFormState = {
   error?: string
@@ -333,6 +333,7 @@ export async function updateMatter(
 export type MatterDeleteState = {
   error?: string
   success?: boolean
+  warning?: string
 }
 
 export async function deleteMatter(matterId: string): Promise<MatterDeleteState> {
@@ -394,8 +395,14 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
     return { error: "Unable to delete matter. Please try again." }
   }
 
+  let storageWarning: string | undefined
   if (storagePaths.length > 0) {
-    await removeManyFromStorage(storagePaths).catch(() => null)
+    const cleanup = await cleanupStoragePaths(storagePaths)
+    if (!cleanup.ok) {
+      storageWarning = `Matter deleted, but ${cleanup.paths.length} storage object${
+        cleanup.paths.length === 1 ? "" : "s"
+      } could not be removed. Contact an admin to finish cleanup.`
+    }
   }
 
   revalidatePath("/app/matters")
@@ -407,7 +414,7 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
   revalidatePath("/app/settings")
   revalidatePath("/app")
 
-  return { success: true }
+  return { success: true, warning: storageWarning }
 }
 
 export type ConversationFormState = {

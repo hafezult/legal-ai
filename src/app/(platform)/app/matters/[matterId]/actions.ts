@@ -7,7 +7,11 @@ import { recordAuditEvent } from "@/lib/audit"
 import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
-import { ensureBucket, removeFromStorage, uploadToStorage } from "@/lib/storage/documents"
+import {
+  cleanupStoragePaths,
+  ensureBucket,
+  uploadToStorage,
+} from "@/lib/storage/documents"
 import {
   isIndexingInProgressError,
   runIndexingPipeline,
@@ -30,6 +34,7 @@ export type DocumentIndexState = {
 export type DocumentDeleteState = {
   error?: string
   success?: boolean
+  warning?: string
 }
 
 const ALLOWED_MIME: Record<string, true> = {
@@ -229,7 +234,13 @@ export async function uploadDocument(
     })
     documentId = created.id
   } catch {
-    await removeFromStorage(storagePath).catch(() => null)
+    const cleanup = await cleanupStoragePaths([storagePath])
+    if (!cleanup.ok) {
+      return {
+        error:
+          "Document registration failed, and storage cleanup also failed. Contact an admin to remove the orphaned upload.",
+      }
+    }
     return { error: "Document registration failed. Storage entry removed." }
   }
 
@@ -269,6 +280,9 @@ export async function reindexDocument(
   const { userId: clerkId } = await auth()
   if (!clerkId) return { error: "Authentication required." }
 
+  let ownerUserId: string
+  let fileName: string
+
   try {
     const user = await prisma.user.findUnique({
       where: { clerkId },
@@ -300,20 +314,28 @@ export async function reindexDocument(
     // Do not reset indexingStatus here — that would defeat the atomic claim
     // guard in runIndexingPipeline for concurrent in-progress runs. Claim
     // itself resets parse/retrieval when it wins the race.
-
-    await recordAuditEvent({
-      userId: user.id,
-      action: "document.reindex",
-      entityType: "document",
-      entityId: document.id,
-      matterId,
-      summary: `Reindexed document “${document.fileName}”`,
-    })
+    ownerUserId = user.id
+    fileName = document.fileName
   } catch {
     return { error: "Data layer unreachable. Please try again." }
   }
 
   const result = await triggerIndexing(documentId)
+
+  await recordAuditEvent({
+    userId: ownerUserId,
+    action: "document.reindex",
+    entityType: "document",
+    entityId: documentId,
+    matterId,
+    summary: result.error
+      ? `Requested reindex for “${fileName}” (failed)`
+      : `Reindexed document “${fileName}”`,
+    metadata: {
+      success: !result.error,
+      error: result.error ?? null,
+    },
+  })
 
   revalidatePath(`/app/matters/${matterId}`)
   revalidatePath(`/app/matters/${matterId}/documents/${documentId}`)
@@ -370,7 +392,20 @@ export async function deleteDocument(
   }
 
   if (storagePath) {
-    await removeFromStorage(storagePath).catch(() => null)
+    const cleanup = await cleanupStoragePaths([storagePath])
+    if (!cleanup.ok) {
+      revalidatePath(`/app/matters/${matterId}`)
+      revalidatePath("/app/documents")
+      revalidatePath("/app/workflows")
+      revalidatePath("/app/memory")
+      revalidatePath("/app/settings")
+      revalidatePath("/app")
+      return {
+        success: true,
+        warning:
+          "Document record removed, but storage cleanup failed. An orphaned file may remain — contact an admin.",
+      }
+    }
   }
 
   revalidatePath(`/app/matters/${matterId}`)

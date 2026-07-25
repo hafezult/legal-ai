@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 type MatterDeleteAction = () => Promise<{
   error?: string
   success?: boolean
+  warning?: string
 }>
 
 export function MatterDeleteControls({
@@ -31,6 +32,9 @@ export function MatterDeleteControls({
         setMessage({ type: "error", text: result.error })
         setConfirming(false)
         return
+      }
+      if (result.warning) {
+        window.alert(result.warning)
       }
       router.push("/app/matters")
       router.refresh()

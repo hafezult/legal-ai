@@ -98,10 +98,10 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Non-owners can leave an organization; owners can transfer ownership to another member (becoming admin) or delete the organization after name confirmation when they own more than one workspace.
 - Organization roles (`owner`, `admin`, `member`, `viewer`) gate read, write, delete, and membership management. Organization matters require current membership; creator ownership only applies to legacy personal matters without an organization.
 - Document upload validates matter write access server-side.
-- Document deletion removes storage objects and cascaded chunks after delete-permission checks.
+- Document deletion removes storage objects and cascaded chunks after delete-permission checks. Storage cleanup failures are logged and surfaced as warnings so orphaned objects are not silently retained.
 - Matter status updates (active / on hold / closed / archived) require write permission.
 - Matter metadata (title, client, practice area, jurisdiction, risk, billing, description) can be edited after creation with write permission.
-- Matter deletion removes cascaded documents, chunks, conversations, and research sessions after delete-permission checks, then cleans Supabase storage objects.
+- Matter deletion removes cascaded documents, chunks, conversations, and research sessions after delete-permission checks, then cleans Supabase storage objects (with the same cleanup warning if object removal fails).
 - Matter conversations can be created or deleted with write permission; research queries also open a conversation thread automatically.
 - Conversation messages (user/assistant/note) are permission-scoped through the parent matter and cascade when a conversation is deleted.
 - Research session deletion requires write permission on the parent matter and revalidates matter/research surfaces.
@@ -114,8 +114,8 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - Public `/api/health` is a cheap process liveness probe (no database fan-out). Settings and the dashboard load full dependency probes via `getHealthReport()`; aggregate readiness ignores optional OpenAI/indexing configuration so missing AI keys do not mark the deployment unhealthy.
 - User emails are stored lowercased and uniquely constrained so invite/member matching cannot collide across accounts.
 - Settings exposes organization roster controls for owners/admins (rename, create organization, add/invite by email, role update, remove, revoke pending invites, transfer ownership, delete organization). Admins can only manage members strictly below their own rank (peer admins cannot demote/remove each other).
-- Pending invites include a shareable `/app/invites/[token]` acceptance link. With `RESEND_API_KEY` configured, invites are emailed automatically; otherwise copyable links and mailto drafts remain available. Invites also activate automatically when the invited email signs in (14-day expiry), and auto-accept writes the same `organization.invite_accept` audit trail as token acceptance. Accepting an invite while already a member upgrades the role when the invite outranks the current membership.
+- Pending invites include a shareable `/app/invites/[token]` acceptance link. Invite pages validate token shape and only reveal organization name, role, and invited email after the signed-in account matches the invite target. With `RESEND_API_KEY` configured, invites are emailed automatically; otherwise copyable links and mailto drafts remain available. Invites also activate automatically when the invited email signs in (14-day expiry), and auto-accept writes the same `organization.invite_accept` audit trail as token acceptance. Accepting an invite while already a member upgrades the role when the invite outranks the current membership.
 - Organization deletion detaches matters (organizationId set null) while preserving creator ownership; memberships and invites cascade away.
-- `/api/index-document/[documentId]` requires a non-trivial `INDEXING_SECRET` outside local development (placeholder values such as `change-me` are rejected).
+- `/api/index-document/[documentId]` requires a non-trivial `INDEXING_SECRET` outside local development (placeholder values such as `change-me` are rejected). Misconfiguration returns a generic 503 while the detailed reason is logged server-side. Embedding batches must return one 1536-dimension vector per chunk before retrieval is marked ready.
 - Responses include baseline security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, and a Clerk/Supabase-aware Content-Security-Policy).
 - Retrieval queries are matter-scoped at the SQL layer.

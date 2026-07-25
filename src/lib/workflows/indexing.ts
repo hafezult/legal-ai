@@ -3,7 +3,11 @@
 import { prisma } from "@/lib/prisma"
 import { extractText } from "@/lib/parsing"
 import { chunkDocument } from "@/lib/retrieval/chunking"
-import { generateBatchEmbeddings, isEmbeddingConfigured } from "@/lib/ai/embeddings"
+import {
+  DEFAULT_CONFIG,
+  generateBatchEmbeddings,
+  isEmbeddingConfigured,
+} from "@/lib/ai/embeddings"
 import { STALE_INDEXING_MS } from "@/lib/documents/status"
 
 export type PipelineStatus =
@@ -168,10 +172,26 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     throw new Error(`Embedding failed: ${message}`)
   }
 
+  const expectedDimensions = DEFAULT_CONFIG.dimensions
+  if (embeddings.length !== chunks.length) {
+    const message = `Embedding provider returned ${embeddings.length} vectors for ${chunks.length} chunks`
+    await setStatus(documentId, "indexed", { retrievalStatus: "failed" })
+    console.error(`[indexing] embedding shape failed for ${documentId}:`, message)
+    throw new Error(`Embedding failed: ${message}`)
+  }
+  for (let i = 0; i < embeddings.length; i++) {
+    const emb = embeddings[i]
+    if (!emb || emb.length !== expectedDimensions) {
+      const message = `Embedding ${i} has ${emb?.length ?? 0} dimensions; expected ${expectedDimensions}`
+      await setStatus(documentId, "indexed", { retrievalStatus: "failed" })
+      console.error(`[indexing] embedding shape failed for ${documentId}:`, message)
+      throw new Error(`Embedding failed: ${message}`)
+    }
+  }
+
   // ── 4. Store embeddings (pgvector, raw SQL) ─────────────────────────────
   for (let i = 0; i < created.length; i++) {
     const emb = embeddings[i]
-    if (!emb) continue
     const vec = `[${emb.join(",")}]`
     await prisma.$executeRaw`
       UPDATE "DocumentChunk"

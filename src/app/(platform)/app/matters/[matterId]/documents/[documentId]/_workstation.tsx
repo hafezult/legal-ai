@@ -69,6 +69,7 @@ export type DocumentIndexAction = () => Promise<{
 export type DocumentDeleteAction = () => Promise<{
   error?: string
   success?: boolean
+  warning?: string
 }>
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -863,6 +864,9 @@ export function DocumentWorkstation({
       if (result.error) {
         setDeleteMessage(result.error)
         return
+      }
+      if (result.warning) {
+        window.alert(result.warning)
       }
       router.push(`/app/matters/${doc.matterId}`)
       router.refresh()

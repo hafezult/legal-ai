@@ -41,7 +41,11 @@ export async function POST(
   // environments must configure a non-trivial INDEXING_SECRET.
   const rejected = indexingSecretRejectedReason()
   if (rejected) {
-    return NextResponse.json({ error: rejected }, { status: 503 })
+    console.error("[/api/index-document] indexing secret rejected:", rejected)
+    return NextResponse.json(
+      { error: "Indexing endpoint is unavailable" },
+      { status: 503 }
+    )
   }
 
   const secret = process.env.INDEXING_SECRET

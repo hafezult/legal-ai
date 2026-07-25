@@ -1,11 +1,38 @@
+import type { ReactNode } from "react"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 
 import { ensureAppUser } from "@/lib/auth/ensure-user"
+import { isInviteTokenShape } from "@/lib/auth/invite-token"
 import { prisma } from "@/lib/prisma"
 import { AcceptInviteClient } from "./_accept-invite-client"
 
 export const dynamic = "force-dynamic"
+
+function InviteShell({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description: string
+  children?: ReactNode
+}) {
+  return (
+    <div className="mx-auto max-w-lg space-y-6 py-10">
+      <div>
+        <p className="text-[11px] uppercase tracking-[0.22em] text-white/40">
+          Invitation
+        </p>
+        <h1 className="mt-2 font-serif text-3xl tracking-tight text-white/[0.96]">
+          {title}
+        </h1>
+        <p className="mt-3 text-sm leading-relaxed text-white/45">{description}</p>
+      </div>
+      {children}
+    </div>
+  )
+}
 
 export default async function InviteAcceptPage({
   params,
@@ -13,7 +40,7 @@ export default async function InviteAcceptPage({
   params: Promise<{ token: string }>
 }) {
   const { token } = await params
-  if (!token) notFound()
+  if (!token || !isInviteTokenShape(token)) notFound()
 
   const user = await ensureAppUser()
   if (!user) return null
@@ -52,48 +79,55 @@ export default async function InviteAcceptPage({
 
   if (!invite) {
     return (
-      <div className="mx-auto max-w-lg space-y-6 py-10">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.22em] text-white/40">
-            Invitation
-          </p>
-          <h1 className="mt-2 font-serif text-3xl tracking-tight text-white/[0.96]">
-            Invite unavailable
-          </h1>
-          <p className="mt-3 text-sm leading-relaxed text-white/45">
-            This invite link is invalid or has been revoked. Ask an organization
-            admin to send a new invitation.
-          </p>
-        </div>
+      <InviteShell
+        title="Invite unavailable"
+        description="This invite link is invalid or has been revoked. Ask an organization admin to send a new invitation."
+      >
         <Link
           href="/app/settings"
           className="inline-flex rounded-lg border border-white/[0.1] bg-white/[0.03] px-4 py-2 text-sm text-white/55 transition-colors hover:border-white/[0.16] hover:text-white/78"
         >
           Open settings
         </Link>
-      </div>
+      </InviteShell>
+    )
+  }
+
+  const emailMatches =
+    Boolean(user.email) &&
+    invite.email.toLowerCase() === user.email.toLowerCase()
+
+  // Do not reveal organization name, role, or invited email until the signed-in
+  // account matches the invite target.
+  if (!emailMatches) {
+    return (
+      <InviteShell
+        title="Invitation"
+        description="Sign in with the email address that received this invite to view and accept it."
+      >
+        <div className="rounded-[var(--aether-radius-panel)] border border-amber-400/15 bg-amber-400/[0.04] px-5 py-5">
+          <p className="text-sm text-amber-100/70">
+            Signed in as {user.email || "an unmatched account"}. Switch accounts
+            to continue.
+          </p>
+          <Link
+            href="/sign-in"
+            className="mt-4 inline-flex rounded-lg border border-white/[0.1] bg-white/[0.03] px-4 py-2 text-sm text-white/55 transition-colors hover:border-white/[0.16] hover:text-white/78"
+          >
+            Switch account
+          </Link>
+        </div>
+      </InviteShell>
     )
   }
 
   const expired = invite.expiresAt.getTime() <= new Date().getTime()
-  const emailMismatch =
-    Boolean(user.email) && invite.email.toLowerCase() !== user.email.toLowerCase()
 
   return (
-    <div className="mx-auto max-w-lg space-y-6 py-10">
-      <div>
-        <p className="text-[11px] uppercase tracking-[0.22em] text-white/40">
-          Invitation
-        </p>
-        <h1 className="mt-2 font-serif text-3xl tracking-tight text-white/[0.96]">
-          Join {invite.organizationName}
-        </h1>
-        <p className="mt-3 text-sm leading-relaxed text-white/45">
-          You were invited as <span className="text-white/70">{invite.role}</span>{" "}
-          for <span className="text-white/70">{invite.email}</span>.
-        </p>
-      </div>
-
+    <InviteShell
+      title={`Join ${invite.organizationName}`}
+      description={`You were invited as ${invite.role} for ${invite.email}.`}
+    >
       {invite.acceptedAt ? (
         <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015] px-5 py-5">
           <p className="text-sm text-white/55">This invite was already accepted.</p>
@@ -116,19 +150,6 @@ export default async function InviteAcceptPage({
             . Ask an admin to send a fresh invite.
           </p>
         </div>
-      ) : emailMismatch ? (
-        <div className="rounded-[var(--aether-radius-panel)] border border-amber-400/15 bg-amber-400/[0.04] px-5 py-5">
-          <p className="text-sm text-amber-100/70">
-            Signed in as {user.email || "unknown"}. Sign in with {invite.email} to
-            accept this invite.
-          </p>
-          <Link
-            href="/sign-in"
-            className="mt-4 inline-flex rounded-lg border border-white/[0.1] bg-white/[0.03] px-4 py-2 text-sm text-white/55 transition-colors hover:border-white/[0.16] hover:text-white/78"
-          >
-            Switch account
-          </Link>
-        </div>
       ) : (
         <AcceptInviteClient
           token={token}
@@ -136,6 +157,6 @@ export default async function InviteAcceptPage({
           role={invite.role}
         />
       )}
-    </div>
+    </InviteShell>
   )
 }
