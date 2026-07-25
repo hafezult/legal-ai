@@ -52,6 +52,8 @@ export async function retrieveByEmbedding(
 
   let rows: Row[]
 
+  // Only publish retrieval-ready documents so mid-pipeline embeddings cannot
+  // surface incomplete indexes during a concurrent embed run.
   if (options.documentIds?.length) {
     rows = await prisma.$queryRaw<Row[]>`
       SELECT
@@ -68,6 +70,8 @@ export async function retrieveByEmbedding(
       JOIN "Document" d ON d.id = dc."documentId"
       WHERE dc."matterId" = ${matterId}
         AND dc."documentId" = ANY(${options.documentIds}::text[])
+        AND d."retrievalStatus" = 'ready'
+        AND d."indexingStatus" = 'retrieval-ready'
         AND dc.embedding IS NOT NULL
         AND (dc.embedding <=> ${vectorLiteral}::vector) < ${threshold}
       ORDER BY distance ASC
@@ -88,6 +92,8 @@ export async function retrieveByEmbedding(
       FROM "DocumentChunk" dc
       JOIN "Document" d ON d.id = dc."documentId"
       WHERE dc."matterId" = ${matterId}
+        AND d."retrievalStatus" = 'ready'
+        AND d."indexingStatus" = 'retrieval-ready'
         AND dc.embedding IS NOT NULL
         AND (dc.embedding <=> ${vectorLiteral}::vector) < ${threshold}
       ORDER BY distance ASC
@@ -98,13 +104,16 @@ export async function retrieveByEmbedding(
   return rows.map((r) => ({ ...r, distance: Number(r.distance) }))
 }
 
-/** Returns count of indexed (embedded) chunks for a matter. */
+/** Returns count of indexed chunks on retrieval-ready documents for a matter. */
 export async function indexedChunkCount(matterId: string): Promise<number> {
   const result = await prisma.$queryRaw<[{ count: bigint }]>`
     SELECT COUNT(*) AS count
-    FROM "DocumentChunk"
-    WHERE "matterId" = ${matterId}
-      AND embedding IS NOT NULL
+    FROM "DocumentChunk" dc
+    JOIN "Document" d ON d.id = dc."documentId"
+    WHERE dc."matterId" = ${matterId}
+      AND d."retrievalStatus" = 'ready'
+      AND d."indexingStatus" = 'retrieval-ready'
+      AND dc.embedding IS NOT NULL
   `
   return Number(result[0]?.count ?? 0)
 }

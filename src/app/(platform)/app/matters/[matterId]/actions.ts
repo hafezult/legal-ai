@@ -19,8 +19,10 @@ import {
   ensureBucket,
   uploadToStorage,
 } from "@/lib/storage/documents"
+import { buildDocumentStoragePath } from "@/lib/storage/paths"
 import {
   isIndexingInProgressError,
+  isIndexingRunSupersededError,
   runIndexingPipeline,
 } from "@/lib/workflows/indexing"
 
@@ -60,8 +62,8 @@ async function triggerIndexing(documentId: string): Promise<DocumentIndexState> 
     await runIndexingPipeline(documentId)
     return { success: true }
   } catch (error) {
-    // Concurrent claim conflict is expected — leave the active run alone.
-    if (isIndexingInProgressError(error)) {
+    // Concurrent claim conflict / superseded lease — leave the newer run alone.
+    if (isIndexingInProgressError(error) || isIndexingRunSupersededError(error)) {
       return {
         error:
           "Indexing is already in progress for this document. Try again after it finishes or stalls.",
@@ -155,7 +157,11 @@ export async function uploadDocument(
   }
 
   const safeFileName = sanitizeUploadName(file.name).slice(0, 180) || "document"
-  const storagePath = `${clerkId}/${matterId}/${Date.now()}-${safeFileName}`
+  const storagePath = buildDocumentStoragePath({
+    clerkId,
+    matterId,
+    fileName: safeFileName,
+  })
 
   const { error: storageErr } = await uploadToStorage(
     storagePath,
