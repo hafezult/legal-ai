@@ -4,7 +4,11 @@ import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
-import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
+import {
+  matterAccessWhere,
+  requireMatterPermission,
+  requireWorkProductDelete,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
 import { consumeRateLimit } from "@/lib/rate-limit"
@@ -267,6 +271,7 @@ export async function runResearch(
       await prisma.conversation.create({
         data: {
           matterId,
+          createdByUserId: user.id,
           title:
             conversationTitle.length > 120
               ? `${conversationTitle.slice(0, 117)}…`
@@ -415,14 +420,14 @@ export async function deleteResearchSession(
         id: sessionId,
         OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }],
       },
-      select: { id: true, matterId: true },
+      select: { id: true, matterId: true, userId: true },
     })
     if (!researchSession) return { error: "Research session not found or access denied." }
 
-    const permission = await requireMatterPermission(
+    const permission = await requireWorkProductDelete(
       user.id,
       researchSession.matterId,
-      "write"
+      researchSession.userId
     )
     if (!permission.ok) return { error: permission.error }
 

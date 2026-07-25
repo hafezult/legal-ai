@@ -5,7 +5,11 @@ import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
-import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
+import {
+  matterAccessWhere,
+  requireMatterPermission,
+  requireWorkProductDelete,
+} from "@/lib/auth/rbac"
 import {
   DRAFT_TYPE_LABELS,
   DRAFT_TYPES,
@@ -407,11 +411,15 @@ export async function deleteDraft(draftId: string): Promise<DraftDeleteState> {
         id: draftId,
         OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }],
       },
-      select: { id: true, matterId: true, title: true },
+      select: { id: true, matterId: true, title: true, userId: true },
     })
     if (!draft) return { error: "Draft not found or access denied." }
 
-    const permission = await requireMatterPermission(user.id, draft.matterId, "write")
+    const permission = await requireWorkProductDelete(
+      user.id,
+      draft.matterId,
+      draft.userId
+    )
     if (!permission.ok) return { error: permission.error }
 
     matterId = draft.matterId

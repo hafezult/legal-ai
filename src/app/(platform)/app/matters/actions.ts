@@ -9,6 +9,7 @@ import {
   getActiveOrganization,
   matterAccessWhere,
   requireMatterPermission,
+  requireWorkProductDelete,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import {
@@ -478,6 +479,7 @@ export async function createConversation(
       data: {
         matterId: permission.access.matterId,
         title: normalizedTitle,
+        createdByUserId: user.id,
       },
       select: { id: true },
     })
@@ -523,14 +525,14 @@ export async function deleteConversation(
         id: conversationId,
         matter: matterAccessWhere(user.id),
       },
-      select: { id: true, matterId: true, title: true },
+      select: { id: true, matterId: true, title: true, createdByUserId: true },
     })
     if (!conversation) return { error: "Conversation not found or access denied." }
 
-    const permission = await requireMatterPermission(
+    const permission = await requireWorkProductDelete(
       user.id,
       conversation.matterId,
-      "write"
+      conversation.createdByUserId
     )
     if (!permission.ok) return { error: permission.error }
 

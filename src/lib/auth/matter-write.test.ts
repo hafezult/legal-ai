@@ -21,6 +21,14 @@ describe("canWriteListedMatter", () => {
       ),
       false
     )
+    assert.equal(
+      canWriteListedMatter(
+        { userId: null, organizationId: null },
+        "u1",
+        true
+      ),
+      false
+    )
   })
 
   it("defers to active org write for organization matters", () => {
