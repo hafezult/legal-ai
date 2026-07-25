@@ -6,7 +6,7 @@ import {
   IndexingRunSupersededError,
   isIndexingInProgressError,
   isIndexingRunSupersededError,
-} from "./indexing.ts"
+} from "./indexing-errors.ts"
 
 describe("indexing error guards", () => {
   it("recognizes IndexingInProgressError instances and name-matched Errors", () => {
