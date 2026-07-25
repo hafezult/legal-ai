@@ -6,7 +6,10 @@ import {
   matterAccessWhereForActiveOrg,
   roleHasPermission,
 } from "@/lib/auth/rbac"
-import { isDocumentRetrievalReady } from "@/lib/documents/status"
+import {
+  isDocumentRetrievalReady,
+  publishedChunkCountContribution,
+} from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -106,7 +109,7 @@ export default async function MemoryPage() {
         ...matter,
         messageCount: messagesByMatter.get(matter.id) ?? 0,
         publishedChunkCount: matter.documents.reduce(
-          (sum, doc) => sum + doc.chunkCount,
+          (sum, doc) => sum + publishedChunkCountContribution(doc),
           0
         ),
       }))

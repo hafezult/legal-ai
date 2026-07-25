@@ -15,6 +15,7 @@ import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import { getMatterAccess, matterAccessWhere, roleHasPermission } from "@/lib/auth/rbac"
 import {
   documentNeedsRetry,
+  isDocumentCorpusIndexed,
   isDocumentRetrievalReady,
 } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
@@ -284,9 +285,7 @@ export default async function MatterDetailPage({
   const boundCreateConversationMessage = createConversationMessage
 
   const hasDocuments = matter.documents.length > 0
-  const indexedDocuments = matter.documents.filter((doc) =>
-    ["indexed", "retrieval-ready"].includes(doc.indexingStatus)
-  ).length
+  const indexedDocuments = matter.documents.filter(isDocumentCorpusIndexed).length
   const retrievalReadyDocuments = matter.documents.filter(isDocumentRetrievalReady).length
   const failedDocuments = matter.documents.filter((doc) =>
     documentNeedsRetry(doc)

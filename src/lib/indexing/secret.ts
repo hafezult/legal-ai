@@ -20,12 +20,28 @@ const WEAK_INDEXING_SECRETS = new Set([
   "ci-indexing-secret",
 ])
 
+/**
+ * Prefixes that mark repo/CI/example placeholders even when long enough.
+ * Exact `ci-indexing-secret` is already in the set; longer rotated CI strings
+ * historically used this prefix and must not unlock production routes.
+ */
+const WEAK_INDEXING_SECRET_PREFIXES = [
+  "ci-indexing-secret",
+  "replace-with-a-long-random",
+] as const
+
+function isWeakIndexingSecretPlaceholder(trimmed: string): boolean {
+  const lower = trimmed.toLowerCase()
+  if (WEAK_INDEXING_SECRETS.has(lower)) return true
+  return WEAK_INDEXING_SECRET_PREFIXES.some((prefix) => lower.startsWith(prefix))
+}
+
 /** True when the secret is long enough, varied, and not a known placeholder. */
 export function isIndexingSecretStrong(secret: string | undefined | null): boolean {
   const trimmed = secret?.trim()
   if (!trimmed) return false
   if (trimmed.length < MIN_SECRET_LENGTH) return false
-  if (WEAK_INDEXING_SECRETS.has(trimmed.toLowerCase())) return false
+  if (isWeakIndexingSecretPlaceholder(trimmed)) return false
   // Reject repeated/low-entropy strings that only meet the length floor.
   if (new Set(trimmed).size < MIN_SECRET_UNIQUE_CHARS) return false
   return true

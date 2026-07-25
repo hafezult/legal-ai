@@ -8,9 +8,10 @@ import {
   documentNeedsRetry,
   documentRetrievalReadyWhere,
   documentRetryOr,
+  isDocumentCorpusIndexed,
   isDocumentRetrievalReady,
+  publishedChunkCountContribution,
   RETRYABLE_IN_PROGRESS_STATUSES,
-  ACTIVE_INDEXING_STATUSES,
 } from "./status.ts"
 
 describe("documentNeedsRetry", () => {
@@ -120,34 +121,52 @@ describe("documentRetryOr", () => {
 })
 
 describe("isDocumentRetrievalReady", () => {
-  it("requires both retrieval-ready indexing and ready retrieval", () => {
+  it("requires ready retrieval and a published generation (matches search SQL)", () => {
     assert.equal(
       isDocumentRetrievalReady({
         indexingStatus: "retrieval-ready",
         retrievalStatus: "ready",
+        publishedRunId: "run-a",
       }),
       true
     )
     assert.equal(
       isDocumentRetrievalReady({
-        indexingStatus: "indexed",
+        indexingStatus: "retrieval-ready",
         retrievalStatus: "ready",
       }),
       false
     )
     assert.equal(
       isDocumentRetrievalReady({
+        indexingStatus: "indexed",
+        retrievalStatus: "ready",
+        publishedRunId: "run-a",
+      }),
+      true
+    )
+    assert.equal(
+      isDocumentRetrievalReady({
         indexingStatus: "retrieval-ready",
         retrievalStatus: "pending",
+        publishedRunId: "run-a",
       }),
       false
     )
   })
 
-  it("keeps mid-reindex docs ready when a publishedRunId is live", () => {
+  it("keeps published docs ready across mid-reindex and failed reindex", () => {
     assert.equal(
       isDocumentRetrievalReady({
         indexingStatus: "embedding",
+        retrievalStatus: "ready",
+        publishedRunId: "run-prior",
+      }),
+      true
+    )
+    assert.equal(
+      isDocumentRetrievalReady({
+        indexingStatus: "failed",
         retrievalStatus: "ready",
         publishedRunId: "run-prior",
       }),
@@ -165,16 +184,10 @@ describe("isDocumentRetrievalReady", () => {
 })
 
 describe("documentRetrievalReadyWhere", () => {
-  it("includes published mid-reindex generations", () => {
+  it("matches ready + publishedRunId regardless of indexing status", () => {
     assert.deepEqual(documentRetrievalReadyWhere(), {
       retrievalStatus: "ready",
-      OR: [
-        { indexingStatus: "retrieval-ready" },
-        {
-          publishedRunId: { not: null },
-          indexingStatus: { in: [...ACTIVE_INDEXING_STATUSES] },
-        },
-      ],
+      publishedRunId: { not: null },
     })
   })
 })
@@ -190,6 +203,70 @@ describe("documentCorpusIndexedWhere", () => {
         },
       ],
     })
+  })
+})
+
+describe("isDocumentCorpusIndexed", () => {
+  it("counts finished statuses and published mid/failed reindex docs", () => {
+    assert.equal(
+      isDocumentCorpusIndexed({
+        indexingStatus: "indexed",
+        retrievalStatus: "pending",
+      }),
+      true
+    )
+    assert.equal(
+      isDocumentCorpusIndexed({
+        indexingStatus: "failed",
+        retrievalStatus: "ready",
+        publishedRunId: "run-a",
+      }),
+      true
+    )
+    assert.equal(
+      isDocumentCorpusIndexed({
+        indexingStatus: "failed",
+        retrievalStatus: "failed",
+        publishedRunId: null,
+      }),
+      false
+    )
+  })
+})
+
+describe("publishedChunkCountContribution", () => {
+  it("counts only published generation sizes", () => {
+    assert.equal(
+      publishedChunkCountContribution({
+        publishedRunId: "run-a",
+        chunkCount: 12,
+      }),
+      12
+    )
+    assert.equal(
+      publishedChunkCountContribution({
+        publishedRunId: null,
+        chunkCount: 12,
+      }),
+      0
+    )
+  })
+})
+
+describe("documentNeedsRetry with preserved failed reindex", () => {
+  it("retries failed indexing even when retrieval stays ready", () => {
+    const now = new Date("2026-07-24T12:00:00.000Z")
+    assert.equal(
+      documentNeedsRetry(
+        {
+          indexingStatus: "failed",
+          retrievalStatus: "ready",
+          updatedAt: now,
+        },
+        now
+      ),
+      true
+    )
   })
 })
 

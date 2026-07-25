@@ -57,3 +57,31 @@ export function parseCitationSnapshot(
     return null
   }
 }
+
+/**
+ * True when a research/draft session referenced this document — either via
+ * live chunk ids or an immutable citation snapshot filename match.
+ * Used after reindex when published chunk ids rotate away.
+ */
+export function sessionReferencesDocument(
+  session: {
+    chunkIds: string[]
+    citationSnapshot?: string | null
+  },
+  doc: { fileName: string; chunkIds: Iterable<string> }
+): boolean {
+  const live = new Set(doc.chunkIds)
+  if (session.chunkIds.some((id) => live.has(id))) return true
+  const snap = parseCitationSnapshot(session.citationSnapshot)
+  return snap?.some((entry) => entry.fileName === doc.fileName) ?? false
+}
+
+/** Snapshot excerpts for a document when live chunk rows are gone. */
+export function snapshotEntriesForDocument(
+  citationSnapshot: string | null | undefined,
+  fileName: string
+): CitationSnapshotEntry[] {
+  const snap = parseCitationSnapshot(citationSnapshot)
+  if (!snap) return []
+  return snap.filter((entry) => entry.fileName === fileName)
+}

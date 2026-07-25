@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 
 import {
   inspectionChunkWhere,
+  restorePublishedStatusFields,
   shouldPreservePublishedIndex,
   shouldStageChunkCount,
 } from "./indexing-publish.ts"
@@ -68,5 +69,20 @@ describe("shouldStageChunkCount", () => {
   it("allows intermediate chunkCount writes only when nothing is published", () => {
     assert.equal(shouldStageChunkCount(false), true)
     assert.equal(shouldStageChunkCount(true), false)
+  })
+})
+
+describe("restorePublishedStatusFields", () => {
+  it("restores parse/retrieval and optionally keeps a durable failed signal", () => {
+    assert.deepEqual(restorePublishedStatusFields(), {
+      indexingStatus: "retrieval-ready",
+      retrievalStatus: "ready",
+      parseStatus: "parsed",
+    })
+    assert.deepEqual(restorePublishedStatusFields({ indexingStatus: "failed" }), {
+      indexingStatus: "failed",
+      retrievalStatus: "ready",
+      parseStatus: "parsed",
+    })
   })
 })

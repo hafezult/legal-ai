@@ -39,47 +39,46 @@ export function documentIndexingBusy(
   return now.getTime() - updatedAt.getTime() < STALE_INDEXING_MS
 }
 
-/** True when a document is eligible for semantic retrieval (matches search SQL). */
+/**
+ * True when a document is eligible for semantic retrieval.
+ * Matches search SQL: retrievalStatus=ready and a publishedRunId generation.
+ * Indexing status is intentionally ignored so a failed reindex can keep the
+ * prior published generation searchable while still surfacing Retry.
+ */
 export function isDocumentRetrievalReady(doc: {
-  indexingStatus: string
+  indexingStatus?: string
   retrievalStatus: string
   publishedRunId?: string | null
 }): boolean {
-  if (doc.retrievalStatus !== "ready") return false
-  // Mid-reindex: a prior publishedRunId stays searchable while the pipeline runs.
-  if (doc.publishedRunId) {
-    return (
-      doc.indexingStatus === "retrieval-ready" ||
-      ACTIVE_INDEXING.has(doc.indexingStatus)
-    )
-  }
-  return doc.indexingStatus === "retrieval-ready"
+  return doc.retrievalStatus === "ready" && Boolean(doc.publishedRunId)
 }
 
 /**
  * Prisma filter matching {@link isDocumentRetrievalReady} for aggregate counts.
- * Prefer `publishedRunId` so reindex claims do not drop corpus readiness.
  */
 export function documentRetrievalReadyWhere(): {
   retrievalStatus: "ready"
-  OR: Array<
-    | { indexingStatus: "retrieval-ready" }
-    | {
-        publishedRunId: { not: null }
-        indexingStatus: { in: string[] }
-      }
-  >
+  publishedRunId: { not: null }
 } {
   return {
     retrievalStatus: "ready",
-    OR: [
-      { indexingStatus: "retrieval-ready" },
-      {
-        publishedRunId: { not: null },
-        indexingStatus: { in: [...ACTIVE_INDEXING_STATUSES] },
-      },
-    ],
+    publishedRunId: { not: null },
   }
+}
+
+/**
+ * True for corpus “Indexed” totals: finished/pending-embed rows plus
+ * mid-reindex (or failed-reindex) documents that still serve a published generation.
+ */
+export function isDocumentCorpusIndexed(doc: {
+  indexingStatus: string
+  retrievalStatus: string
+  publishedRunId?: string | null
+}): boolean {
+  if (doc.indexingStatus === "indexed" || doc.indexingStatus === "retrieval-ready") {
+    return true
+  }
+  return isDocumentRetrievalReady(doc)
 }
 
 /**
@@ -101,6 +100,15 @@ export function documentCorpusIndexedWhere(): {
       },
     ],
   }
+}
+
+/** Published-generation chunk contribution for memory/registry aggregates. */
+export function publishedChunkCountContribution(doc: {
+  publishedRunId?: string | null
+  chunkCount?: number | null
+}): number {
+  if (!doc.publishedRunId) return 0
+  return doc.chunkCount ?? 0
 }
 
 /**

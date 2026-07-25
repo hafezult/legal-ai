@@ -116,8 +116,12 @@ export async function POST(
   }
 
   try {
-    await runIndexingPipeline(documentId)
-    return NextResponse.json({ ok: true, documentId })
+    const result = await runIndexingPipeline(documentId)
+    return NextResponse.json({
+      ok: true,
+      documentId,
+      ...(result.warning ? { warning: result.warning } : {}),
+    })
   } catch (error) {
     if (isIndexingInProgressError(error) || isIndexingRunSupersededError(error)) {
       return NextResponse.json(

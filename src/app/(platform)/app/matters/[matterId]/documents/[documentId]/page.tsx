@@ -2,8 +2,13 @@ import { auth } from "@clerk/nextjs/server"
 import { notFound } from "next/navigation"
 
 import { matterAccessWhere, getMatterAccess, roleHasPermission } from "@/lib/auth/rbac"
-import { prisma } from "@/lib/prisma"
+import { isParsedTextTruncated } from "@/lib/documents/parsed-text"
 import { extractAuthorities } from "@/lib/legal/authorities"
+import { prisma } from "@/lib/prisma"
+import {
+  sessionReferencesDocument,
+  snapshotEntriesForDocument,
+} from "@/lib/retrieval/citation-snapshot"
 import { createSignedUrl } from "@/lib/storage/documents"
 import { inspectionChunkWhere } from "@/lib/workflows/indexing-publish"
 import { deleteDocument, reindexDocument } from "../../actions"
@@ -95,31 +100,49 @@ export default async function DocumentViewerPage({
       }
     }
 
-    // Research sessions that referenced any chunk of this document
+    // Research sessions that referenced this document (live chunk ids or
+    // immutable citation snapshots — survives publish-swap after reindex).
     const chunkIds = rawChunks.map((c) => c.id)
     let rawSessions: {
       id: string
       query: string
       chunkIds: string[]
+      citationSnapshot: string | null
       createdAt: Date
     }[] = []
 
-    if (chunkIds.length > 0) {
-      try {
-        rawSessions = await prisma.researchSession.findMany({
-          where: { matterId, chunkIds: { hasSome: chunkIds } },
-          orderBy: { createdAt: "desc" },
-          take: 20,
-          select: { id: true, query: true, chunkIds: true, createdAt: true },
-        })
-      } catch {
-        /* ignore */
-      }
+    try {
+      const candidates = await prisma.researchSession.findMany({
+        where: { matterId },
+        orderBy: { createdAt: "desc" },
+        take: 80,
+        select: {
+          id: true,
+          query: true,
+          chunkIds: true,
+          citationSnapshot: true,
+          createdAt: true,
+        },
+      })
+      rawSessions = candidates
+        .filter((session) =>
+          sessionReferencesDocument(session, {
+            fileName: doc.fileName,
+            chunkIds,
+          })
+        )
+        .slice(0, 20)
+    } catch {
+      /* ignore */
     }
 
-    // Extract authorities
-    const authorities = doc.parsedText
-      ? extractAuthorities(doc.parsedText)
+    // Prefer full chunk text for authorities; parsedText alone is capped.
+    const authoritySource =
+      rawChunks.length > 0
+        ? rawChunks.map((c) => c.content).join("\n\n")
+        : (doc.parsedText ?? "")
+    const authorities = authoritySource
+      ? extractAuthorities(authoritySource)
       : []
 
     // Signed URL (2 hours)
@@ -169,6 +192,15 @@ export default async function DocumentViewerPage({
         query: s.query,
         chunkIds: s.chunkIds,
         createdAt: s.createdAt.toISOString(),
+        snapshotExcerpts: snapshotEntriesForDocument(
+          s.citationSnapshot,
+          doc.fileName
+        ).map((entry) => ({
+          id: entry.id,
+          content: entry.content,
+          pageRef: entry.pageRef,
+          headingPath: entry.headingPath,
+        })),
       })),
       authorities: authorities.map((a) => ({
         citation: a.citation,
@@ -177,6 +209,7 @@ export default async function DocumentViewerPage({
       })),
       embeddedCount: embeddedIds.size,
       signedUrl,
+      parsedTextTruncated: isParsedTextTruncated(doc.parsedText),
     }
   } catch {
     /* DB unavailable */

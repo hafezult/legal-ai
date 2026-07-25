@@ -11,8 +11,8 @@ import {
   secretsMatch,
 } from "./secret.ts"
 
-const STRONG_SECRET = "ci-indexing-secret-bcd4-min-32chars!"
-const STRONG_DETAIL = "ready-detail-secret-bcd4-min-32chars!"
+const STRONG_SECRET = "aether-ci-validate-4638-x7k9m2p4q8w1!"
+const STRONG_DETAIL = "ready-detail-secret-4638-min-32chars!"
 
 describe("indexing secret helpers", () => {
   it("rejects empty, short, placeholder, and low-entropy secrets", () => {
@@ -25,6 +25,14 @@ describe("indexing secret helpers", () => {
     assert.equal(isIndexingSecretStrong("admin"), false)
     assert.equal(isIndexingSecretStrong("x"), false)
     assert.equal(isIndexingSecretStrong("ci-indexing-secret"), false)
+    assert.equal(
+      isIndexingSecretStrong("ci-indexing-secret-613d-min-32chars!"),
+      false
+    )
+    assert.equal(
+      isIndexingSecretStrong("replace-with-a-long-random-indexing-secret"),
+      false
+    )
     assert.equal(isIndexingSecretStrong("a".repeat(MIN_SECRET_LENGTH - 1)), false)
     assert.equal(isIndexingSecretStrong("a".repeat(MIN_SECRET_LENGTH)), false)
     assert.equal(isIndexingSecretStrong("ab".repeat(MIN_SECRET_LENGTH)), false)

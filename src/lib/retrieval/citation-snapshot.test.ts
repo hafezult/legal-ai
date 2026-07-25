@@ -4,6 +4,8 @@ import { describe, it } from "node:test"
 import {
   buildCitationSnapshot,
   parseCitationSnapshot,
+  sessionReferencesDocument,
+  snapshotEntriesForDocument,
 } from "./citation-snapshot.ts"
 
 describe("citationSnapshot", () => {
@@ -54,5 +56,43 @@ describe("citationSnapshot", () => {
     assert.equal(parseCitationSnapshot("{"), null)
     assert.equal(parseCitationSnapshot("[]"), null)
     assert.equal(parseCitationSnapshot(JSON.stringify([{ id: 1 }])), null)
+  })
+
+  it("matches sessions by live chunk ids or snapshot fileName after reindex", () => {
+    const snapshot = buildCitationSnapshot([
+      {
+        id: "old-chunk",
+        content: "Prior publish excerpt.",
+        fileName: "spa.pdf",
+        pageRef: 2,
+        headingPath: null,
+      },
+    ])
+
+    assert.equal(
+      sessionReferencesDocument(
+        { chunkIds: ["live-1"], citationSnapshot: null },
+        { fileName: "spa.pdf", chunkIds: ["live-1", "live-2"] }
+      ),
+      true
+    )
+    assert.equal(
+      sessionReferencesDocument(
+        { chunkIds: ["old-chunk"], citationSnapshot: snapshot },
+        { fileName: "spa.pdf", chunkIds: ["new-chunk"] }
+      ),
+      true
+    )
+    assert.equal(
+      sessionReferencesDocument(
+        { chunkIds: ["other"], citationSnapshot: snapshot },
+        { fileName: "other.pdf", chunkIds: ["new-chunk"] }
+      ),
+      false
+    )
+
+    const excerpts = snapshotEntriesForDocument(snapshot, "spa.pdf")
+    assert.equal(excerpts.length, 1)
+    assert.equal(excerpts[0]?.id, "old-chunk")
   })
 })

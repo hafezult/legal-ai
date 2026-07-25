@@ -48,7 +48,7 @@ Required variables:
 | `SUPABASE_DOCUMENT_BUCKET` | Storage bucket name; defaults to `legal-documents` in code. |
 | `OPENAI_API_KEY` | Enables embeddings, semantic retrieval, and grounded answers. |
 | `NEXT_PUBLIC_APP_URL` | Absolute app URL used for invite acceptance links. |
-| `INDEXING_SECRET` | Shared secret for the optional `/api/index-document` HTTP trigger outside development (≥32 characters, ≥10 distinct characters, non-placeholder). Upload/reindex run indexing in-process. Also accepted (when strong) as the fallback for `/api/ready` detail unlock. |
+| `INDEXING_SECRET` | Shared secret for the optional `/api/index-document` HTTP trigger outside development (≥32 characters, ≥10 distinct characters, non-placeholder). Values starting with `ci-indexing-secret` or `replace-with-a-long-random` are rejected. Upload/reindex run indexing in-process. Also accepted (when strong) as the fallback for `/api/ready` detail unlock. |
 | `HEALTH_DETAIL_SECRET` | Optional. Prefer this for full `/api/ready` probe details via `x-aether-health-secret`. Same strength rules as `INDEXING_SECRET` (≥32 chars, ≥10 distinct; weak placeholders never unlock details). |
 | `RESEND_API_KEY` | Optional. When set, pending organization invites are emailed via Resend. |
 | `RESEND_FROM_EMAIL` | Optional Resend from address (defaults to `Aether <onboarding@resend.dev>`). |

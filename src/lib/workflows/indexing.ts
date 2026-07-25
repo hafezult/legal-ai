@@ -11,6 +11,7 @@ import {
   generateBatchEmbeddings,
   isEmbeddingConfigured,
 } from "@/lib/ai/embeddings"
+import { PARSED_TEXT_MAX_CHARS } from "@/lib/documents/parsed-text"
 import { STALE_INDEXING_MS } from "@/lib/documents/status"
 import {
   IndexingInProgressError,
@@ -19,9 +20,15 @@ import {
   isIndexingRunSupersededError,
 } from "@/lib/workflows/indexing-errors"
 import {
+  restorePublishedStatusFields,
   shouldPreservePublishedIndex,
   shouldStageChunkCount,
 } from "@/lib/workflows/indexing-publish"
+
+export type IndexingPipelineResult = {
+  /** Soft outcome (e.g. embeddings skipped) that still left the doc usable. */
+  warning?: string
+}
 
 export type PipelineStatus =
   | "pending"
@@ -79,12 +86,19 @@ async function discardRunChunks(documentId: string, runId: string) {
 }
 
 /**
- * After a failed reindex that preserved a published generation, restore
- * retrieval-ready status so search keeps serving publishedRunId chunks.
- * Also restores chunkCount from the live published generation so registry
- * totals do not keep a discarded staging size.
+ * After a failed/no-op reindex that preserved a published generation, restore
+ * retrieval so search keeps serving publishedRunId chunks.
+ * Restores chunkCount from the live published generation and parseStatus so
+ * the workstation does not show a stuck "parsing" state.
+ *
+ * When `indexingStatus` is `"failed"`, retrieval stays ready (search ignores
+ * indexing status) but Workflows/Documents still surface Retry.
  */
-async function restorePublishedReady(documentId: string, runId: string) {
+async function restorePublishedReady(
+  documentId: string,
+  runId: string,
+  options: { indexingStatus?: PipelineStatus } = {}
+) {
   await discardRunChunks(documentId, runId)
 
   const current = await prisma.document.findFirst({
@@ -111,8 +125,9 @@ async function restorePublishedReady(documentId: string, runId: string) {
       publishedRunId: current.publishedRunId,
     },
     data: {
-      indexingStatus: "retrieval-ready",
-      retrievalStatus: "ready",
+      ...restorePublishedStatusFields({
+        indexingStatus: options.indexingStatus ?? "retrieval-ready",
+      }),
       chunkCount,
     },
   })
@@ -199,7 +214,9 @@ async function claimDocumentForIndexing(
   return claimed.count === 1 ? { runId, preservePublished } : null
 }
 
-export async function runIndexingPipeline(documentId: string): Promise<void> {
+export async function runIndexingPipeline(
+  documentId: string
+): Promise<IndexingPipelineResult> {
   const doc = await prisma.document.findUnique({
     where: { id: documentId },
     select: {
@@ -226,7 +243,10 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     extra: Record<string, unknown> = {}
   ) => {
     if (preservePublished) {
-      await restorePublishedReady(documentId, runId)
+      // Keep prior publish searchable; leave a durable failed signal for Retry.
+      await restorePublishedReady(documentId, runId, {
+        indexingStatus: "failed",
+      })
       return
     }
     await setStatus(documentId, runId, indexingStatus, extra)
@@ -253,7 +273,7 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
 
   await setStatus(documentId, runId, "chunking", {
     parseStatus: "parsed",
-    parsedText: parsed.text.slice(0, 50_000), // cap at 50 k chars
+    parsedText: parsed.text.slice(0, PARSED_TEXT_MAX_CHARS),
     pageCount: parsed.pageCount,
     extractionConf: parsed.confidence,
   })
@@ -344,13 +364,19 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     // No API key — keep staged chunks for retry; restore prior publish if any.
     if (preservePublished) {
       await restorePublishedReady(documentId, runId)
-      return
+      return {
+        warning:
+          "Embeddings unavailable. Prior published index left unchanged. Configure OPENAI_API_KEY and retry to refresh retrieval.",
+      }
     }
     await setStatus(documentId, runId, "indexed", {
       retrievalStatus: "pending",
       chunkCount: chunks.length,
     })
-    return
+    return {
+      warning:
+        "Document parsed and chunked, but embeddings are unavailable. Configure OPENAI_API_KEY and retry indexing to enable retrieval.",
+    }
   }
 
   let embeddings: number[][]
@@ -429,4 +455,5 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   await publishRun(documentId, runId, {
     chunkCount: chunks.length,
   })
+  return {}
 }

@@ -44,6 +44,13 @@ export type WorkstationSession = {
   query: string
   chunkIds: string[]
   createdAt: string
+  /** Immutable excerpts when live chunk ids were rotated by reindex. */
+  snapshotExcerpts: Array<{
+    id: string
+    content: string
+    pageRef: number | null
+    headingPath: string | null
+  }>
 }
 
 export type WorkstationAuthority = {
@@ -59,6 +66,7 @@ export type WorkstationData = {
   authorities: WorkstationAuthority[]
   embeddedCount: number
   signedUrl: string | null
+  parsedTextTruncated: boolean
 }
 
 export type DocumentIndexAction = () => Promise<{
@@ -228,9 +236,23 @@ function TabOverview({
     },
     {
       label: "Embedding",
-      note: embeddedCount > 0 ? `${embeddedCount} / ${doc.chunkCount}` : doc.indexingStatus,
-      done: doc.indexingStatus === "retrieval-ready",
-      detail: embeddedCount > 0 ? "Vector representations stored" : "",
+      note:
+        embeddedCount > 0
+          ? `${embeddedCount} / ${doc.chunkCount}`
+          : doc.indexingStatus === "failed" && doc.retrievalStatus === "ready"
+            ? "Published index retained"
+            : doc.indexingStatus,
+      // Published embeddings stay usable mid-reindex / after a failed reindex.
+      done:
+        doc.indexingStatus === "retrieval-ready" ||
+        (doc.retrievalStatus === "ready" && embeddedCount > 0),
+      detail:
+        embeddedCount > 0
+          ? doc.indexingStatus !== "retrieval-ready" &&
+            doc.retrievalStatus === "ready"
+            ? "Prior published vectors still live"
+            : "Vector representations stored"
+          : "",
     },
     {
       label: "Retrieval ready",
@@ -544,7 +566,13 @@ function TabAuthorities({ authorities }: { authorities: WorkstationAuthority[] }
 
 // ── Tab: Parsed text ───────────────────────────────────────────────────────
 
-function TabParsed({ doc }: { doc: WorkstationDoc }) {
+function TabParsed({
+  doc,
+  truncated,
+}: {
+  doc: WorkstationDoc
+  truncated: boolean
+}) {
   if (!doc.parsedText) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
@@ -573,6 +601,12 @@ function TabParsed({ doc }: { doc: WorkstationDoc }) {
           Parser: {mimeLabel(doc.mimeType) === "PDF" ? "pdf-parse" : mimeLabel(doc.mimeType) === "DOCX" ? "mammoth" : "buffer"} ·{" "}
           {doc.extractionConf != null ? `${Math.round(doc.extractionConf * 100)}% confidence` : ""}
         </p>
+        {truncated ? (
+          <p className="mt-2 text-[10px] leading-relaxed text-amber-200/55">
+            Stored preview is capped for inspection. Full document text was still
+            chunked for retrieval; open the Chunks tab for the complete corpus.
+          </p>
+        ) : null}
       </div>
       <div className="flex-1 overflow-y-auto px-5 py-4">
         <div className="space-y-0.5">
@@ -685,8 +719,31 @@ function TabRetrieval({
 
               <div>
                 <p className="mb-2 text-[10px] uppercase tracking-[0.12em] text-white/28">
-                  Chunks used from this document ({usedFromDoc.length})
+                  {usedFromDoc.length > 0
+                    ? `Chunks used from this document (${usedFromDoc.length})`
+                    : session.snapshotExcerpts.length > 0
+                      ? `Citation excerpts retained after reindex (${session.snapshotExcerpts.length})`
+                      : "Chunks used from this document (0)"}
                 </p>
+                {usedFromDoc.length === 0 && session.snapshotExcerpts.length > 0 ? (
+                  <div className="mb-3 space-y-2">
+                    {session.snapshotExcerpts.map((excerpt) => (
+                      <p
+                        key={excerpt.id}
+                        className="rounded border border-white/[0.06] bg-white/[0.015] px-2.5 py-2 text-[10px] leading-relaxed text-white/45"
+                        title={excerpt.headingPath ?? undefined}
+                      >
+                        {excerpt.pageRef != null ? (
+                          <span className="mr-2 font-mono text-white/28">
+                            p.{excerpt.pageRef}
+                          </span>
+                        ) : null}
+                        {excerpt.content.slice(0, 280)}
+                        {excerpt.content.length > 280 ? "…" : ""}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap gap-1.5">
                   {usedFromDoc.map((c) => (
                     <span
@@ -816,7 +873,15 @@ export function DocumentWorkstation({
   canWrite?: boolean
   canDelete?: boolean
 }) {
-  const { doc, chunks, sessions, authorities, embeddedCount, signedUrl } = data
+  const {
+    doc,
+    chunks,
+    sessions,
+    authorities,
+    embeddedCount,
+    signedUrl,
+    parsedTextTruncated,
+  } = data
   const router = useRouter()
 
   // Split pane
@@ -983,13 +1048,21 @@ export function DocumentWorkstation({
       case "authorities":
         return <TabAuthorities authorities={authorities} />
       case "parsed":
-        return <TabParsed doc={doc} />
+        return <TabParsed doc={doc} truncated={parsedTextTruncated} />
       case "retrieval":
         return <TabRetrieval sessions={sessions} chunks={chunks} />
       case "timeline":
         return <TabTimeline doc={doc} chunkCount={chunks.length} />
     }
-  }, [activeTab, doc, chunks, sessions, authorities, embeddedCount])
+  }, [
+    activeTab,
+    doc,
+    chunks,
+    sessions,
+    authorities,
+    embeddedCount,
+    parsedTextTruncated,
+  ])
 
   const indexingBusy = documentIndexingBusy(doc)
   const reindexLabel = indexingBusy

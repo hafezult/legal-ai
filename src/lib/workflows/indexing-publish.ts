@@ -37,3 +37,21 @@ export function inspectionChunkWhere(doc: {
 export function shouldStageChunkCount(preservePublished: boolean): boolean {
   return !preservePublished
 }
+
+/**
+ * Document fields written when restoring a preserved published generation.
+ * Failures keep retrieval ready but can leave indexingStatus=failed for Retry.
+ */
+export function restorePublishedStatusFields(options?: {
+  indexingStatus?: "retrieval-ready" | "failed"
+}): {
+  indexingStatus: "retrieval-ready" | "failed"
+  retrievalStatus: "ready"
+  parseStatus: "parsed"
+} {
+  return {
+    indexingStatus: options?.indexingStatus ?? "retrieval-ready",
+    retrievalStatus: "ready",
+    parseStatus: "parsed",
+  }
+}
