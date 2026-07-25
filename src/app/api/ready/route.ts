@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 import { getHealthReport, type HealthReport } from "@/lib/health"
 import { canRevealHealthDetails } from "@/lib/indexing/secret"
 import { consumeRateLimit } from "@/lib/rate-limit"
+import { clientKeyFromRequest } from "@/lib/request-ip"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -16,15 +17,6 @@ type CachedReport = {
 }
 
 let cachedReport: CachedReport | null = null
-
-function clientKey(request: Request) {
-  // Prefer platform-provided x-real-ip only. Client-controlled
-  // x-forwarded-for chains can rotate buckets when no trusted proxy
-  // overwrites the header, so fall back to a shared anonymous key.
-  const realIp = request.headers.get("x-real-ip")?.trim()
-  if (realIp) return realIp
-  return "anonymous"
-}
 
 async function loadHealthReport(): Promise<HealthReport> {
   const now = Date.now()
@@ -48,7 +40,7 @@ async function loadHealthReport(): Promise<HealthReport> {
  */
 export async function GET(request: Request) {
   const throttle = await consumeRateLimit(
-    `ready:${clientKey(request)}`,
+    `ready:${clientKeyFromRequest(request)}`,
     READY_RATE_LIMIT
   )
   if (!throttle.ok) {

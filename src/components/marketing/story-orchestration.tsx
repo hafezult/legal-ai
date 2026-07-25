@@ -21,7 +21,7 @@ export function OrchestrationStory() {
             One calm spine across every legal motion.
           </h2>
           <p className="mt-6 text-lg leading-relaxed text-white/[0.62]">
-            Route work through the right people, models, and systems without losing
+            Move from intake through indexing, retrieval, and audit without losing
             context—governed steps instead of ad hoc prompts.
           </p>
         </div>

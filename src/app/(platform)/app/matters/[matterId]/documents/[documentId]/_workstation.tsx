@@ -651,9 +651,11 @@ function TabParsed({
 // ── Tab: Retrieval trace ───────────────────────────────────────────────────
 
 function TabRetrieval({
+  matterId,
   sessions,
   chunks,
 }: {
+  matterId: string
   sessions: WorkstationSession[]
   chunks: WorkstationChunk[]
 }) {
@@ -709,7 +711,7 @@ function TabRetrieval({
                   <p className="mt-0.5 text-[10px] text-white/30">{fmtDate(session.createdAt)}</p>
                 </div>
                 <Link
-                  href="/app/research"
+                  href={`/app/research?matter=${matterId}&session=${session.id}`}
                   className="text-[10px] text-white/25 transition-colors hover:text-white/50"
                 >
                   Research ↗
@@ -1057,7 +1059,13 @@ export function DocumentWorkstation({
       case "parsed":
         return <TabParsed doc={doc} truncated={parsedTextTruncated} />
       case "retrieval":
-        return <TabRetrieval sessions={sessions} chunks={chunks} />
+        return (
+          <TabRetrieval
+            matterId={doc.matterId}
+            sessions={sessions}
+            chunks={chunks}
+          />
+        )
       case "timeline":
         return <TabTimeline doc={doc} chunkCount={chunks.length} />
     }

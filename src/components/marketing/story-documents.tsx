@@ -15,8 +15,8 @@ export function DocumentStory() {
               Read the deal once. Remember it everywhere.
             </h2>
             <p className="mt-6 text-lg leading-relaxed text-white/[0.62]">
-              Structure obligations, risk, and definitions across portfolios—then route
-              those signals into drafting, diligence, and matter strategy.
+              Index matter sources once, then ground research and drafting in cited
+              excerpts—so diligence and strategy stay tied to the evidence.
             </p>
           </div>
 

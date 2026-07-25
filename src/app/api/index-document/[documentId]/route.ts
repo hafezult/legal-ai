@@ -7,6 +7,7 @@ import {
 } from "@/lib/indexing/secret"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
+import { clientKeyFromRequest } from "@/lib/request-ip"
 import {
   isIndexingInProgressError,
   isIndexingRunSupersededError,
@@ -21,14 +22,6 @@ const INDEX_AUTH_RATE_LIMIT = { limit: 60, windowMs: 60_000 }
 /** Cluster-/process-wide cap so a valid secret cannot fan out unbounded work. */
 const INDEX_GLOBAL_RATE_LIMIT = { limit: 10, windowMs: 60_000 }
 
-function clientKey(request: Request) {
-  // Prefer platform-provided x-real-ip. Ignore client-controlled
-  // x-forwarded-for chains that can rotate rate-limit buckets.
-  const realIp = request.headers.get("x-real-ip")?.trim()
-  if (realIp) return realIp
-  return "anonymous"
-}
-
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ documentId: string }> }
@@ -36,7 +29,7 @@ export async function POST(
   // Throttle before secret checks so weak/missing secrets cannot be probed
   // without bound.
   const authThrottle = await consumeRateLimit(
-    `index-http-auth:${clientKey(request)}`,
+    `index-http-auth:${clientKeyFromRequest(request)}`,
     INDEX_AUTH_RATE_LIMIT
   )
   if (!authThrottle.ok) {

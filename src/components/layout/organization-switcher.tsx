@@ -1,6 +1,6 @@
 "use client"
 
-import { useTransition } from "react"
+import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { Building2 } from "lucide-react"
 
@@ -24,6 +24,7 @@ export function OrganizationSwitcher({
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
+  const [error, setError] = useState<string | null>(null)
 
   if (organizations.length === 0) return null
 
@@ -70,17 +71,25 @@ export function OrganizationSwitcher({
         value={active.id}
         disabled={isPending}
         aria-label="Switch active organization"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? "org-switcher-error" : undefined}
         title={collapsed ? active.name : undefined}
         onChange={(e) => {
           const nextId = e.target.value
           if (nextId === active.id) return
+          setError(null)
           startTransition(async () => {
             const result = await switchActiveOrganization(nextId)
-            if (!result.error) router.refresh()
+            if (result.error) {
+              setError(result.error)
+              return
+            }
+            router.refresh()
           })
         }}
         className={cn(
           "mt-1.5 w-full rounded-md border border-white/[0.08] bg-black/30 px-2 py-1.5 text-[11px] text-white/70 outline-none transition-colors hover:border-white/[0.14] focus:border-white/[0.18] disabled:opacity-50",
+          error && "border-red-400/40",
           collapsed && "lg:px-1 lg:text-[10px]"
         )}
       >
@@ -90,6 +99,19 @@ export function OrganizationSwitcher({
           </option>
         ))}
       </select>
+      {error ? (
+        <p
+          id="org-switcher-error"
+          role="alert"
+          aria-live="polite"
+          className={cn(
+            "mt-1.5 text-[10px] leading-snug text-red-300/80",
+            collapsed && "lg:hidden"
+          )}
+        >
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }

@@ -273,7 +273,7 @@ export default async function DashboardPage() {
                 {recentSessions.map((session) => (
                   <Link
                     key={session.id}
-                    href={`/app/matters/${session.matter.id}`}
+                    href={`/app/research?matter=${session.matter.id}&session=${session.id}`}
                     className="block rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2.5 transition-colors hover:border-white/[0.1] hover:bg-white/[0.03]"
                   >
                     <p className="line-clamp-1 text-sm text-white/62">{session.query}</p>

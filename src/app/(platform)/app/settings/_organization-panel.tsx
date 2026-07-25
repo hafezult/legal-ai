@@ -370,7 +370,7 @@ export function OrganizationAccessPanel({
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-white/28">
               Invites create a shareable acceptance link for new and existing users;
-              membership starts only after they accept (or auto-accept on sign-in).
+              membership starts only after they Accept the invite link.
               When Resend is configured the invite is also emailed automatically.
             </p>
           </div>
