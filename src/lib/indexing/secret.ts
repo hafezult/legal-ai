@@ -1,4 +1,7 @@
-import { timingSafeEqual } from "crypto"
+import { createHash, timingSafeEqual } from "crypto"
+
+/** Minimum entropy length for production indexing / health-detail secrets. */
+export const MIN_SECRET_LENGTH = 32
 
 /** Placeholder values rejected for INDEXING_SECRET outside development. */
 const WEAK_INDEXING_SECRETS = new Set([
@@ -6,31 +9,37 @@ const WEAK_INDEXING_SECRETS = new Set([
   "changeme",
   "secret",
   "password",
+  "password1",
+  "admin",
   "test",
   "indexing",
   "aether",
+  "ci-indexing-secret",
 ])
 
-/** True when the secret is non-empty and not a known placeholder. */
+/** True when the secret is long enough and not a known placeholder. */
 export function isIndexingSecretStrong(secret: string | undefined | null): boolean {
   const trimmed = secret?.trim()
   if (!trimmed) return false
+  if (trimmed.length < MIN_SECRET_LENGTH) return false
   return !WEAK_INDEXING_SECRETS.has(trimmed.toLowerCase())
+}
+
+function secretDigest(value: string): Buffer {
+  return createHash("sha256").update(value, "utf8").digest()
 }
 
 /**
  * Constant-time equality for secret strings.
- * Returns false when either side is empty or lengths differ.
+ * Digests both sides before compare so length differences do not short-circuit.
+ * Returns false when either side is empty.
  */
 export function secretsMatch(
   provided: string | null | undefined,
   expected: string | null | undefined
 ): boolean {
   if (!provided || !expected) return false
-  const a = Buffer.from(provided)
-  const b = Buffer.from(expected)
-  if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
+  return timingSafeEqual(secretDigest(provided), secretDigest(expected))
 }
 
 /**

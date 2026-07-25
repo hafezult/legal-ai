@@ -98,7 +98,7 @@ export async function getHealthReport(): Promise<HealthReport> {
           status: "degraded" as const,
           configured: true,
           detail:
-            "INDEXING_SECRET is a placeholder — HTTP indexing route rejects it outside development.",
+            "INDEXING_SECRET is too weak (<32 chars or placeholder) — HTTP indexing route rejects it outside development.",
         }
       }
       return {

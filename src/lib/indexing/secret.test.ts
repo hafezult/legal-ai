@@ -5,18 +5,28 @@ import {
   canRevealHealthDetails,
   indexingSecretRejectedReason,
   isIndexingSecretStrong,
+  MIN_SECRET_LENGTH,
   resolveHealthDetailSecret,
   secretsMatch,
 } from "./secret.ts"
 
+const STRONG_SECRET = "ci-indexing-secret-e129-min-32chars!"
+const STRONG_DETAIL = "ready-detail-secret-e129-min-32chars!"
+
 describe("indexing secret helpers", () => {
-  it("rejects empty and placeholder secrets", () => {
+  it("rejects empty, short, and placeholder secrets", () => {
     assert.equal(isIndexingSecretStrong(""), false)
     assert.equal(isIndexingSecretStrong(null), false)
     assert.equal(isIndexingSecretStrong("change-me"), false)
     assert.equal(isIndexingSecretStrong("CHANGE-ME"), false)
     assert.equal(isIndexingSecretStrong("secret"), false)
-    assert.equal(isIndexingSecretStrong("ci-indexing-secret"), true)
+    assert.equal(isIndexingSecretStrong("password1"), false)
+    assert.equal(isIndexingSecretStrong("admin"), false)
+    assert.equal(isIndexingSecretStrong("x"), false)
+    assert.equal(isIndexingSecretStrong("ci-indexing-secret"), false)
+    assert.equal(isIndexingSecretStrong("a".repeat(MIN_SECRET_LENGTH - 1)), false)
+    assert.equal(isIndexingSecretStrong(STRONG_SECRET), true)
+    assert.ok(STRONG_SECRET.length >= MIN_SECRET_LENGTH)
   })
 
   it("allows missing secrets only in development", () => {
@@ -38,13 +48,20 @@ describe("indexing secret helpers", () => {
     assert.equal(
       indexingSecretRejectedReason({
         NODE_ENV: "production",
-        INDEXING_SECRET: "ci-indexing-secret",
+        INDEXING_SECRET: "short-but-not-placeholder",
+      }),
+      "INDEXING_SECRET is too weak for production"
+    )
+    assert.equal(
+      indexingSecretRejectedReason({
+        NODE_ENV: "production",
+        INDEXING_SECRET: STRONG_SECRET,
       }),
       null
     )
   })
 
-  it("compares secrets in constant time", () => {
+  it("compares secrets in constant time via digests", () => {
     assert.equal(secretsMatch("abc", "abc"), true)
     assert.equal(secretsMatch("abc", "abd"), false)
     assert.equal(secretsMatch("abc", "abcd"), false)
@@ -57,18 +74,22 @@ describe("indexing secret helpers", () => {
     assert.equal(resolveHealthDetailSecret({ INDEXING_SECRET: "change-me" }), null)
     assert.equal(
       resolveHealthDetailSecret({ INDEXING_SECRET: "ci-indexing-secret" }),
-      "ci-indexing-secret"
+      null
+    )
+    assert.equal(
+      resolveHealthDetailSecret({ INDEXING_SECRET: STRONG_SECRET }),
+      STRONG_SECRET
     )
     assert.equal(
       resolveHealthDetailSecret({
-        HEALTH_DETAIL_SECRET: "ready-detail-secret",
-        INDEXING_SECRET: "ci-indexing-secret",
+        HEALTH_DETAIL_SECRET: STRONG_DETAIL,
+        INDEXING_SECRET: STRONG_SECRET,
       }),
-      "ready-detail-secret"
+      STRONG_DETAIL
     )
     assert.equal(
-      canRevealHealthDetails("ci-indexing-secret", {
-        INDEXING_SECRET: "ci-indexing-secret",
+      canRevealHealthDetails(STRONG_SECRET, {
+        INDEXING_SECRET: STRONG_SECRET,
       }),
       true
     )
@@ -78,7 +99,7 @@ describe("indexing secret helpers", () => {
     )
     assert.equal(
       canRevealHealthDetails("wrong", {
-        INDEXING_SECRET: "ci-indexing-secret",
+        INDEXING_SECRET: STRONG_SECRET,
       }),
       false
     )
