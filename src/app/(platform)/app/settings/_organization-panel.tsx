@@ -147,6 +147,16 @@ export function OrganizationAccessPanel({
     [router]
   )
 
+  const copyPlainUrl = useCallback(async (inviteId: string, url: string) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopiedInviteId(inviteId)
+      setTimeout(() => setCopiedInviteId(null), 2000)
+    } catch {
+      setMessage({ type: "error", text: "Unable to copy invite link." })
+    }
+  }, [])
+
   const mintInviteUrl = useCallback(
     async (inviteId: string): Promise<string | null> => {
       const result = await refreshOrganizationInviteLink(organizationId, inviteId)
@@ -379,7 +389,7 @@ export function OrganizationAccessPanel({
           <div className="mt-2 flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={() => copyInvite("latest", lastInviteUrl)}
+              onClick={() => copyPlainUrl("latest", lastInviteUrl)}
               className="text-[11px] text-white/45 transition-colors hover:text-white/75"
             >
               {copiedInviteId === "latest" ? "Copied" : "Copy link"}
