@@ -1,9 +1,11 @@
 import { auth } from "@clerk/nextjs/server"
 import { notFound } from "next/navigation"
 
+import { matterAccessWhere, getMatterAccess, roleHasPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities } from "@/lib/legal/authorities"
 import { createSignedUrl } from "@/lib/storage/documents"
+import { deleteDocument, reindexDocument } from "../../actions"
 import { DocumentWorkstation } from "./_workstation"
 import type { WorkstationData } from "./_workstation"
 
@@ -12,10 +14,11 @@ export const dynamic = "force-dynamic"
 export default async function DocumentViewerPage({
   params,
 }: {
-  params: { matterId: string; documentId: string }
+  params: Promise<{ matterId: string; documentId: string }>
 }) {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
+  const { matterId, documentId } = await params
 
   let data: WorkstationData | null = null
 
@@ -25,9 +28,9 @@ export default async function DocumentViewerPage({
 
     const doc = await prisma.document.findFirst({
       where: {
-        id: params.documentId,
-        matterId: params.matterId,
-        matter: { userId: user.id },
+        id: documentId,
+        matterId,
+        matter: matterAccessWhere(user.id),
       },
       select: {
         id: true,
@@ -56,7 +59,7 @@ export default async function DocumentViewerPage({
 
     // Fetch all chunks ordered by index
     const rawChunks = await prisma.documentChunk.findMany({
-      where: { documentId: params.documentId },
+      where: { documentId },
       orderBy: { chunkIndex: "asc" },
       select: {
         id: true,
@@ -97,7 +100,7 @@ export default async function DocumentViewerPage({
     if (chunkIds.length > 0) {
       try {
         rawSessions = await prisma.researchSession.findMany({
-          where: { chunkIds: { hasSome: chunkIds } },
+          where: { matterId, chunkIds: { hasSome: chunkIds } },
           orderBy: { createdAt: "desc" },
           take: 20,
           select: { id: true, query: true, chunkIds: true, createdAt: true },
@@ -174,5 +177,34 @@ export default async function DocumentViewerPage({
 
   if (!data) notFound()
 
-  return <DocumentWorkstation data={data} />
+  let canWrite = false
+  let canDelete = false
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (user) {
+      const access = await getMatterAccess(user.id, matterId)
+      if (access?.role) {
+        canWrite = roleHasPermission(access.role, "write")
+        canDelete = roleHasPermission(access.role, "delete")
+      }
+    }
+  } catch {
+    /* permission probe failed — keep actions hidden */
+  }
+
+  const boundReindex = reindexDocument.bind(null, matterId, documentId)
+  const boundDelete = deleteDocument.bind(null, matterId, documentId)
+
+  return (
+    <DocumentWorkstation
+      data={data}
+      reindexAction={boundReindex}
+      deleteAction={boundDelete}
+      canWrite={canWrite}
+      canDelete={canDelete}
+    />
+  )
 }
