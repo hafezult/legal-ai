@@ -355,7 +355,11 @@ export async function ensurePersonalOrganization(user: {
   return organization.id
 }
 
-/** Accept outstanding email invites for a newly synced user. */
+/**
+ * Opt-in helper: accept outstanding email invites without switching the
+ * active workspace. Prefer `acceptOrganizationInviteByToken` so users can
+ * Decline and so joins never hijack the current workspace.
+ */
 export async function acceptPendingOrganizationInvites(user: {
   id: string
   email: string
@@ -378,7 +382,6 @@ export async function acceptPendingOrganizationInvites(user: {
   })
 
   let accepted = 0
-  let lastAcceptedOrganizationId: string | null = null
   for (const invite of invites) {
     const role: OrgRole =
       invite.role !== "owner" && isOrgRole(invite.role) ? invite.role : "member"
@@ -393,7 +396,6 @@ export async function acceptPendingOrganizationInvites(user: {
     if (!claimed.ok) continue
 
     accepted += 1
-    lastAcceptedOrganizationId = invite.organizationId
 
     await recordAuditEvent({
       userId: user.id,
@@ -406,14 +408,7 @@ export async function acceptPendingOrganizationInvites(user: {
     })
   }
 
-  // Match token accept: switch the active workspace so the join is visible.
-  if (lastAcceptedOrganizationId) {
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { activeOrganizationId: lastAcceptedOrganizationId },
-    })
-  }
-
+  // Never switch activeOrganizationId here — only explicit token Accept may.
   return accepted
 }
 

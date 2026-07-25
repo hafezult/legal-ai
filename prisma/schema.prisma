@@ -23,6 +23,7 @@ model User {
   matters              Matter[]
   researchSessions     ResearchSession[]
   draftDocuments       DraftDocument[]
+  conversations        Conversation[]
   auditEvents          AuditEvent[]
   organizationMembers  OrganizationMember[]
   organizationInvites  OrganizationInvite[] @relation("OrganizationInviteInviter")
@@ -84,6 +85,8 @@ model OrganizationInvite {
   @@unique([organizationId, email])
   @@index([email])
   @@index([invitedByUserId])
+  /// Hot path for opportunistic expired-invite purge (acceptedAt IS NULL).
+  @@index([acceptedAt, expiresAt])
 }
 
 model Matter {
@@ -120,7 +123,9 @@ model Conversation {
   matterId        String
   matter          Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
   title           String
+  /// Creator; nullable so org matter notes survive user deletion.
   createdByUserId String?
+  createdBy       User?    @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   createdAt       DateTime @default(now())
 
   messages ConversationMessage[]
@@ -258,4 +263,6 @@ model AuditEvent {
   @@index([userId, createdAt])
   @@index([matterId])
   @@index([organizationId, createdAt])
+  /// Hot path for opportunistic retention purge by age alone.
+  @@index([createdAt])
 }

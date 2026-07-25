@@ -46,8 +46,6 @@ export {
   isIndexingRunSupersededError,
 }
 
-const IN_PROGRESS_STATUSES = ["parsing", "chunking", "embedding"] as const
-
 async function setStatus(
   documentId: string,
   runId: string,
@@ -175,7 +173,9 @@ async function publishRun(
  * overwritten by a stale reclaim that started afterward.
  *
  * When a publishedRunId already serves retrieval, the claim keeps
- * retrievalStatus=ready so the prior generation stays searchable.
+ * retrievalStatus=ready so the prior generation stays searchable. The preserve
+ * decision is evaluated inside the UPDATE (CASE) so a concurrent publishRun
+ * cannot race a pre-read into clearing live retrieval.
  */
 async function claimDocumentForIndexing(
   documentId: string
@@ -183,35 +183,40 @@ async function claimDocumentForIndexing(
   const staleBefore = new Date(Date.now() - STALE_INDEXING_MS)
   const runId = randomUUID()
 
-  const current = await prisma.document.findUnique({
-    where: { id: documentId },
+  // Single UPDATE: lease + preserve-or-pending retrievalStatus atomically.
+  const claimed = await prisma.$executeRaw`
+    UPDATE "Document"
+    SET
+      "indexingStatus" = 'parsing',
+      "parseStatus" = 'parsing',
+      "indexingRunId" = ${runId},
+      "retrievalStatus" = CASE
+        WHEN "publishedRunId" IS NOT NULL AND "retrievalStatus" = 'ready'
+          THEN "retrievalStatus"
+        ELSE 'pending'
+      END,
+      "updatedAt" = NOW()
+    WHERE id = ${documentId}
+      AND (
+        "indexingStatus" NOT IN ('parsing', 'chunking', 'embedding')
+        OR "updatedAt" < ${staleBefore}
+      )
+  `
+  if (Number(claimed) !== 1) return null
+
+  const after = await prisma.document.findFirst({
+    where: { id: documentId, indexingRunId: runId },
     select: {
       publishedRunId: true,
       retrievalStatus: true,
-      indexingStatus: true,
-      updatedAt: true,
     },
   })
-  if (!current) return null
+  if (!after) return null
 
-  const preservePublished = shouldPreservePublishedIndex(current)
-
-  const claimed = await prisma.document.updateMany({
-    where: {
-      id: documentId,
-      OR: [
-        { indexingStatus: { notIn: [...IN_PROGRESS_STATUSES] } },
-        { updatedAt: { lt: staleBefore } },
-      ],
-    },
-    data: {
-      indexingStatus: "parsing",
-      parseStatus: "parsing",
-      indexingRunId: runId,
-      ...(preservePublished ? {} : { retrievalStatus: "pending" }),
-    },
-  })
-  return claimed.count === 1 ? { runId, preservePublished } : null
+  return {
+    runId,
+    preservePublished: shouldPreservePublishedIndex(after),
+  }
 }
 
 export async function runIndexingPipeline(

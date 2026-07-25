@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import {
+  claimRetrievalStatus,
   inspectionChunkWhere,
   restorePublishedStatusFields,
   shouldPreservePublishedIndex,
@@ -32,6 +33,32 @@ describe("shouldPreservePublishedIndex", () => {
       false
     )
     assert.equal(shouldPreservePublishedIndex({}), false)
+  })
+})
+
+describe("claimRetrievalStatus", () => {
+  it("keeps ready only for a live published generation (claim CASE branch)", () => {
+    assert.equal(
+      claimRetrievalStatus({
+        publishedRunId: "run-a",
+        retrievalStatus: "ready",
+      }),
+      "ready"
+    )
+    assert.equal(
+      claimRetrievalStatus({
+        publishedRunId: "run-a",
+        retrievalStatus: "pending",
+      }),
+      "pending"
+    )
+    assert.equal(
+      claimRetrievalStatus({
+        publishedRunId: null,
+        retrievalStatus: "ready",
+      }),
+      "pending"
+    )
   })
 })
 

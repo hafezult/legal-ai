@@ -13,8 +13,9 @@ import { prisma } from "@/lib/prisma"
 
 export type EnsureAppUserOptions = {
   /**
-   * When false, skip email auto-accept so `/app/invites/[token]` can show
-   * Accept/Decline. Defaults to true for general platform navigation.
+   * Opt-in only. When true, verified-email invites are auto-joined without
+   * switching the active workspace. Defaults to false — membership requires
+   * explicit Accept on `/app/invites/[token]` so Decline cannot be bypassed.
    */
   acceptPendingInvites?: boolean
 }

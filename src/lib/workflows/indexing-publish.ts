@@ -12,6 +12,18 @@ export function shouldPreservePublishedIndex(doc: {
 }
 
 /**
+ * Retrieval status written by an atomic indexing claim.
+ * Must match the CASE expression in `claimDocumentForIndexing` so a concurrent
+ * publishRun cannot flip the document to ready between a pre-read and UPDATE.
+ */
+export function claimRetrievalStatus(doc: {
+  publishedRunId?: string | null
+  retrievalStatus?: string | null
+}): "ready" | "pending" {
+  return shouldPreservePublishedIndex(doc) ? "ready" : "pending"
+}
+
+/**
  * Chunk filter for workstation / inspection UIs.
  * Prefer the published generation so mid-reindex staging rows stay hidden.
  * Fall back to the active run (first-time indexing) when nothing is published.

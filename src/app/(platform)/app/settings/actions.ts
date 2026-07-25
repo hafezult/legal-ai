@@ -442,8 +442,8 @@ export async function addOrganizationMember(
       return { error: "You can only assign roles below your own." }
     }
 
-    // Always mint a pending invite — never force-add an existing user. Membership
-    // is granted only via token accept or verified-email auto-accept.
+    // Always mint a pending invite — never force-add an existing user.
+    // Membership is granted only via explicit token Accept.
     if (actor.user.email.trim().toLowerCase() === emailNormalized) {
       return { error: "You are already a member of this organization." }
     }

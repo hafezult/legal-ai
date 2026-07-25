@@ -7,16 +7,19 @@ import {
 } from "./invite-auto-accept.ts"
 
 describe("shouldAcceptPendingInvites", () => {
-  it("defaults to true so general navigation auto-accepts matching invites", () => {
-    assert.equal(shouldAcceptPendingInvites(), true)
-    assert.equal(shouldAcceptPendingInvites({}), true)
-    assert.equal(shouldAcceptPendingInvites({ acceptPendingInvites: true }), true)
-  })
-
-  it("can be disabled for the invite Accept/Decline surface", () => {
+  it("defaults to false so navigation cannot silently join workspaces", () => {
+    assert.equal(shouldAcceptPendingInvites(), false)
+    assert.equal(shouldAcceptPendingInvites({}), false)
     assert.equal(
       shouldAcceptPendingInvites({ acceptPendingInvites: false }),
       false
+    )
+  })
+
+  it("requires an explicit opt-in when auto-accept is re-enabled", () => {
+    assert.equal(
+      shouldAcceptPendingInvites({ acceptPendingInvites: true }),
+      true
     )
   })
 })

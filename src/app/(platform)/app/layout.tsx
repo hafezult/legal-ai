@@ -1,11 +1,5 @@
-import { headers } from "next/headers"
-
 import { PlatformShell } from "@/components/layout/platform-shell"
 import { ensureAppUser } from "@/lib/auth/ensure-user"
-import {
-  SKIP_INVITE_AUTO_ACCEPT_HEADER,
-  shouldSkipInviteAutoAccept,
-} from "@/lib/auth/invite-auto-accept"
 import { listUserOrganizations } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
@@ -18,13 +12,9 @@ export default async function AppLayout({
   let activeOrganizationId: string | null = null
 
   try {
-    const headerStore = await headers()
-    const skipInviteAutoAccept = shouldSkipInviteAutoAccept(
-      headerStore.get(SKIP_INVITE_AUTO_ACCEPT_HEADER)
-    )
-    const user = await ensureAppUser({
-      acceptPendingInvites: !skipInviteAutoAccept,
-    })
+    // Membership requires explicit Accept on /app/invites/[token] — never
+    // auto-join (and never switch activeOrganizationId) on general navigation.
+    const user = await ensureAppUser({ acceptPendingInvites: false })
     if (user) {
       organizations = await listUserOrganizations(user.id)
       const row = await prisma.user.findUnique({
