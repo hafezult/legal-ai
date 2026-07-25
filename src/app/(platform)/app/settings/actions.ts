@@ -33,6 +33,8 @@ import { consumeRateLimit } from "@/lib/rate-limit"
 const INVITE_RATE_LIMIT = { limit: 10, windowMs: 60_000 } as const
 const INVITE_DECISION_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const ORG_CREATE_RATE_LIMIT = { limit: 5, windowMs: 60_000 } as const
+/** Shared throttle for destructive / membership org admin mutations. */
+const ORG_ADMIN_MUTATION_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const MAX_INVITE_EMAIL_CHARS = 320
 const INVITE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -131,6 +133,14 @@ export async function leaveOrganization(
 ): Promise<OrganizationActionState> {
   const actor = await requireActor()
   if ("error" in actor) return { error: actor.error }
+
+  const throttle = await consumeRateLimit(
+    `org-leave:${actor.user.id}`,
+    ORG_ADMIN_MUTATION_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Leave organization", throttle.retryAfterMs) }
+  }
 
   try {
     const membership = await prisma.organizationMember.findUnique({
@@ -310,6 +320,14 @@ export async function renameOrganization(
   }
   if (trimmed.length > 80) {
     return { error: "Organization name must be 80 characters or fewer." }
+  }
+
+  const throttle = await consumeRateLimit(
+    `org-rename:${actor.user.id}:${organizationId}`,
+    ORG_ADMIN_MUTATION_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Rename organization", throttle.retryAfterMs) }
   }
 
   try {
@@ -521,6 +539,14 @@ export async function transferOwnership(
   const actor = await requireActor()
   if ("error" in actor) return { error: actor.error }
 
+  const throttle = await consumeRateLimit(
+    `org-transfer:${actor.user.id}:${organizationId}`,
+    ORG_ADMIN_MUTATION_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Ownership transfer", throttle.retryAfterMs) }
+  }
+
   try {
     const result = await transferOrganizationOwnership(
       actor.user.id,
@@ -557,6 +583,14 @@ export async function deleteOrganization(
 ): Promise<OrganizationActionState> {
   const actor = await requireActor()
   if ("error" in actor) return { error: actor.error }
+
+  const throttle = await consumeRateLimit(
+    `org-delete:${actor.user.id}`,
+    ORG_ADMIN_MUTATION_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Delete organization", throttle.retryAfterMs) }
+  }
 
   try {
     const result = await deleteOwnedOrganization(
@@ -655,6 +689,14 @@ export async function revokeOrganizationInvite(
   const actor = await requireActor()
   if ("error" in actor) return { error: actor.error }
 
+  const throttle = await consumeRateLimit(
+    `invite-revoke:${actor.user.id}:${organizationId}`,
+    ORG_ADMIN_MUTATION_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Invite revoke", throttle.retryAfterMs) }
+  }
+
   try {
     const admin = await requireOrgAdmin(actor.user.id, organizationId)
     if ("error" in admin) return { error: admin.error }
@@ -698,6 +740,14 @@ export async function updateOrganizationMemberRole(
     return { error: "Role must be viewer, member, or admin." }
   }
   const role = roleInput
+
+  const throttle = await consumeRateLimit(
+    `org-role:${actor.user.id}:${organizationId}`,
+    ORG_ADMIN_MUTATION_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Member role update", throttle.retryAfterMs) }
+  }
 
   try {
     const admin = await requireOrgAdmin(actor.user.id, organizationId)
@@ -754,6 +804,14 @@ export async function removeOrganizationMember(
 ): Promise<OrganizationActionState> {
   const actor = await requireActor()
   if ("error" in actor) return { error: actor.error }
+
+  const throttle = await consumeRateLimit(
+    `org-remove:${actor.user.id}:${organizationId}`,
+    ORG_ADMIN_MUTATION_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Remove member", throttle.retryAfterMs) }
+  }
 
   try {
     const admin = await requireOrgAdmin(actor.user.id, organizationId)

@@ -6,7 +6,6 @@ export type RetrievalQuery = {
   query: string
   matterId: string
   topK?: number
-  jurisdictionFilter?: string
 }
 
 export type RetrievalResult = {

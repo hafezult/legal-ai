@@ -8,6 +8,7 @@ import {
   roleAtLeast,
   roleHasPermission,
 } from "@/lib/auth/rbac"
+import { isAppUrlConfigured } from "@/lib/app-url"
 import { getHealthReport, type HealthReport } from "@/lib/health"
 import { isIndexingSecretStrong } from "@/lib/indexing/secret"
 import { prisma } from "@/lib/prisma"
@@ -109,8 +110,9 @@ export default async function SettingsPage() {
     },
     {
       label: "App URL",
-      configured: Boolean(process.env.NEXT_PUBLIC_APP_URL),
-      description: "Absolute origin for invite acceptance links and email copy.",
+      configured: isAppUrlConfigured(),
+      description:
+        "Absolute origin for invite acceptance links and email copy. Outside development, localhost / loopback hosts do not count as configured.",
     },
     {
       label: "Invite email (Resend)",

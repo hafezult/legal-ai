@@ -17,14 +17,29 @@ export type ProvenanceChunk = {
 export type { CitationSnapshotEntry }
 export { buildCitationSnapshot, parseCitationSnapshot }
 
-function orderByChunkIds(
-  rows: ProvenanceChunk[],
+/** Preserve the original retrieval hit order when reconstituting chunks. */
+export function orderProvenanceByChunkIds<T extends { id: string }>(
+  rows: T[],
   chunkIds: string[]
-): ProvenanceChunk[] {
+): T[] {
   const byId = new Map(rows.map((row) => [row.id, row]))
   return chunkIds
     .map((id) => byId.get(id))
-    .filter((row): row is ProvenanceChunk => Boolean(row))
+    .filter((row): row is T => Boolean(row))
+}
+
+/** Map an immutable citation snapshot into provenance chunks (distance 0). */
+export function provenanceChunksFromSnapshot(
+  snapshot: CitationSnapshotEntry[]
+): ProvenanceChunk[] {
+  return snapshot.map((row) => ({
+    id: row.id,
+    content: row.content,
+    fileName: row.fileName,
+    pageRef: row.pageRef,
+    headingPath: row.headingPath,
+    distance: 0,
+  }))
 }
 
 /**
@@ -43,15 +58,8 @@ export async function loadProvenanceChunks(
 
   const fromSnapshot = parseCitationSnapshot(citationSnapshot)
   if (fromSnapshot) {
-    const restored = fromSnapshot.map((row) => ({
-      id: row.id,
-      content: row.content,
-      fileName: row.fileName,
-      pageRef: row.pageRef,
-      headingPath: row.headingPath,
-      distance: 0,
-    }))
-    const ordered = orderByChunkIds(restored, chunkIds)
+    const restored = provenanceChunksFromSnapshot(fromSnapshot)
+    const ordered = orderProvenanceByChunkIds(restored, chunkIds)
     if (ordered.length > 0) return ordered
     // Snapshot present but ids mismatched — still return snapshot order.
     return restored
@@ -74,7 +82,7 @@ export async function loadProvenanceChunks(
     },
   })
 
-  return orderByChunkIds(
+  return orderProvenanceByChunkIds(
     rows.map((row) => ({
       id: row.id,
       content: row.content,

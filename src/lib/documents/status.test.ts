@@ -193,10 +193,10 @@ describe("documentRetrievalReadyWhere", () => {
 })
 
 describe("documentCorpusIndexedWhere", () => {
-  it("includes finished rows and mid-reindex published documents", () => {
+  it("includes retrieval-ready and mid-reindex published documents", () => {
     assert.deepEqual(documentCorpusIndexedWhere(), {
       OR: [
-        { indexingStatus: { in: ["indexed", "retrieval-ready"] } },
+        { indexingStatus: "retrieval-ready" },
         {
           retrievalStatus: "ready",
           publishedRunId: { not: null },
@@ -207,11 +207,19 @@ describe("documentCorpusIndexedWhere", () => {
 })
 
 describe("isDocumentCorpusIndexed", () => {
-  it("counts finished statuses and published mid/failed reindex docs", () => {
+  it("counts retrieval-ready and published mid/failed reindex docs", () => {
     assert.equal(
       isDocumentCorpusIndexed({
         indexingStatus: "indexed",
         retrievalStatus: "pending",
+      }),
+      false
+    )
+    assert.equal(
+      isDocumentCorpusIndexed({
+        indexingStatus: "retrieval-ready",
+        retrievalStatus: "ready",
+        publishedRunId: "run-a",
       }),
       true
     )

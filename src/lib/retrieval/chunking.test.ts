@@ -82,6 +82,28 @@ describe("chunkDocument", () => {
     }
   })
 
+  it("keeps early document offsets on page 1 without ceil+1 bias", () => {
+    const paragraphs = Array.from({ length: 8 }, (_, i) =>
+      `Part ${i + 1}. ${"word ".repeat(40)}`.trim()
+    )
+    const text = paragraphs.join("\n\n")
+    const pageCount = 10
+    const chunks = chunkDocument(text, [], pageCount, {
+      chunkSize: 80,
+      overlap: 10,
+    })
+
+    assert.ok(chunks.length >= 2)
+    assert.equal(chunks[0]?.pageRef, 1)
+    // A chunk starting in the first 10% of the document must stay on page 1.
+    const early = chunks.find((chunk) => {
+      const offset = text.indexOf(chunk.content.slice(0, 40))
+      return offset >= 0 && offset / text.length < 0.1
+    })
+    assert.ok(early)
+    assert.equal(early?.pageRef, 1)
+  })
+
   it("hard-splits a single oversized paragraph without newlines", () => {
     const text = `Operative clause. ${"indemnity ".repeat(900)}`.trim()
     const chunks = chunkDocument(text, [], 1, { chunkSize: 80, overlap: 10 })

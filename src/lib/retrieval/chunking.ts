@@ -100,11 +100,15 @@ export function chunkDocument(
 
   const flush = () => {
     if (!buffer.trim()) return
+    // Map chunk start offset → 1-based page. Use floor(ratio)+1 (not ceil+1)
+    // so early offsets stay on page 1 instead of systematically biasing forward.
     const pageRef =
       pageCount > 1
         ? Math.min(
             pageCount,
-            Math.ceil((totalCharsConsumed / Math.max(text.length, 1)) * pageCount) + 1
+            Math.floor(
+              (totalCharsConsumed / Math.max(text.length, 1)) * pageCount
+            ) + 1
           )
         : null
     chunks.push({
