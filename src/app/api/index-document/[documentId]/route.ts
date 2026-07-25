@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { isDocumentIdShape } from "@/lib/documents/ids"
 import {
   indexingSecretRejectedReason,
   secretsMatch,
@@ -67,8 +68,9 @@ export async function POST(
   }
 
   const { documentId } = await params
-  if (!documentId) {
-    return NextResponse.json({ error: "documentId required" }, { status: 400 })
+  if (!documentId || !isDocumentIdShape(documentId)) {
+    // Same generic shape as a missing document — do not confirm id validity.
+    return NextResponse.json({ error: "Indexing unavailable" }, { status: 404 })
   }
 
   const throttle = await consumeRateLimit(

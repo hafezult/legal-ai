@@ -12,6 +12,8 @@ import {
 } from "@/lib/auth/rbac"
 import {
   documentNeedsRetry,
+  documentRetryOr,
+  RETRYABLE_IN_PROGRESS_STATUSES,
   STALE_INDEXING_MS,
 } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
@@ -42,31 +44,13 @@ const PIPELINE_STATUSES = [
   "failed",
 ] as const
 
-const IN_PROGRESS_STATUSES = [
-  "pending",
-  "parsing",
-  "chunking",
-  "embedding",
-] as const
-
 function failedDocumentWhere(
   documentWhere: Prisma.DocumentWhereInput,
   staleBefore: Date
 ): Prisma.DocumentWhereInput {
   return {
     ...documentWhere,
-    OR: [
-      { indexingStatus: "failed" },
-      { retrievalStatus: "failed" },
-      {
-        indexingStatus: "indexed",
-        retrievalStatus: "pending",
-      },
-      {
-        indexingStatus: { in: [...IN_PROGRESS_STATUSES] },
-        updatedAt: { lt: staleBefore },
-      },
-    ],
+    OR: documentRetryOr(staleBefore),
   }
 }
 
@@ -162,7 +146,7 @@ export default async function WorkflowsPage() {
           prisma.document.count({
             where: {
               ...documentWhere,
-              indexingStatus: { in: [...IN_PROGRESS_STATUSES] },
+              indexingStatus: { in: [...RETRYABLE_IN_PROGRESS_STATUSES] },
               updatedAt: { gte: staleBefore },
             },
           }),

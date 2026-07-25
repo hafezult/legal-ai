@@ -11,11 +11,15 @@ import {
 } from "@/lib/auth/rbac"
 import {
   documentNeedsRetry,
-  isDocumentRetrievalReady,
+  documentRetryOr,
+  STALE_INDEXING_MS,
 } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
+
+/** Newest sources rendered in the cross-matter registry. */
+const DOCUMENTS_PAGE_LIMIT = 100
 
 function fmtShortDate(d: Date) {
   return new Intl.DateTimeFormat("en-US", {
@@ -63,6 +67,10 @@ export default async function DocumentsPage() {
 
   let documents: DocumentRow[] = []
   let canWrite = false
+  let sourceCount = 0
+  let indexedCount = 0
+  let retrievalReadyCount = 0
+  let failedCount = 0
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -73,29 +81,59 @@ export default async function DocumentsPage() {
         : true
       canWrite = orgCanWrite
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
-      const rows = await prisma.document.findMany({
-        where: { matter: matterWhere },
-        orderBy: { uploadedAt: "desc" },
-        select: {
-          id: true,
-          fileName: true,
-          mimeType: true,
-          fileSize: true,
-          indexingStatus: true,
-          retrievalStatus: true,
-          chunkCount: true,
-          uploadedAt: true,
-          updatedAt: true,
-          matter: {
-            select: {
-              id: true,
-              title: true,
-              userId: true,
-              organizationId: true,
+      const documentWhere = { matter: matterWhere }
+      const staleBefore = new Date(Date.now() - STALE_INDEXING_MS)
+      const retryWhere = {
+        ...documentWhere,
+        OR: documentRetryOr(staleBefore),
+      }
+
+      const [rows, total, indexed, retrievalReady, failed] = await Promise.all([
+        prisma.document.findMany({
+          where: documentWhere,
+          orderBy: { uploadedAt: "desc" },
+          take: DOCUMENTS_PAGE_LIMIT,
+          select: {
+            id: true,
+            fileName: true,
+            mimeType: true,
+            fileSize: true,
+            indexingStatus: true,
+            retrievalStatus: true,
+            chunkCount: true,
+            uploadedAt: true,
+            updatedAt: true,
+            matter: {
+              select: {
+                id: true,
+                title: true,
+                userId: true,
+                organizationId: true,
+              },
             },
           },
-        },
-      })
+        }),
+        prisma.document.count({ where: documentWhere }),
+        prisma.document.count({
+          where: {
+            ...documentWhere,
+            indexingStatus: { in: ["indexed", "retrieval-ready"] },
+          },
+        }),
+        prisma.document.count({
+          where: {
+            ...documentWhere,
+            retrievalStatus: "ready",
+            indexingStatus: "retrieval-ready",
+          },
+        }),
+        prisma.document.count({ where: retryWhere }),
+      ])
+
+      sourceCount = total
+      indexedCount = indexed
+      retrievalReadyCount = retrievalReady
+      failedCount = failed
       documents = rows.map((doc) => ({
         id: doc.id,
         fileName: doc.fileName,
@@ -118,12 +156,6 @@ export default async function DocumentsPage() {
     /* DB unavailable */
   }
 
-  const indexedCount = documents.filter((doc) =>
-    ["indexed", "retrieval-ready"].includes(doc.indexingStatus)
-  ).length
-  const retrievalReadyCount = documents.filter(isDocumentRetrievalReady).length
-  const failedCount = documents.filter((doc) => documentNeedsRetry(doc)).length
-
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -136,11 +168,14 @@ export default async function DocumentsPage() {
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
             Cross-matter source registry with ingestion, indexing, and retrieval readiness.
+            {sourceCount > documents.length
+              ? ` Showing the ${documents.length} most recently uploaded of ${sourceCount}.`
+              : null}
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 text-right sm:grid-cols-4">
           {[
-            { label: "Sources", value: documents.length },
+            { label: "Sources", value: sourceCount },
             { label: "Indexed", value: indexedCount },
             { label: "Retrieval", value: retrievalReadyCount },
             { label: "Failed", value: failedCount },

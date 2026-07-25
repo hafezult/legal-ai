@@ -5,7 +5,9 @@ import {
   STALE_INDEXING_MS,
   documentIndexingBusy,
   documentNeedsRetry,
+  documentRetryOr,
   isDocumentRetrievalReady,
+  RETRYABLE_IN_PROGRESS_STATUSES,
 } from "./status.ts"
 
 describe("documentNeedsRetry", () => {
@@ -78,6 +80,39 @@ describe("documentNeedsRetry", () => {
       ),
       false
     )
+  })
+
+  it("retries stale queued pending documents", () => {
+    const stale = new Date(now.getTime() - STALE_INDEXING_MS - 1_000)
+    assert.equal(
+      documentNeedsRetry(
+        {
+          indexingStatus: "pending",
+          retrievalStatus: "pending",
+          updatedAt: stale,
+        },
+        now
+      ),
+      true
+    )
+  })
+})
+
+describe("documentRetryOr", () => {
+  it("mirrors documentNeedsRetry branches for SQL composition", () => {
+    const staleBefore = new Date("2026-07-24T11:50:00.000Z")
+    const branches = documentRetryOr(staleBefore)
+
+    assert.deepEqual(branches[0], { indexingStatus: "failed" })
+    assert.deepEqual(branches[1], { retrievalStatus: "failed" })
+    assert.deepEqual(branches[2], {
+      indexingStatus: "indexed",
+      retrievalStatus: "pending",
+    })
+    assert.deepEqual(branches[3], {
+      indexingStatus: { in: [...RETRYABLE_IN_PROGRESS_STATUSES] },
+      updatedAt: { lt: staleBefore },
+    })
   })
 })
 

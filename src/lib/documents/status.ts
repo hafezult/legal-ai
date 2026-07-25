@@ -1,12 +1,21 @@
-const RETRYABLE_IN_PROGRESS = new Set([
+/** Queued + mid-pipeline statuses that become retryable once stale. */
+export const RETRYABLE_IN_PROGRESS_STATUSES = [
   "pending",
   "parsing",
   "chunking",
   "embedding",
-])
+] as const
+
+const RETRYABLE_IN_PROGRESS = new Set<string>(RETRYABLE_IN_PROGRESS_STATUSES)
 
 /** Actively claimed pipeline stages (excludes queued `pending`). */
-const ACTIVE_INDEXING = new Set(["parsing", "chunking", "embedding"])
+export const ACTIVE_INDEXING_STATUSES = [
+  "parsing",
+  "chunking",
+  "embedding",
+] as const
+
+const ACTIVE_INDEXING = new Set<string>(ACTIVE_INDEXING_STATUSES)
 
 /** Minutes after which an in-progress indexing status is treated as stuck. */
 export const STALE_INDEXING_MS = 10 * 60 * 1000
@@ -39,6 +48,30 @@ export function isDocumentRetrievalReady(doc: {
     doc.retrievalStatus === "ready" &&
     doc.indexingStatus === "retrieval-ready"
   )
+}
+
+/**
+ * Prisma `OR` branches matching {@link documentNeedsRetry}.
+ * Compose with access filters via top-level AND semantics
+ * (`{ ...accessWhere, OR: documentRetryOr(staleBefore) }`).
+ */
+export function documentRetryOr(staleBefore: Date): Array<{
+  indexingStatus?: string | { in: string[] }
+  retrievalStatus?: string
+  updatedAt?: { lt: Date }
+}> {
+  return [
+    { indexingStatus: "failed" },
+    { retrievalStatus: "failed" },
+    {
+      indexingStatus: "indexed",
+      retrievalStatus: "pending",
+    },
+    {
+      indexingStatus: { in: [...RETRYABLE_IN_PROGRESS_STATUSES] },
+      updatedAt: { lt: staleBefore },
+    },
+  ]
 }
 
 /** Documents that should expose a re-index retry control. */

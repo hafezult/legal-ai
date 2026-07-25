@@ -45,6 +45,7 @@ export default async function MemoryPage() {
 
   let matters: MemoryMatter[] = []
   let canWrite = false
+  let messageCount = 0
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -52,35 +53,44 @@ export default async function MemoryPage() {
       const activeOrg = await getActiveOrganization(user.id)
       canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
-      matters = await prisma.matter.findMany({
-        where: matterWhere,
-        orderBy: { updatedAt: "desc" },
-        select: {
-          id: true,
-          title: true,
-          clientName: true,
-          updatedAt: true,
-          documents: {
-            select: {
-              indexingStatus: true,
-              retrievalStatus: true,
+      const [matterRows, messageTotal] = await Promise.all([
+        prisma.matter.findMany({
+          where: matterWhere,
+          orderBy: { updatedAt: "desc" },
+          select: {
+            id: true,
+            title: true,
+            clientName: true,
+            updatedAt: true,
+            documents: {
+              select: {
+                indexingStatus: true,
+                retrievalStatus: true,
+              },
+            },
+            conversations: {
+              select: {
+                _count: { select: { messages: true } },
+              },
+            },
+            _count: {
+              select: {
+                chunks: true,
+                researchSessions: true,
+                conversations: true,
+                draftDocuments: true,
+              },
             },
           },
-          conversations: {
-            select: {
-              _count: { select: { messages: true } },
-            },
-          },
-          _count: {
-            select: {
-              chunks: true,
-              researchSessions: true,
-              conversations: true,
-              draftDocuments: true,
-            },
-          },
-        },
-      })
+        }),
+        // Aggregate once for the summary strip — avoids a second pass over the
+        // conversation-graph payload when only the workspace total is needed.
+        prisma.conversationMessage.count({
+          where: { conversation: { matter: matterWhere } },
+        }),
+      ])
+      matters = matterRows
+      messageCount = messageTotal
     }
   } catch {
     /* DB unavailable */
@@ -98,15 +108,6 @@ export default async function MemoryPage() {
   )
   const draftCount = matters.reduce(
     (sum, matter) => sum + matter._count.draftDocuments,
-    0
-  )
-  const messageCount = matters.reduce(
-    (sum, matter) =>
-      sum +
-      matter.conversations.reduce(
-        (threadSum, conversation) => threadSum + conversation._count.messages,
-        0
-      ),
     0
   )
   const retrievalReadyCount = matters.reduce(
