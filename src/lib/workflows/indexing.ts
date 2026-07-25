@@ -97,7 +97,7 @@ async function discardRunChunks(documentId: string, runId: string) {
 async function restorePublishedReady(
   documentId: string,
   runId: string,
-  options: { indexingStatus?: PipelineStatus } = {}
+  options: { indexingStatus?: "retrieval-ready" | "failed" } = {}
 ) {
   await discardRunChunks(documentId, runId)
 
