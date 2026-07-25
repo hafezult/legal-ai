@@ -2,7 +2,6 @@ import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import {
-  buildInviteAcceptUrl,
   getActiveOrganization,
   isOrgRole,
   listUserOrganizations,
@@ -45,7 +44,6 @@ type OrgInviteRow = {
   email: string
   role: string
   expiresAt: string
-  inviteUrl: string
 }
 
 const pillClass: Record<"ready" | "missing" | "degraded" | "ok", string> = {
@@ -220,7 +218,8 @@ export default async function SettingsPage() {
               user: { select: { email: true, name: true } },
             },
           }),
-          // Invite tokens/URLs must never serialize to non-admin clients.
+          // Raw invite tokens are never stored or serialized; admins mint a
+          // fresh link via refreshOrganizationInviteLink when copying.
           canManageInvites
             ? prisma.organizationInvite.findMany({
                 where: {
@@ -234,7 +233,6 @@ export default async function SettingsPage() {
                   email: true,
                   role: true,
                   expiresAt: true,
-                  token: true,
                 },
               })
             : Promise.resolve([]),
@@ -263,7 +261,6 @@ export default async function SettingsPage() {
             email: invite.email,
             role: invite.role,
             expiresAt: invite.expiresAt.toISOString(),
-            inviteUrl: buildInviteAcceptUrl(invite.token),
           })),
         }
       }

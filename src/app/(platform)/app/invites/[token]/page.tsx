@@ -3,7 +3,7 @@ import Link from "next/link"
 import { notFound } from "next/navigation"
 
 import { ensureAppUser } from "@/lib/auth/ensure-user"
-import { isInviteTokenShape } from "@/lib/auth/invite-token"
+import { hashInviteToken, isInviteTokenShape } from "@/lib/auth/invite-token"
 import { prisma } from "@/lib/prisma"
 import { AcceptInviteClient } from "./_accept-invite-client"
 
@@ -55,7 +55,7 @@ export default async function InviteAcceptPage({
 
   try {
     const row = await prisma.organizationInvite.findUnique({
-      where: { token },
+      where: { tokenHash: hashInviteToken(token) },
       select: {
         email: true,
         role: true,

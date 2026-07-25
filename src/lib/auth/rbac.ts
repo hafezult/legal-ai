@@ -1,4 +1,5 @@
 import { recordAuditEvent } from "@/lib/audit"
+import { hashInviteToken, isInviteTokenShape } from "@/lib/auth/invite-token"
 import { prisma } from "@/lib/prisma"
 import {
   ORG_ROLES,
@@ -144,6 +145,27 @@ export async function requireMatterPermission(
   } catch {
     return { ok: false, error: "Unable to verify workspace permissions." }
   }
+}
+
+/**
+ * Delete policy for conversations / research / drafts:
+ * - Creators with write may delete their own work product.
+ * - Otherwise the actor needs matter `delete` permission (admin/owner).
+ * - Legacy rows with no creator require `delete`.
+ */
+export async function requireWorkProductDelete(
+  userId: string,
+  matterId: string,
+  createdByUserId: string | null | undefined
+): Promise<
+  | { ok: true; access: MatterAccess }
+  | { ok: false; error: string }
+> {
+  const isCreator = Boolean(createdByUserId && createdByUserId === userId)
+  if (isCreator) {
+    return requireMatterPermission(userId, matterId, "write")
+  }
+  return requireMatterPermission(userId, matterId, "delete")
 }
 
 export type OrganizationSummary = {
@@ -510,8 +532,12 @@ export async function acceptOrganizationInviteByToken(
   | { ok: true; organizationId: string; organizationName: string; role: OrgRole }
   | { ok: false; error: string }
 > {
+  if (!isInviteTokenShape(token)) {
+    return { ok: false, error: "Invite not found or link is invalid." }
+  }
+
   const invite = await prisma.organizationInvite.findUnique({
-    where: { token },
+    where: { tokenHash: hashInviteToken(token) },
     select: {
       id: true,
       email: true,

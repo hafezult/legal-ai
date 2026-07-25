@@ -1,12 +1,14 @@
 "use server"
 
-import { randomBytes } from "crypto"
-
 import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
-import { isInviteTokenShape } from "@/lib/auth/invite-token"
+import {
+  generateInviteToken,
+  hashInviteToken,
+  isInviteTokenShape,
+} from "@/lib/auth/invite-token"
 import {
   acceptOrganizationInviteByToken,
   buildInviteAcceptUrl,
@@ -386,7 +388,8 @@ export async function addOrganizationMember(
       }
     }
 
-    const token = randomBytes(24).toString("hex")
+    const token = generateInviteToken()
+    const tokenHash = hashInviteToken(token)
     const expiresAt = inviteExpiryDate()
     const inviteUrl = buildInviteAcceptUrl(token)
 
@@ -401,13 +404,13 @@ export async function addOrganizationMember(
         organizationId,
         email: emailNormalized,
         role,
-        token,
+        tokenHash,
         invitedByUserId: actor.user.id,
         expiresAt,
       },
       update: {
         role,
-        token,
+        tokenHash,
         invitedByUserId: actor.user.id,
         expiresAt,
         acceptedAt: null,
@@ -529,6 +532,58 @@ export async function deleteOrganization(
     return { success: true }
   } catch {
     return { error: "Unable to delete organization. Please try again." }
+  }
+}
+
+/**
+ * Rotate the opaque invite token and return a fresh acceptance URL.
+ * Raw tokens are never stored — only the SHA-256 hash — so re-copying a
+ * pending invite must mint a new secret.
+ */
+export async function refreshOrganizationInviteLink(
+  organizationId: string,
+  inviteId: string
+): Promise<OrganizationActionState> {
+  const actor = await requireActor()
+  if ("error" in actor) return { error: actor.error }
+
+  try {
+    const admin = await requireOrgAdmin(actor.user.id, organizationId)
+    if ("error" in admin) return { error: admin.error }
+
+    const invite = await prisma.organizationInvite.findFirst({
+      where: {
+        id: inviteId,
+        organizationId,
+        acceptedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      select: { id: true, email: true },
+    })
+    if (!invite) return { error: "Invite not found or already accepted." }
+
+    const token = generateInviteToken()
+    await prisma.organizationInvite.update({
+      where: { id: invite.id },
+      data: { tokenHash: hashInviteToken(token) },
+    })
+
+    await recordAuditEvent({
+      userId: actor.user.id,
+      action: "organization.invite_refresh",
+      entityType: "organization_invite",
+      entityId: invite.id,
+      organizationId,
+      summary: `Rotated invite link for ${invite.email}`,
+    })
+
+    revalidatePath("/app/settings")
+    return {
+      success: true,
+      inviteUrl: buildInviteAcceptUrl(token),
+    }
+  } catch {
+    return { error: "Unable to refresh invite link. Please try again." }
   }
 }
 

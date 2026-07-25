@@ -8,6 +8,7 @@ import {
   createOrganization,
   deleteOrganization,
   leaveOrganization,
+  refreshOrganizationInviteLink,
   removeOrganizationMember,
   renameOrganization,
   revokeOrganizationInvite,
@@ -31,7 +32,6 @@ type InviteRow = {
   email: string
   role: string
   expiresAt: string
-  inviteUrl: string
 }
 
 type OrganizationOption = {
@@ -147,15 +147,55 @@ export function OrganizationAccessPanel({
     [router]
   )
 
-  const copyInvite = useCallback(async (inviteId: string, url: string) => {
-    try {
-      await navigator.clipboard.writeText(url)
-      setCopiedInviteId(inviteId)
-      setTimeout(() => setCopiedInviteId(null), 2000)
-    } catch {
-      setMessage({ type: "error", text: "Unable to copy invite link." })
-    }
-  }, [])
+  const mintInviteUrl = useCallback(
+    async (inviteId: string): Promise<string | null> => {
+      const result = await refreshOrganizationInviteLink(organizationId, inviteId)
+      if (result.error || !result.inviteUrl) {
+        setMessage({
+          type: "error",
+          text: result.error || "Unable to mint invite link.",
+        })
+        return null
+      }
+      setLastInviteUrl(result.inviteUrl)
+      return result.inviteUrl
+    },
+    [organizationId]
+  )
+
+  const copyInvite = useCallback(
+    (inviteId: string) => {
+      setMessage(null)
+      startTransition(async () => {
+        const url = await mintInviteUrl(inviteId)
+        if (!url) return
+        try {
+          await navigator.clipboard.writeText(url)
+          setCopiedInviteId(inviteId)
+          setTimeout(() => setCopiedInviteId(null), 2000)
+          setMessage({
+            type: "success",
+            text: "Fresh invite link copied. Previous links for this invite stop working.",
+          })
+        } catch {
+          setMessage({ type: "error", text: "Unable to copy invite link." })
+        }
+      })
+    },
+    [mintInviteUrl]
+  )
+
+  const emailInvite = useCallback(
+    (invite: InviteRow) => {
+      setMessage(null)
+      startTransition(async () => {
+        const url = await mintInviteUrl(invite.id)
+        if (!url) return
+        window.location.href = buildMailto(invite.email, organizationName, url)
+      })
+    },
+    [mintInviteUrl, organizationName]
+  )
 
   return (
     <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015] p-6">
@@ -480,21 +520,19 @@ export function OrganizationAccessPanel({
                     <button
                       type="button"
                       disabled={isPending}
-                      onClick={() => copyInvite(invite.id, invite.inviteUrl)}
+                      onClick={() => copyInvite(invite.id)}
                       className="text-[11px] text-white/35 transition-colors hover:text-white/70 disabled:opacity-40"
                     >
                       {copiedInviteId === invite.id ? "Copied" : "Copy link"}
                     </button>
-                    <a
-                      href={buildMailto(
-                        invite.email,
-                        organizationName,
-                        invite.inviteUrl
-                      )}
-                      className="text-[11px] text-white/35 transition-colors hover:text-white/70"
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => emailInvite(invite)}
+                      className="text-[11px] text-white/35 transition-colors hover:text-white/70 disabled:opacity-40"
                     >
                       Email
-                    </a>
+                    </button>
                     <button
                       type="button"
                       disabled={isPending}

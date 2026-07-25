@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { isInviteTokenShape } from "./invite-token.ts"
+import {
+  generateInviteToken,
+  hashInviteToken,
+  isInviteTokenShape,
+} from "./invite-token.ts"
 
 describe("isInviteTokenShape", () => {
   it("accepts 48-character hex tokens", () => {
@@ -26,5 +30,21 @@ describe("isInviteTokenShape", () => {
       isInviteTokenShape("0123456789abcdef0123456789abcdef0123456789abcdef0"),
       false
     )
+  })
+})
+
+describe("invite token hashing", () => {
+  it("generates shape-valid tokens", () => {
+    const token = generateInviteToken()
+    assert.equal(isInviteTokenShape(token), true)
+  })
+
+  it("hashes deterministically and never equals the raw token", () => {
+    const token = "0123456789abcdef0123456789abcdef0123456789abcdef"
+    const hash = hashInviteToken(token)
+    assert.equal(hash.length, 64)
+    assert.equal(hash, hashInviteToken(token))
+    assert.notEqual(hash, token)
+    assert.match(hash, /^[a-f0-9]{64}$/)
   })
 })
