@@ -192,7 +192,7 @@ export default async function MatterDetailPage({
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
     if (user) {
-      matter = await prisma.matter.findFirst({
+      const row = await prisma.matter.findFirst({
         where: { id: matterId, ...matterAccessWhere(user.id) },
         select: {
           id: true,
@@ -230,7 +230,7 @@ export default async function MatterDetailPage({
               response: true,
               chunkIds: true,
               createdAt: true,
-              createdByUserId: true,
+              userId: true,
             },
           },
           draftDocuments: {
@@ -274,13 +274,26 @@ export default async function MatterDetailPage({
           },
         },
       })
-      if (matter) {
-        const access = await getMatterAccess(user.id, matter.id)
+      if (row) {
+        const access = await getMatterAccess(user.id, row.id)
         canWrite = Boolean(access?.role && roleHasPermission(access.role, "write"))
         canDelete = Boolean(access?.role && roleHasPermission(access.role, "delete"))
         matter = {
-          ...matter,
-          researchSessions: matter.researchSessions.map((session) => ({
+          id: row.id,
+          title: row.title,
+          description: row.description,
+          clientName: row.clientName,
+          practiceArea: row.practiceArea,
+          jurisdiction: row.jurisdiction,
+          riskLevel: row.riskLevel,
+          billingCode: row.billingCode,
+          status: row.status,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          documents: row.documents,
+          draftDocuments: row.draftDocuments,
+          _count: row._count,
+          researchSessions: row.researchSessions.map((session) => ({
             id: session.id,
             query: session.query,
             response: session.response,
@@ -288,12 +301,12 @@ export default async function MatterDetailPage({
             createdAt: session.createdAt,
             canDelete: canDeleteWorkProduct({
               actorUserId: user.id,
-              createdByUserId: session.createdByUserId,
+              createdByUserId: session.userId,
               matterCanWrite: canWrite,
               matterCanDelete: canDelete,
             }),
           })),
-          conversations: matter.conversations.map((conversation) => ({
+          conversations: row.conversations.map((conversation) => ({
             id: conversation.id,
             title: conversation.title,
             createdAt: conversation.createdAt,

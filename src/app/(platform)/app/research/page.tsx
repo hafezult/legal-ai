@@ -90,7 +90,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
               chunkIds: true,
               createdAt: true,
               matterId: true,
-              createdByUserId: true,
+              userId: true,
               matter: {
                 select: {
                   title: true,
@@ -113,7 +113,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
                   chunkIds: true,
                   createdAt: true,
                   matterId: true,
-                  createdByUserId: true,
+                  userId: true,
                   matter: {
                     select: {
                       title: true,
@@ -183,7 +183,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
           matterTitle: session.matter.title,
           canDelete: canDeleteWorkProduct({
             actorUserId: user.id,
-            createdByUserId: session.createdByUserId,
+            createdByUserId: session.userId,
             matterCanWrite,
             matterCanDelete,
           }),

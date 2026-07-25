@@ -27,7 +27,7 @@ Install dependencies:
 npm install
 ```
 
-Use Node.js 20.9 or newer (CI validates on Node.js 22).
+Use Node.js 22 or newer (required for `npm test` type stripping; CI validates on Node.js 22).
 
 Copy environment variables and fill in service credentials:
 

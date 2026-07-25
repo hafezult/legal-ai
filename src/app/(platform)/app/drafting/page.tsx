@@ -94,7 +94,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
               chunkIds: true,
               createdAt: true,
               matterId: true,
-              createdByUserId: true,
+              userId: true,
               matter: {
                 select: {
                   title: true,
@@ -119,7 +119,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
                   chunkIds: true,
                   createdAt: true,
                   matterId: true,
-                  createdByUserId: true,
+                  userId: true,
                   matter: {
                     select: {
                       title: true,
@@ -190,7 +190,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
           matterTitle: draft.matter.title,
           canDelete: canDeleteWorkProduct({
             actorUserId: user.id,
-            createdByUserId: draft.createdByUserId,
+            createdByUserId: draft.userId,
             matterCanWrite,
             matterCanDelete,
           }),
