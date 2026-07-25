@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import {
   isIndexingInProgressError,
+  isIndexingRunSupersededError,
   runIndexingPipeline,
 } from "@/lib/workflows/indexing"
 
@@ -69,7 +70,7 @@ export async function POST(
     await runIndexingPipeline(documentId)
     return NextResponse.json({ ok: true, documentId })
   } catch (error) {
-    if (isIndexingInProgressError(error)) {
+    if (isIndexingInProgressError(error) || isIndexingRunSupersededError(error)) {
       return NextResponse.json(
         { error: "Indexing already in progress" },
         { status: 409 }

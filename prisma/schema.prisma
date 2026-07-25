@@ -63,6 +63,8 @@ model OrganizationMember {
 
   @@unique([organizationId, userId])
   @@index([userId])
+  // Single-owner invariant is enforced by a partial unique index in SQL:
+  // OrganizationMember_one_owner_per_org ON (organizationId) WHERE role = 'owner'
 }
 
 model OrganizationInvite {
@@ -71,7 +73,8 @@ model OrganizationInvite {
   organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   email           String
   role            OrganizationRole @default(member)
-  token           String           @unique
+  /// SHA-256 hex digest of the opaque invite token (raw token never stored).
+  tokenHash       String           @unique
   invitedByUserId String
   invitedBy       User             @relation("OrganizationInviteInviter", fields: [invitedByUserId], references: [id], onDelete: Cascade)
   expiresAt       DateTime
@@ -93,8 +96,9 @@ model Matter {
   riskLevel      String        @default("medium")
   billingCode    String?
   status         String        @default("active")
-  userId         String
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Original creator; nullable so org-shared matters survive user deletion.
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   createdAt      DateTime      @default(now())
@@ -112,15 +116,17 @@ model Matter {
 }
 
 model Conversation {
-  id        String   @id @default(cuid())
-  matterId  String
-  matter    Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
-  title     String
-  createdAt DateTime @default(now())
+  id              String   @id @default(cuid())
+  matterId        String
+  matter          Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  title           String
+  createdByUserId String?
+  createdAt       DateTime @default(now())
 
   messages ConversationMessage[]
 
   @@index([matterId])
+  @@index([createdByUserId])
 }
 
 model ConversationMessage {
@@ -146,6 +152,8 @@ model Document {
   indexingStatus      String   @default("pending")
   retrievalStatus     String   @default("pending")
   parseStatus         String   @default("pending")
+  /// Lease id for the active indexing claim; status publishes require a match.
+  indexingRunId       String?
   parsedText          String?
   pageCount           Int?
   chunkCount          Int      @default(0)
@@ -157,6 +165,7 @@ model Document {
   chunks DocumentChunk[]
 
   @@index([matterId])
+  @@index([indexingRunId])
 }
 
 model DocumentChunk {
