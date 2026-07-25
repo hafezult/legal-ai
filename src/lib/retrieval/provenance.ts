@@ -2,44 +2,20 @@ import { prisma } from "@/lib/prisma"
 import {
   buildCitationSnapshot,
   parseCitationSnapshot,
+  orderProvenanceByChunkIds,
+  provenanceChunksFromSnapshot,
+  resolveProvenanceFromSnapshot,
   type CitationSnapshotEntry,
+  type ProvenanceChunk,
 } from "@/lib/retrieval/citation-snapshot"
 
-export type ProvenanceChunk = {
-  id: string
-  content: string
-  fileName: string
-  pageRef: number | null
-  headingPath: string | null
-  distance: number
-}
-
-export type { CitationSnapshotEntry }
-export { buildCitationSnapshot, parseCitationSnapshot }
-
-/** Preserve the original retrieval hit order when reconstituting chunks. */
-export function orderProvenanceByChunkIds<T extends { id: string }>(
-  rows: T[],
-  chunkIds: string[]
-): T[] {
-  const byId = new Map(rows.map((row) => [row.id, row]))
-  return chunkIds
-    .map((id) => byId.get(id))
-    .filter((row): row is T => Boolean(row))
-}
-
-/** Map an immutable citation snapshot into provenance chunks (distance 0). */
-export function provenanceChunksFromSnapshot(
-  snapshot: CitationSnapshotEntry[]
-): ProvenanceChunk[] {
-  return snapshot.map((row) => ({
-    id: row.id,
-    content: row.content,
-    fileName: row.fileName,
-    pageRef: row.pageRef,
-    headingPath: row.headingPath,
-    distance: 0,
-  }))
+export type { ProvenanceChunk, CitationSnapshotEntry }
+export {
+  buildCitationSnapshot,
+  parseCitationSnapshot,
+  orderProvenanceByChunkIds,
+  provenanceChunksFromSnapshot,
+  resolveProvenanceFromSnapshot,
 }
 
 /**
@@ -56,14 +32,8 @@ export async function loadProvenanceChunks(
 ): Promise<ProvenanceChunk[]> {
   if (!matterId || chunkIds.length === 0) return []
 
-  const fromSnapshot = parseCitationSnapshot(citationSnapshot)
-  if (fromSnapshot) {
-    const restored = provenanceChunksFromSnapshot(fromSnapshot)
-    const ordered = orderProvenanceByChunkIds(restored, chunkIds)
-    if (ordered.length > 0) return ordered
-    // Snapshot present but ids mismatched — still return snapshot order.
-    return restored
-  }
+  const fromSnapshot = resolveProvenanceFromSnapshot(chunkIds, citationSnapshot)
+  if (fromSnapshot) return fromSnapshot
 
   const uniqueIds = Array.from(new Set(chunkIds.filter(Boolean)))
   if (uniqueIds.length === 0) return []

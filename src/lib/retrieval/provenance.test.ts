@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { buildCitationSnapshot } from "./citation-snapshot.ts"
 import {
-  loadProvenanceChunks,
+  buildCitationSnapshot,
   orderProvenanceByChunkIds,
   provenanceChunksFromSnapshot,
-} from "./provenance.ts"
+  resolveProvenanceFromSnapshot,
+} from "./citation-snapshot.ts"
 
 describe("orderProvenanceByChunkIds", () => {
   it("preserves the original retrieval hit order", () => {
@@ -60,8 +60,8 @@ describe("provenanceChunksFromSnapshot", () => {
   })
 })
 
-describe("loadProvenanceChunks", () => {
-  it("prefers citation snapshots and orders by chunkIds", async () => {
+describe("resolveProvenanceFromSnapshot", () => {
+  it("prefers citation snapshots and orders by chunkIds", () => {
     const snapshot = buildCitationSnapshot([
       {
         id: "b",
@@ -79,16 +79,17 @@ describe("loadProvenanceChunks", () => {
       },
     ])
 
-    const chunks = await loadProvenanceChunks("matter-1", ["a", "b"], snapshot)
+    const chunks = resolveProvenanceFromSnapshot(["a", "b"], snapshot)
+    assert.ok(chunks)
     assert.deepEqual(
-      chunks.map((chunk) => chunk.id),
+      chunks!.map((chunk) => chunk.id),
       ["a", "b"]
     )
-    assert.equal(chunks[0]?.content, "First hit")
-    assert.equal(chunks[0]?.distance, 0)
+    assert.equal(chunks![0]?.content, "First hit")
+    assert.equal(chunks![0]?.distance, 0)
   })
 
-  it("returns snapshot order when chunkIds do not match", async () => {
+  it("returns snapshot order when chunkIds do not match", () => {
     const snapshot = buildCitationSnapshot([
       {
         id: "snap-1",
@@ -99,17 +100,14 @@ describe("loadProvenanceChunks", () => {
       },
     ])
 
-    const chunks = await loadProvenanceChunks(
-      "matter-1",
-      ["missing-id"],
-      snapshot
-    )
-    assert.equal(chunks.length, 1)
-    assert.equal(chunks[0]?.id, "snap-1")
+    const chunks = resolveProvenanceFromSnapshot(["missing-id"], snapshot)
+    assert.ok(chunks)
+    assert.equal(chunks!.length, 1)
+    assert.equal(chunks![0]?.id, "snap-1")
   })
 
-  it("returns empty when matter or chunk ids are missing", async () => {
-    assert.deepEqual(await loadProvenanceChunks("", ["a"]), [])
-    assert.deepEqual(await loadProvenanceChunks("matter-1", []), [])
+  it("returns null when no snapshot is present", () => {
+    assert.equal(resolveProvenanceFromSnapshot(["a"], null), null)
+    assert.equal(resolveProvenanceFromSnapshot(["a"], ""), null)
   })
 })

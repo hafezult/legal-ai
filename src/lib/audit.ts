@@ -1,4 +1,10 @@
 import { prisma } from "@/lib/prisma"
+import {
+  AUDIT_PURGE_BATCH_SIZE,
+  DEFAULT_AUDIT_RETENTION_DAYS,
+  auditRetentionCutoff,
+  claimAuditPurgeSlot,
+} from "@/lib/audit-retention"
 
 export type AuditEventInput = {
   userId: string
@@ -11,19 +17,13 @@ export type AuditEventInput = {
   metadata?: Record<string, unknown>
 }
 
-/** Default retention for workspace audit rows (configurable retention UI is roadmap). */
-export const DEFAULT_AUDIT_RETENTION_DAYS = 365
-
-/** Cap rows deleted per purge pass so a catch-up cannot lock the table. */
-export const AUDIT_PURGE_BATCH_SIZE = 2_000
-
-let lastAuditPurgeAt = 0
-const AUDIT_PURGE_COOLDOWN_MS = 60 * 60 * 1000
-
-/** Test helper — reset opportunistic purge throttle. */
-export function resetAuditPurgeThrottleForTests(): void {
-  lastAuditPurgeAt = 0
-}
+export {
+  AUDIT_PURGE_BATCH_SIZE,
+  DEFAULT_AUDIT_RETENTION_DAYS,
+  auditRetentionCutoff,
+  claimAuditPurgeSlot,
+  resetAuditPurgeThrottleForTests,
+} from "@/lib/audit-retention"
 
 /**
  * Delete audit events older than the retention window.
@@ -39,14 +39,7 @@ export async function purgeExpiredAuditEvents(
   const now = options.now ?? new Date()
   const cutoff =
     options.olderThan ??
-    new Date(
-      now.getTime() -
-        (options.retentionDays ?? DEFAULT_AUDIT_RETENTION_DAYS) *
-          24 *
-          60 *
-          60 *
-          1000
-    )
+    auditRetentionCutoff(now, options.retentionDays ?? DEFAULT_AUDIT_RETENTION_DAYS)
 
   const expired = await prisma.auditEvent.findMany({
     where: { createdAt: { lt: cutoff } },
@@ -67,9 +60,7 @@ export async function purgeExpiredAuditEvents(
  * writes stay non-blocking while the AuditEvent table stays bounded.
  */
 export function maybePurgeExpiredAuditEvents(): void {
-  const now = Date.now()
-  if (now - lastAuditPurgeAt < AUDIT_PURGE_COOLDOWN_MS) return
-  lastAuditPurgeAt = now
+  if (!claimAuditPurgeSlot()) return
   void purgeExpiredAuditEvents().catch(() => {
     /* Non-fatal */
   })

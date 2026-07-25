@@ -85,3 +85,55 @@ export function snapshotEntriesForDocument(
   if (!snap) return []
   return snap.filter((entry) => entry.fileName === fileName)
 }
+
+export type ProvenanceChunk = {
+  id: string
+  content: string
+  fileName: string
+  pageRef: number | null
+  headingPath: string | null
+  distance: number
+}
+
+/** Preserve the original retrieval hit order when reconstituting chunks. */
+export function orderProvenanceByChunkIds<T extends { id: string }>(
+  rows: T[],
+  chunkIds: string[]
+): T[] {
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  return chunkIds
+    .map((id) => byId.get(id))
+    .filter((row): row is T => Boolean(row))
+}
+
+/** Map an immutable citation snapshot into provenance chunks (distance 0). */
+export function provenanceChunksFromSnapshot(
+  snapshot: CitationSnapshotEntry[]
+): ProvenanceChunk[] {
+  return snapshot.map((row) => ({
+    id: row.id,
+    content: row.content,
+    fileName: row.fileName,
+    pageRef: row.pageRef,
+    headingPath: row.headingPath,
+    distance: 0,
+  }))
+}
+
+/**
+ * Prefer citation snapshots for restored provenance. Returns null when no
+ * usable snapshot exists so callers can fall back to live DocumentChunk rows.
+ */
+export function resolveProvenanceFromSnapshot(
+  chunkIds: string[],
+  citationSnapshot?: string | null
+): ProvenanceChunk[] | null {
+  const fromSnapshot = parseCitationSnapshot(citationSnapshot)
+  if (!fromSnapshot) return null
+
+  const restored = provenanceChunksFromSnapshot(fromSnapshot)
+  const ordered = orderProvenanceByChunkIds(restored, chunkIds)
+  if (ordered.length > 0) return ordered
+  // Snapshot present but ids mismatched — still return snapshot order.
+  return restored
+}
