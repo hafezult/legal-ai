@@ -5,7 +5,7 @@ import {
   detectDocumentType,
   extractHeadings,
   normalizeText,
-} from "./index.ts"
+} from "./text.ts"
 
 describe("detectDocumentType", () => {
   it("detects pdf, docx, and txt from mime or extension", () => {

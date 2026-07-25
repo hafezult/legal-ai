@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { normalizeStoragePaths } from "./documents.ts"
+import { normalizeStoragePaths } from "./paths.ts"
 
 describe("normalizeStoragePaths", () => {
   it("deduplicates and drops empty paths", () => {

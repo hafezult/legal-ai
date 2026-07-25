@@ -1,4 +1,5 @@
 import { STORAGE_BUCKET, getSupabaseAdmin } from "./client"
+import { normalizeStoragePaths } from "./paths"
 
 export type StorageCleanupResult = {
   ok: boolean
@@ -6,10 +7,7 @@ export type StorageCleanupResult = {
   error?: string
 }
 
-/** Deduplicate and drop empty storage object paths. */
-export function normalizeStoragePaths(paths: string[]): string[] {
-  return [...new Set(paths.filter((path) => Boolean(path?.trim())))]
-}
+export { normalizeStoragePaths }
 
 export async function uploadToStorage(
   path: string,
