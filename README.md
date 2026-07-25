@@ -7,7 +7,7 @@ Aether is a Next.js legal intelligence workspace for matter-scoped document inge
 1. Create a Clerk-authenticated user session.
 2. Create a matter workspace.
 3. Upload PDF, DOCX, or TXT source documents to a matter.
-4. The indexing endpoint parses, chunks, embeds, and stores document vectors.
+4. Upload and reindex run the indexing pipeline in-process (parse → chunk → embed → store vectors). An optional `/api/index-document` HTTP trigger is also available when `INDEXING_SECRET` is configured.
 5. The research surface retrieves matter-scoped excerpts and generates grounded answers with source traceability.
 6. The drafting surface prepares advice notes, skeletons, memos, and clause analyses from the same retrieval layer.
 

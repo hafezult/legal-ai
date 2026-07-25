@@ -116,7 +116,7 @@ function TimelineMock() {
 
 function RagFlowMock() {
   const nodes = [
-    { id: "Sources", sub: "DMS + matter files" },
+    { id: "Sources", sub: "Matter files" },
     { id: "Index", sub: "Chunk + embed" },
     { id: "Retrieve", sub: "Scoped search" },
     { id: "Reason", sub: "Grounded output" },

@@ -147,12 +147,22 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   }
 
   // ── 1. Parse ────────────────────────────────────────────────────────────
+  // Keep the lease warm during long PDF/DOCX extraction so a 10-minute stale
+  // reclaim cannot steal the document mid-parse.
+  const parseHeartbeat = setInterval(() => {
+    void prisma.document.updateMany({
+      where: { id: documentId, indexingRunId: runId },
+      data: { updatedAt: new Date() },
+    })
+  }, 60_000)
   let parsed
   try {
     parsed = await extractText(doc.storagePath, doc.mimeType, doc.fileName)
   } catch (err) {
     await setStatus(documentId, runId, "failed", { parseStatus: "failed" })
     throw err
+  } finally {
+    clearInterval(parseHeartbeat)
   }
 
   await setStatus(documentId, runId, "chunking", {
@@ -188,34 +198,44 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     )
   }
 
-  // Persist chunks without embeddings. Create in batches with lease heartbeats
-  // so a long insert cannot go stale and leave orphan rows for a reclaim.
+  // Persist chunks without embeddings. Each batch re-checks the lease inside
+  // the same transaction as the inserts so a superseded run cannot leave
+  // orphan DocumentChunk rows after a stale reclaim.
   const created: { id: string }[] = []
   const CREATE_BATCH = 40
   for (let offset = 0; offset < chunks.length; offset += CREATE_BATCH) {
-    await assertRunActive(documentId, runId)
     const slice = chunks.slice(offset, offset + CREATE_BATCH)
-    const batch = await prisma.$transaction(
-      slice.map((c) =>
-        prisma.documentChunk.create({
-          data: {
-            documentId,
-            matterId: doc.matterId,
-            content: c.content,
-            chunkIndex: c.chunkIndex,
-            tokenCount: c.tokenCount,
-            pageRef: c.pageRef,
-            headingPath: c.headingPath,
-          },
-          select: { id: true },
-        })
+    const batch = await prisma.$transaction(async (tx) => {
+      const active = await tx.document.findFirst({
+        where: { id: documentId, indexingRunId: runId },
+        select: { id: true },
+      })
+      if (!active) {
+        throw new IndexingRunSupersededError(documentId, runId)
+      }
+      const rows = await Promise.all(
+        slice.map((c) =>
+          tx.documentChunk.create({
+            data: {
+              documentId,
+              matterId: doc.matterId,
+              content: c.content,
+              chunkIndex: c.chunkIndex,
+              tokenCount: c.tokenCount,
+              pageRef: c.pageRef,
+              headingPath: c.headingPath,
+            },
+            select: { id: true },
+          })
+        )
       )
-    )
-    created.push(...batch)
-    await prisma.document.updateMany({
-      where: { id: documentId, indexingRunId: runId },
-      data: { updatedAt: new Date() },
+      await tx.document.updateMany({
+        where: { id: documentId, indexingRunId: runId },
+        data: { updatedAt: new Date() },
+      })
+      return rows
     })
+    created.push(...batch)
   }
 
   await setStatus(documentId, runId, "embedding", { chunkCount: chunks.length })

@@ -11,8 +11,8 @@ import {
   secretsMatch,
 } from "./secret.ts"
 
-const STRONG_SECRET = "ci-indexing-secret-779a-min-32chars!"
-const STRONG_DETAIL = "ready-detail-secret-779a-min-32chars!"
+const STRONG_SECRET = "ci-indexing-secret-bcd4-min-32chars!"
+const STRONG_DETAIL = "ready-detail-secret-bcd4-min-32chars!"
 
 describe("indexing secret helpers", () => {
   it("rejects empty, short, placeholder, and low-entropy secrets", () => {

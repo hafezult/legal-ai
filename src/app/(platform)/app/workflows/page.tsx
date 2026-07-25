@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
+import type { Prisma } from "@prisma/client"
 
 import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
@@ -38,7 +39,36 @@ const PIPELINE_STATUSES = [
   "embedding",
   "indexed",
   "retrieval-ready",
+  "failed",
 ] as const
+
+const IN_PROGRESS_STATUSES = [
+  "pending",
+  "parsing",
+  "chunking",
+  "embedding",
+] as const
+
+function failedDocumentWhere(
+  documentWhere: Prisma.DocumentWhereInput,
+  staleBefore: Date
+): Prisma.DocumentWhereInput {
+  return {
+    ...documentWhere,
+    OR: [
+      { indexingStatus: "failed" },
+      { retrievalStatus: "failed" },
+      {
+        indexingStatus: "indexed",
+        retrievalStatus: "pending",
+      },
+      {
+        indexingStatus: { in: [...IN_PROGRESS_STATUSES] },
+        updatedAt: { lt: staleBefore },
+      },
+    ],
+  }
+}
 
 function fmtShortDate(d: Date) {
   return new Intl.DateTimeFormat("en-US", {
@@ -58,7 +88,9 @@ export default async function WorkflowsPage() {
   let trackedCount = 0
   let readyCount = 0
   let failedCount = 0
+  let activeCount = 0
   let statusCounts: Record<string, number> = {}
+  let failedDocuments: WorkflowDocument[] = []
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -71,71 +103,87 @@ export default async function WorkflowsPage() {
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
       const documentWhere = { matter: matterWhere }
       const staleBefore = new Date(Date.now() - STALE_INDEXING_MS)
+      const retryWhere = failedDocumentWhere(documentWhere, staleBefore)
 
-      const [rows, total, ready, failed, statusGroups] = await Promise.all([
-        prisma.document.findMany({
-          where: documentWhere,
-          orderBy: { uploadedAt: "desc" },
-          take: 40,
-          select: {
-            id: true,
-            fileName: true,
-            indexingStatus: true,
-            retrievalStatus: true,
-            uploadedAt: true,
-            updatedAt: true,
-            matter: {
-              select: {
-                id: true,
-                title: true,
-                userId: true,
-                organizationId: true,
+      const [rows, failedRows, total, ready, failed, active, statusGroups] =
+        await Promise.all([
+          prisma.document.findMany({
+            where: documentWhere,
+            orderBy: { uploadedAt: "desc" },
+            take: 40,
+            select: {
+              id: true,
+              fileName: true,
+              indexingStatus: true,
+              retrievalStatus: true,
+              uploadedAt: true,
+              updatedAt: true,
+              matter: {
+                select: {
+                  id: true,
+                  title: true,
+                  userId: true,
+                  organizationId: true,
+                },
               },
             },
-          },
-        }),
-        prisma.document.count({ where: documentWhere }),
-        prisma.document.count({
-          where: {
-            ...documentWhere,
-            retrievalStatus: "ready",
-            indexingStatus: "retrieval-ready",
-          },
-        }),
-        prisma.document.count({
-          where: {
-            ...documentWhere,
-            OR: [
-              { indexingStatus: "failed" },
-              { retrievalStatus: "failed" },
-              {
-                indexingStatus: "indexed",
-                retrievalStatus: "pending",
-              },
-              {
-                indexingStatus: {
-                  in: ["pending", "parsing", "chunking", "embedding"],
+          }),
+          prisma.document.findMany({
+            where: retryWhere,
+            orderBy: { updatedAt: "desc" },
+            take: 40,
+            select: {
+              id: true,
+              fileName: true,
+              indexingStatus: true,
+              retrievalStatus: true,
+              uploadedAt: true,
+              updatedAt: true,
+              matter: {
+                select: {
+                  id: true,
+                  title: true,
+                  userId: true,
+                  organizationId: true,
                 },
-                updatedAt: { lt: staleBefore },
               },
-            ],
-          },
-        }),
-        prisma.document.groupBy({
-          by: ["indexingStatus"],
-          where: documentWhere,
-          _count: { _all: true },
-        }),
-      ])
+            },
+          }),
+          prisma.document.count({ where: documentWhere }),
+          prisma.document.count({
+            where: {
+              ...documentWhere,
+              retrievalStatus: "ready",
+              indexingStatus: "retrieval-ready",
+            },
+          }),
+          prisma.document.count({ where: retryWhere }),
+          // Fresh in-progress only — stale claims are counted under Failed.
+          prisma.document.count({
+            where: {
+              ...documentWhere,
+              indexingStatus: { in: [...IN_PROGRESS_STATUSES] },
+              updatedAt: { gte: staleBefore },
+            },
+          }),
+          prisma.document.groupBy({
+            by: ["indexingStatus"],
+            where: documentWhere,
+            _count: { _all: true },
+          }),
+        ])
 
       trackedCount = total
       readyCount = ready
       failedCount = failed
+      activeCount = active
       statusCounts = Object.fromEntries(
         statusGroups.map((row) => [row.indexingStatus, row._count._all])
       )
 
-      documents = rows.map((doc) => ({
+      const toWorkflowDoc = (
+        doc: (typeof rows)[number]
+      ): WorkflowDocument => ({
         id: doc.id,
         fileName: doc.fileName,
         indexingStatus: doc.indexingStatus,
@@ -147,19 +195,19 @@ export default async function WorkflowsPage() {
           id: doc.matter.id,
           title: doc.matter.title,
         },
-      }))
+      })
+
+      documents = rows.map(toWorkflowDoc)
+      failedDocuments = failedRows
+        .map(toWorkflowDoc)
+        .filter((doc) => documentNeedsRetry(doc))
       canWrite = orgCanWrite || documents.some((doc) => doc.canWrite)
     }
   } catch {
     /* DB unavailable */
   }
 
-  const activeCount =
-    (statusCounts.pending ?? 0) +
-    (statusCounts.parsing ?? 0) +
-    (statusCounts.chunking ?? 0) +
-    (statusCounts.embedding ?? 0)
-  const failedDocuments = documents.filter((doc) => documentNeedsRetry(doc))
+  const retriableFailed = failedDocuments.filter((doc) => doc.canWrite)
 
   return (
     <div className="space-y-8">
@@ -209,7 +257,7 @@ export default async function WorkflowsPage() {
         <p className="text-[10px] uppercase tracking-[0.2em] text-white/35">
           Pipeline stages
         </p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-7">
           {PIPELINE_STATUSES.map((status) => (
               <div
                 key={status}
@@ -226,7 +274,7 @@ export default async function WorkflowsPage() {
         </div>
       </div>
 
-      {failedDocuments.some((doc) => doc.canWrite) ? (
+      {retriableFailed.length > 0 ? (
         <div className="rounded-[var(--aether-radius-panel)] border border-amber-400/15 bg-amber-400/[0.03] p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -235,16 +283,17 @@ export default async function WorkflowsPage() {
               </p>
               <p className="mt-1.5 text-sm text-white/45">
                 Retry ingestion for sources that failed parsing or embedding.
+                {failedCount > retriableFailed.length
+                  ? ` Showing the ${retriableFailed.length} most recently updated of ${failedCount}.`
+                  : null}
               </p>
             </div>
             <span className="rounded-full border border-amber-400/20 px-2.5 py-0.5 text-[10px] text-amber-200/60">
-              {failedDocuments.filter((doc) => doc.canWrite).length} failed
+              {failedCount} failed
             </span>
           </div>
           <div className="mt-4 space-y-2">
-            {failedDocuments
-              .filter((doc) => doc.canWrite)
-              .map((doc) => (
+            {retriableFailed.map((doc) => (
               <div
                 key={doc.id}
                 className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/[0.06] bg-black/20 px-4 py-3"
