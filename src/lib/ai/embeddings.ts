@@ -37,12 +37,24 @@ async function openAIEmbed(
 
 // ── Public API ────────────────────────────────────────────────────────────
 
+/** True when a multi-batch embedding run has hit its wall-clock budget. */
+export function isEmbeddingDeadlineExceeded(
+  startedAtMs: number,
+  nowMs: number,
+  deadlineMs: number | undefined
+): boolean {
+  return (
+    typeof deadlineMs === "number" &&
+    deadlineMs > 0 &&
+    nowMs - startedAtMs >= deadlineMs
+  )
+}
+
 export async function generateEmbedding(
   text: string,
   config: Partial<EmbeddingConfig> = {}
 ): Promise<number[]> {
-  const cfg = { ...DEFAULT_CONFIG, ...config }
-  const [embedding] = await generateBatchEmbeddings([text], cfg)
+  const [embedding] = await generateBatchEmbeddings([text], config)
   return embedding
 }
 
@@ -61,11 +73,7 @@ export async function generateBatchEmbeddings(
   const startedAt = Date.now()
 
   for (let i = 0; i < texts.length; i += BATCH) {
-    if (
-      typeof options.deadlineMs === "number" &&
-      options.deadlineMs > 0 &&
-      Date.now() - startedAt >= options.deadlineMs
-    ) {
+    if (isEmbeddingDeadlineExceeded(startedAt, Date.now(), options.deadlineMs)) {
       throw new Error(
         `Embedding deadline exceeded after ${i} of ${texts.length} texts.`
       )

@@ -11,8 +11,10 @@ import {
   secretsMatch,
 } from "./secret.ts"
 
-const STRONG_SECRET = "aether-ci-validate-402c-k8n3m7p2q5w9x!"
-const STRONG_DETAIL = "ready-detail-secret-c498-min-32chars!"
+/** Unit-test-only strong secret — must not match CI/placeholder denylist prefixes. */
+const STRONG_SECRET = "aether-unit-test-secret-e161-k9m2n7p4q8w!"
+const STRONG_DETAIL = "ready-detail-secret-e161-min-32chars!!"
+const CI_PLACEHOLDER = "aether-ci-validate-e161-k8n3m7p2q5w9x!"
 
 describe("indexing secret helpers", () => {
   it("rejects empty, short, placeholder, and low-entropy secrets", () => {
@@ -31,6 +33,11 @@ describe("indexing secret helpers", () => {
     )
     assert.equal(
       isIndexingSecretStrong("replace-with-a-long-random-indexing-secret"),
+      false
+    )
+    assert.equal(isIndexingSecretStrong(CI_PLACEHOLDER), false)
+    assert.equal(
+      isIndexingSecretStrong("aether-ci-validate-402c-k8n3m7p2q5w9x!"),
       false
     )
     assert.equal(isIndexingSecretStrong("a".repeat(MIN_SECRET_LENGTH - 1)), false)
@@ -67,6 +74,13 @@ describe("indexing secret helpers", () => {
     assert.equal(
       indexingSecretRejectedReason({
         NODE_ENV: "production",
+        INDEXING_SECRET: CI_PLACEHOLDER,
+      }),
+      "INDEXING_SECRET is too weak for production"
+    )
+    assert.equal(
+      indexingSecretRejectedReason({
+        NODE_ENV: "production",
         INDEXING_SECRET: STRONG_SECRET,
       }),
       null
@@ -88,6 +102,7 @@ describe("indexing secret helpers", () => {
       resolveHealthDetailSecret({ INDEXING_SECRET: "ci-indexing-secret" }),
       null
     )
+    assert.equal(resolveHealthDetailSecret({ INDEXING_SECRET: CI_PLACEHOLDER }), null)
     assert.equal(
       resolveHealthDetailSecret({ INDEXING_SECRET: STRONG_SECRET }),
       STRONG_SECRET

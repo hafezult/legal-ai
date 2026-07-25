@@ -28,6 +28,8 @@ const WEAK_INDEXING_SECRETS = new Set([
 const WEAK_INDEXING_SECRET_PREFIXES = [
   "ci-indexing-secret",
   "replace-with-a-long-random",
+  // Public CI workflow values must never unlock production indexing / ready detail.
+  "aether-ci-validate",
 ] as const
 
 function isWeakIndexingSecretPlaceholder(trimmed: string): boolean {

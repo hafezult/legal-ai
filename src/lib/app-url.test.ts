@@ -35,14 +35,14 @@ describe("resolveAppBaseUrl", () => {
     )
   })
 
-  it("rejects localhost, private, and invalid origins outside development", () => {
+  it("rejects localhost, private, cleartext HTTP, and invalid origins outside development", () => {
     assert.throws(
       () =>
         resolveAppBaseUrl({
           NODE_ENV: "production",
           NEXT_PUBLIC_APP_URL: "http://localhost:3000",
         }),
-      /absolute http\(s\) origin/
+      /absolute https origin/
     )
     assert.throws(
       () =>
@@ -50,7 +50,7 @@ describe("resolveAppBaseUrl", () => {
           NODE_ENV: "production",
           NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
         }),
-      /absolute http\(s\) origin/
+      /absolute https origin/
     )
     assert.throws(
       () =>
@@ -58,7 +58,7 @@ describe("resolveAppBaseUrl", () => {
           NODE_ENV: "production",
           NEXT_PUBLIC_APP_URL: "http://10.0.0.8",
         }),
-      /absolute http\(s\) origin/
+      /absolute https origin/
     )
     assert.throws(
       () =>
@@ -66,7 +66,15 @@ describe("resolveAppBaseUrl", () => {
           NODE_ENV: "production",
           NEXT_PUBLIC_APP_URL: "http://192.168.1.20",
         }),
-      /absolute http\(s\) origin/
+      /absolute https origin/
+    )
+    assert.throws(
+      () =>
+        resolveAppBaseUrl({
+          NODE_ENV: "production",
+          NEXT_PUBLIC_APP_URL: "http://aether.example.com",
+        }),
+      /absolute https origin/
     )
     assert.throws(
       () =>
@@ -74,7 +82,7 @@ describe("resolveAppBaseUrl", () => {
           NODE_ENV: "production",
           NEXT_PUBLIC_APP_URL: "not-a-url",
         }),
-      /absolute http\(s\) origin/
+      /absolute https origin/
     )
   })
 
@@ -107,7 +115,7 @@ describe("isAppUrlConfigured", () => {
     )
   })
 
-  it("requires a valid absolute public http(s) origin", () => {
+  it("requires a valid absolute public https origin outside development", () => {
     assert.equal(isAppUrlConfigured({ NODE_ENV: "production" }), false)
     assert.equal(
       isAppUrlConfigured({
@@ -122,6 +130,13 @@ describe("isAppUrlConfigured", () => {
         NEXT_PUBLIC_APP_URL: "https://aether.example.com",
       }),
       true
+    )
+    assert.equal(
+      isAppUrlConfigured({
+        NODE_ENV: "production",
+        NEXT_PUBLIC_APP_URL: "http://aether.example.com",
+      }),
+      false
     )
     assert.equal(
       isAppUrlConfigured({

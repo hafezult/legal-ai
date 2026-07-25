@@ -151,7 +151,8 @@ export default async function DocumentViewerPage({
     let signedUrl: string | null = null
     if (doc.storagePath) {
       try {
-        const { data: urlData } = await createSignedUrl(doc.storagePath, 7200)
+        // Short-lived preview URL; reload the workstation page to refresh.
+        const { data: urlData } = await createSignedUrl(doc.storagePath, 900)
         signedUrl = urlData?.signedUrl ?? null
       } catch {
         /* storage unavailable */

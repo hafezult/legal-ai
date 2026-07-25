@@ -361,16 +361,17 @@ export function OrganizationAccessPanel({
                     )
                     if (!result.error) setInviteEmail("")
                     return result
-                  }, "Member added.")
+                  }, "Invite created.")
                 }
                 className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-3 py-2 text-[12px] text-white/60 transition-colors hover:border-white/[0.16] hover:text-white/80 disabled:opacity-40"
               >
-                Add
+                Invite
               </button>
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-white/28">
-              Existing users join immediately. Others get a shareable invite link;
-              when Resend is configured the invite is also emailed automatically.
+              Invites create a shareable acceptance link for new and existing users;
+              membership starts only after they accept (or auto-accept on sign-in).
+              When Resend is configured the invite is also emailed automatically.
             </p>
           </div>
         ) : (

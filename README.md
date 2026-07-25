@@ -45,7 +45,7 @@ Required variables:
 | `CLERK_SECRET_KEY` | Clerk server key for auth and user sync. |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key for server-side document storage. |
-| `NEXT_PUBLIC_APP_URL` | Absolute app URL used for invite acceptance links (required outside development; localhost / loopback / RFC1918 / CGNAT / TEST-NET hosts are rejected for Settings readiness and invite minting in production). |
+| `NEXT_PUBLIC_APP_URL` | Absolute app URL used for invite acceptance links (required outside development; must be `https` with a public host — localhost / loopback / RFC1918 / CGNAT / TEST-NET and cleartext HTTP are rejected for Settings readiness and invite minting in production). |
 
 Optional variables:
 
@@ -53,7 +53,7 @@ Optional variables:
 | --- | --- |
 | `SUPABASE_DOCUMENT_BUCKET` | Storage bucket name; defaults to `legal-documents` in code. |
 | `OPENAI_API_KEY` | Enables embeddings, semantic retrieval, and grounded answers. Leave blank for UI-only local work. |
-| `INDEXING_SECRET` | Shared secret for the optional `/api/index-document` HTTP trigger outside development (≥32 characters, ≥10 distinct characters, non-placeholder). Values starting with `ci-indexing-secret` or `replace-with-a-long-random` are rejected. Upload/reindex run indexing in-process. Also accepted (when strong) as the fallback for `/api/ready` detail unlock. |
+| `INDEXING_SECRET` | Shared secret for the optional `/api/index-document` HTTP trigger outside development (≥32 characters, ≥10 distinct characters, non-placeholder). Values starting with `ci-indexing-secret`, `replace-with-a-long-random`, or `aether-ci-validate` are rejected. Upload/reindex run indexing in-process. Also accepted (when strong) as the fallback for `/api/ready` detail unlock. |
 | `HEALTH_DETAIL_SECRET` | Prefer this for full `/api/ready` probe details via `x-aether-health-secret`. Same strength rules as `INDEXING_SECRET` (≥32 chars, ≥10 distinct; weak placeholders never unlock details). |
 | `RESEND_API_KEY` | When set, pending organization invites are emailed via Resend. |
 | `RESEND_FROM_EMAIL` | Resend from address (defaults to `Aether <onboarding@resend.dev>`). |

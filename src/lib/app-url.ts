@@ -153,6 +153,10 @@ function parseAppOrigin(
   }
 
   if (env.NODE_ENV !== "development") {
+    // Deployed invite links must be HTTPS — cleartext public HTTP is rejected.
+    if (parsed.protocol !== "https:") {
+      return null
+    }
     if (isNonPublicAppHostname(parsed.hostname)) {
       return null
     }
@@ -169,7 +173,7 @@ export function resolveAppBaseUrl(
     const origin = parseAppOrigin(configured, env)
     if (!origin) {
       throw new Error(
-        "NEXT_PUBLIC_APP_URL must be an absolute http(s) origin (non-localhost / non-private outside development)"
+        "NEXT_PUBLIC_APP_URL must be an absolute https origin (non-localhost / non-private) outside development"
       )
     }
     return origin

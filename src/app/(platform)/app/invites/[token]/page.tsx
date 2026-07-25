@@ -96,12 +96,12 @@ export default async function InviteAcceptPage({
     )
   }
 
-  // Prefer the live verified Clerk email so collision-fallback DB rows cannot
-  // hide a legitimate invite or authorize against a stale address.
-  let signedInEmail = user.email
+  // Authorize only against a currently verified Clerk email — never the
+  // persisted DB address (placeholders / stale after verification revoke).
+  let signedInEmail: string | null = null
   try {
     const clerkUser = await currentUser()
-    const verified = clerkUser
+    signedInEmail = clerkUser
       ? selectVerifiedClerkEmail(
           clerkUser.emailAddresses.map((entry) => ({
             id: entry.id,
@@ -111,14 +111,12 @@ export default async function InviteAcceptPage({
           clerkUser.primaryEmailAddressId
         )
       : null
-    if (verified) signedInEmail = verified
   } catch {
-    /* keep persisted email */
+    signedInEmail = null
   }
 
   const emailMatches =
-    Boolean(signedInEmail) &&
-    !signedInEmail.toLowerCase().endsWith("@users.invalid") &&
+    signedInEmail !== null &&
     invite.email.toLowerCase() === signedInEmail.toLowerCase()
 
   // Do not reveal organization name, role, or invited email until the signed-in

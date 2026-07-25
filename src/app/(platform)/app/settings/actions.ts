@@ -78,29 +78,25 @@ async function requireActor() {
   return { user }
 }
 
-/** Prefer the currently verified Clerk email for invite authorization. */
-async function resolveInviteActorEmail(
-  fallbackEmail: string | null | undefined
-): Promise<string | null> {
+/**
+ * Invite accept/decline authorize only against a currently verified Clerk email.
+ * Persisted DB email is never an authorize source (stale after revoke / placeholders).
+ */
+async function resolveInviteActorEmail(): Promise<string | null> {
   try {
     const clerkUser = await currentUser()
-    if (clerkUser) {
-      const verified = selectVerifiedClerkEmail(
-        clerkUser.emailAddresses.map((entry) => ({
-          id: entry.id,
-          emailAddress: entry.emailAddress,
-          verificationStatus: entry.verification?.status ?? null,
-        })),
-        clerkUser.primaryEmailAddressId
-      )
-      if (verified) return verified
-    }
+    if (!clerkUser) return null
+    return selectVerifiedClerkEmail(
+      clerkUser.emailAddresses.map((entry) => ({
+        id: entry.id,
+        emailAddress: entry.emailAddress,
+        verificationStatus: entry.verification?.status ?? null,
+      })),
+      clerkUser.primaryEmailAddressId
+    )
   } catch {
-    /* fall through to persisted email */
+    return null
   }
-  const fallback = fallbackEmail?.trim().toLowerCase()
-  if (!fallback || fallback.endsWith("@users.invalid")) return null
-  return fallback
 }
 
 async function requireOrgAdmin(userId: string, organizationId: string) {
@@ -243,7 +239,7 @@ export async function acceptInviteByToken(
   }
 
   try {
-    const inviteEmail = await resolveInviteActorEmail(actor.user.email)
+    const inviteEmail = await resolveInviteActorEmail()
     if (!inviteEmail) {
       return {
         error:
@@ -296,7 +292,7 @@ export async function rejectInviteByToken(
   }
 
   try {
-    const inviteEmail = await resolveInviteActorEmail(actor.user.email)
+    const inviteEmail = await resolveInviteActorEmail()
     if (!inviteEmail) {
       return {
         error:
@@ -446,9 +442,15 @@ export async function addOrganizationMember(
       return { error: "You can only assign roles below your own." }
     }
 
+    // Always mint a pending invite — never force-add an existing user. Membership
+    // is granted only via token accept or verified-email auto-accept.
+    if (actor.user.email.trim().toLowerCase() === emailNormalized) {
+      return { error: "You are already a member of this organization." }
+    }
+
     const target = await prisma.user.findFirst({
       where: { email: { equals: emailNormalized, mode: "insensitive" } },
-      select: { id: true, email: true, name: true },
+      select: { id: true },
     })
 
     if (target) {
@@ -468,36 +470,6 @@ export async function addOrganizationMember(
       if (existing) {
         return { error: "That user is already a member of this organization." }
       }
-
-      await prisma.organizationMember.create({
-        data: {
-          organizationId,
-          userId: target.id,
-          role,
-        },
-      })
-
-      await prisma.organizationInvite.updateMany({
-        where: {
-          organizationId,
-          email: { equals: emailNormalized, mode: "insensitive" },
-          acceptedAt: null,
-        },
-        data: { acceptedAt: new Date() },
-      })
-
-      await recordAuditEvent({
-        userId: actor.user.id,
-        action: "organization.member_add",
-        entityType: "organization_member",
-        entityId: organizationId,
-        organizationId,
-        summary: `Added ${target.email} as ${role}`,
-        metadata: { targetUserId: target.id, role },
-      })
-
-      revalidatePath("/app/settings")
-      return { success: true }
     }
 
     const pending = await prisma.organizationInvite.findFirst({
