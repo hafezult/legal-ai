@@ -385,14 +385,18 @@ export function OrganizationAccessPanel({
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm text-white/72">
-                  {member.name || member.email}
+                  {member.name || member.email || "Member"}
                   {member.isSelf ? (
                     <span className="ml-2 text-[10px] uppercase tracking-[0.12em] text-white/30">
                       you
                     </span>
                   ) : null}
                 </p>
-                <p className="mt-0.5 truncate text-[11px] text-white/28">{member.email}</p>
+                {member.email ? (
+                  <p className="mt-0.5 truncate text-[11px] text-white/28">
+                    {member.email}
+                  </p>
+                ) : null}
               </div>
               {canEditMember ? (
                 <select

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server"
 
-import { indexingSecretRejectedReason } from "@/lib/indexing/secret"
+import {
+  indexingSecretRejectedReason,
+  secretsMatch,
+} from "@/lib/indexing/secret"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import {
@@ -29,7 +32,7 @@ export async function POST(
   }
 
   const secret = process.env.INDEXING_SECRET
-  if (secret && request.headers.get("x-aether-secret") !== secret) {
+  if (secret && !secretsMatch(request.headers.get("x-aether-secret"), secret)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 

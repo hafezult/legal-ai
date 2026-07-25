@@ -19,7 +19,12 @@ import {
   MAX_MATTER_TITLE_CHARS,
 } from "@/lib/matters/limits"
 import { prisma } from "@/lib/prisma"
+import { consumeRateLimit } from "@/lib/rate-limit"
 import { cleanupStoragePaths } from "@/lib/storage/documents"
+
+const MATTER_CREATE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
+const CONVERSATION_RATE_LIMIT = { limit: 40, windowMs: 60_000 } as const
+const MESSAGE_RATE_LIMIT = { limit: 60, windowMs: 60_000 } as const
 
 export type MatterFormState = {
   error?: string
@@ -151,6 +156,16 @@ export async function createMatter(
   }
 
   if (!user) redirect("/sign-in")
+
+  const createThrottle = await consumeRateLimit(
+    `matter-create:${user.id}`,
+    MATTER_CREATE_RATE_LIMIT
+  )
+  if (!createThrottle.ok) {
+    return {
+      error: "Matter creation rate limit exceeded. Please wait and try again.",
+    }
+  }
 
   let matter: { id: string }
   let organizationId: string | null = null
@@ -449,6 +464,16 @@ export async function createConversation(
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) return { error: permission.error }
 
+    const throttle = await consumeRateLimit(
+      `conversation-create:${user.id}`,
+      CONVERSATION_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return {
+        error: "Conversation creation rate limit exceeded. Please wait and try again.",
+      }
+    }
+
     const conversation = await prisma.conversation.create({
       data: {
         matterId: permission.access.matterId,
@@ -576,6 +601,16 @@ export async function createConversationMessage(
       "write"
     )
     if (!permission.ok) return { error: permission.error }
+
+    const throttle = await consumeRateLimit(
+      `conversation-message:${user.id}`,
+      MESSAGE_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return {
+        error: "Message rate limit exceeded. Please wait and try again.",
+      }
+    }
 
     matterId = conversation.matterId
     const message = await prisma.conversationMessage.create({

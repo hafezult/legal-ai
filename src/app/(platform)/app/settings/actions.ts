@@ -28,6 +28,7 @@ import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 
 const INVITE_RATE_LIMIT = { limit: 10, windowMs: 60_000 } as const
+const ORG_CREATE_RATE_LIMIT = { limit: 5, windowMs: 60_000 } as const
 const MAX_INVITE_EMAIL_CHARS = 320
 const INVITE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -83,6 +84,16 @@ export async function createOrganization(
 ): Promise<OrganizationActionState> {
   const actor = await requireActor()
   if ("error" in actor) return { error: actor.error }
+
+  const throttle = await consumeRateLimit(
+    `org-create:${actor.user.id}`,
+    ORG_CREATE_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return {
+      error: "Organization creation rate limit exceeded. Please wait and try again.",
+    }
+  }
 
   try {
     const created = await createOwnedOrganization(actor.user.id, name)

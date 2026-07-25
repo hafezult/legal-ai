@@ -6,6 +6,7 @@ import {
   getActiveOrganization,
   isOrgRole,
   listUserOrganizations,
+  roleAtLeast,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { getHealthReport, type HealthReport } from "@/lib/health"
@@ -134,12 +135,8 @@ export default async function SettingsPage() {
   } | null = null
   let organizations: { id: string; name: string; role: string }[] = []
   let health: HealthReport | null = null
-
-  try {
-    health = await getHealthReport()
-  } catch {
-    health = null
-  }
+  let canViewHealthDetails = false
+  let canManageMembers = false
 
   try {
     const user = await prisma.user.findUnique({
@@ -151,7 +148,17 @@ export default async function SettingsPage() {
       const active = await getActiveOrganization(user.id)
       const activeRole =
         active && isOrgRole(active.role) ? active.role : "viewer"
-      const canManageMembers = roleHasPermission(activeRole, "manage_members")
+      canManageMembers = roleHasPermission(activeRole, "manage_members")
+      // Dependency probe details are admin/owner-only (not every signed-in role).
+      canViewHealthDetails = roleAtLeast(activeRole, "admin")
+
+      if (canViewHealthDetails) {
+        try {
+          health = await getHealthReport()
+        } catch {
+          health = null
+        }
+      }
 
       // Membership/invite events include emails — only owners/admins see them.
       const memberAdminActions = [
@@ -236,14 +243,21 @@ export default async function SettingsPage() {
           id: active.id,
           name: active.name,
           role: activeRole,
-          members: memberRows.map((member) => ({
-            id: member.id,
-            role: member.role,
-            userId: member.userId,
-            email: member.user.email,
-            name: member.user.name,
-            isSelf: member.userId === user.id,
-          })),
+          members: memberRows.map((member) => {
+            const isSelf = member.userId === user.id
+            return {
+              id: member.id,
+              role: member.role,
+              userId: member.userId,
+              // Member emails are admin/owner-only; others see names/roles (+ self).
+              email:
+                canManageMembers || isSelf
+                  ? member.user.email
+                  : "",
+              name: member.user.name,
+              isSelf,
+            }
+          }),
           invites: inviteRows.map((invite) => ({
             id: invite.id,
             email: invite.email,
@@ -292,13 +306,12 @@ export default async function SettingsPage() {
               Environment
             </p>
             <p className="mt-1.5 text-sm leading-relaxed text-white/40">
-              Secret values are never displayed. Configure missing services in the
-              deployment environment or local `.env.local`. Public{" "}
+              Secret values are never displayed. Public{" "}
               <code className="text-white/55">/api/health</code> is process
               liveness only; public{" "}
               <code className="text-white/55">/api/ready</code> returns status
-              without probe details. The dependency probes below are
-              Settings-private.
+              without probe details. Live dependency probes and environment
+              readiness below are visible to organization admins and owners.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -320,58 +333,69 @@ export default async function SettingsPage() {
           </div>
         </div>
 
-        {health ? (
-          <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {Object.entries(health.probes).map(([key, probe]) => (
-              <div
-                key={key}
-                className="rounded-lg border border-white/[0.06] bg-black/20 px-4 py-4"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-serif text-base capitalize text-white/76">
-                      {key}
-                    </p>
-                    <p className="mt-1 text-xs leading-relaxed text-white/35">
-                      {probe.detail}
-                    </p>
-                  </div>
-                  <span
-                    className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${pillClass[probe.status]}`}
+        {canViewHealthDetails ? (
+          <>
+            {health ? (
+              <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                {Object.entries(health.probes).map(([key, probe]) => (
+                  <div
+                    key={key}
+                    className="rounded-lg border border-white/[0.06] bg-black/20 px-4 py-4"
                   >
-                    {probe.status}
-                  </span>
-                </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-serif text-base capitalize text-white/76">
+                          {key}
+                        </p>
+                        <p className="mt-1 text-xs leading-relaxed text-white/35">
+                          {probe.detail}
+                        </p>
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${pillClass[probe.status]}`}
+                      >
+                        {probe.status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        ) : null}
+            ) : null}
 
-        <div className="mt-6 grid gap-3 md:grid-cols-2">
-          {readiness.map((item) => {
-            const state = item.configured ? "ready" : "missing"
-            return (
-              <div
-                key={item.label}
-                className="rounded-lg border border-white/[0.06] bg-black/20 px-4 py-4"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-serif text-base text-white/76">{item.label}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-white/35">
-                      {item.description}
-                    </p>
-                  </div>
-                  <span
-                    className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${pillClass[state]}`}
+            <div className="mt-6 grid gap-3 md:grid-cols-2">
+              {readiness.map((item) => {
+                const state = item.configured ? "ready" : "missing"
+                return (
+                  <div
+                    key={item.label}
+                    className="rounded-lg border border-white/[0.06] bg-black/20 px-4 py-4"
                   >
-                    {item.configured ? "Ready" : "Missing"}
-                  </span>
-                </div>
-              </div>
-            )
-          })}
-        </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-serif text-base text-white/76">
+                          {item.label}
+                        </p>
+                        <p className="mt-1 text-xs leading-relaxed text-white/35">
+                          {item.description}
+                        </p>
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${pillClass[state]}`}
+                      >
+                        {item.configured ? "Ready" : "Missing"}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        ) : (
+          <p className="mt-6 text-sm leading-relaxed text-white/35">
+            Ask an organization admin or owner to review dependency readiness and
+            environment configuration.
+          </p>
+        )}
       </div>
 
       <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015] p-6">

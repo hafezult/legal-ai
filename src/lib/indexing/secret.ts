@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "crypto"
+
 /** Placeholder values rejected for INDEXING_SECRET outside development. */
 const WEAK_INDEXING_SECRETS = new Set([
   "change-me",
@@ -14,6 +16,43 @@ export function isIndexingSecretStrong(secret: string | undefined | null): boole
   const trimmed = secret?.trim()
   if (!trimmed) return false
   return !WEAK_INDEXING_SECRETS.has(trimmed.toLowerCase())
+}
+
+/**
+ * Constant-time equality for secret strings.
+ * Returns false when either side is empty or lengths differ.
+ */
+export function secretsMatch(
+  provided: string | null | undefined,
+  expected: string | null | undefined
+): boolean {
+  if (!provided || !expected) return false
+  const a = Buffer.from(provided)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
+/**
+ * Secret that unlocks full `/api/ready` probe details.
+ * Prefers HEALTH_DETAIL_SECRET, then INDEXING_SECRET. Weak placeholders never unlock.
+ */
+export function resolveHealthDetailSecret(
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
+  const preferred = env.HEALTH_DETAIL_SECRET?.trim()
+  if (preferred && isIndexingSecretStrong(preferred)) return preferred
+  const fallback = env.INDEXING_SECRET?.trim()
+  if (fallback && isIndexingSecretStrong(fallback)) return fallback
+  return null
+}
+
+/** True when the request header matches a strong health-detail secret. */
+export function canRevealHealthDetails(
+  provided: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return secretsMatch(provided, resolveHealthDetailSecret(env))
 }
 
 /**

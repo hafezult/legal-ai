@@ -347,45 +347,15 @@ export async function acceptPendingOrganizationInvites(user: {
     const role: OrgRole =
       invite.role !== "owner" && isOrgRole(invite.role) ? invite.role : "member"
 
-    const existing = await prisma.organizationMember.findUnique({
-      where: {
-        organizationId_userId: {
-          organizationId: invite.organizationId,
-          userId: user.id,
-        },
-      },
-      select: { id: true, role: true },
+    const claimed = await claimOrganizationInviteAcceptance({
+      inviteId: invite.id,
+      organizationId: invite.organizationId,
+      userId: user.id,
+      role,
+      acceptedAt: now,
     })
+    if (!claimed.ok) continue
 
-    let effectiveRole: OrgRole = role
-
-    if (!existing) {
-      await prisma.organizationMember.create({
-        data: {
-          organizationId: invite.organizationId,
-          userId: user.id,
-          role,
-        },
-      })
-    } else if (existing.role === "owner") {
-      effectiveRole = "owner"
-    } else if (
-      isOrgRole(existing.role) &&
-      roleStrictlyAbove(role, existing.role)
-    ) {
-      // Re-invite with a higher role upgrades the existing membership.
-      await prisma.organizationMember.update({
-        where: { id: existing.id },
-        data: { role },
-      })
-    } else if (isOrgRole(existing.role)) {
-      effectiveRole = existing.role
-    }
-
-    await prisma.organizationInvite.update({
-      where: { id: invite.id },
-      data: { acceptedAt: now },
-    })
     accepted += 1
 
     await recordAuditEvent({
@@ -394,12 +364,78 @@ export async function acceptPendingOrganizationInvites(user: {
       entityType: "organization_invite",
       entityId: invite.organizationId,
       organizationId: invite.organizationId,
-      summary: `Accepted invite to “${invite.organization.name}” as ${effectiveRole}`,
-      metadata: { role: effectiveRole, via: "auto_email_match" },
+      summary: `Accepted invite to “${invite.organization.name}” as ${claimed.effectiveRole}`,
+      metadata: { role: claimed.effectiveRole, via: "auto_email_match" },
     })
   }
 
   return accepted
+}
+
+/**
+ * Atomically claim an invite (acceptedAt still null), upsert membership, and
+ * mark the invite accepted. Concurrent acceptors lose on the conditional update.
+ */
+async function claimOrganizationInviteAcceptance(args: {
+  inviteId: string
+  organizationId: string
+  userId: string
+  role: OrgRole
+  acceptedAt: Date
+}): Promise<{ ok: true; effectiveRole: OrgRole } | { ok: false }> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const claimed = await tx.organizationInvite.updateMany({
+        where: {
+          id: args.inviteId,
+          acceptedAt: null,
+          expiresAt: { gt: args.acceptedAt },
+        },
+        data: { acceptedAt: args.acceptedAt },
+      })
+      if (claimed.count !== 1) {
+        return { ok: false as const }
+      }
+
+      const existing = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: {
+            organizationId: args.organizationId,
+            userId: args.userId,
+          },
+        },
+        select: { id: true, role: true },
+      })
+
+      let effectiveRole: OrgRole = args.role
+
+      if (!existing) {
+        await tx.organizationMember.create({
+          data: {
+            organizationId: args.organizationId,
+            userId: args.userId,
+            role: args.role,
+          },
+        })
+      } else if (existing.role === "owner") {
+        effectiveRole = "owner"
+      } else if (
+        isOrgRole(existing.role) &&
+        roleStrictlyAbove(args.role, existing.role)
+      ) {
+        await tx.organizationMember.update({
+          where: { id: existing.id },
+          data: { role: args.role },
+        })
+      } else if (isOrgRole(existing.role)) {
+        effectiveRole = existing.role
+      }
+
+      return { ok: true as const, effectiveRole }
+    })
+  } catch {
+    return { ok: false }
+  }
 }
 
 export function inviteExpiryDate(from: Date = new Date()) {
@@ -508,44 +544,19 @@ export async function acceptOrganizationInviteByToken(
   const role: OrgRole =
     invite.role !== "owner" && isOrgRole(invite.role) ? invite.role : "member"
 
-  const existing = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: invite.organizationId,
-        userId: user.id,
-      },
-    },
-    select: { id: true, role: true },
+  const claimed = await claimOrganizationInviteAcceptance({
+    inviteId: invite.id,
+    organizationId: invite.organizationId,
+    userId: user.id,
+    role,
+    acceptedAt: new Date(),
   })
-
-  let effectiveRole: OrgRole = role
-
-  if (!existing) {
-    await prisma.organizationMember.create({
-      data: {
-        organizationId: invite.organizationId,
-        userId: user.id,
-        role,
-      },
-    })
-  } else if (existing.role === "owner") {
-    effectiveRole = "owner"
-  } else if (
-    isOrgRole(existing.role) &&
-    roleStrictlyAbove(role, existing.role)
-  ) {
-    await prisma.organizationMember.update({
-      where: { id: existing.id },
-      data: { role },
-    })
-  } else if (isOrgRole(existing.role)) {
-    effectiveRole = existing.role
+  if (!claimed.ok) {
+    return {
+      ok: false,
+      error: "This invite was already accepted or expired. Refresh and try again.",
+    }
   }
-
-  await prisma.organizationInvite.update({
-    where: { id: invite.id },
-    data: { acceptedAt: new Date() },
-  })
 
   await prisma.user.update({
     where: { id: user.id },
@@ -556,7 +567,7 @@ export async function acceptOrganizationInviteByToken(
     ok: true,
     organizationId: invite.organizationId,
     organizationName: invite.organization.name,
-    role: effectiveRole,
+    role: claimed.effectiveRole,
   }
 }
 

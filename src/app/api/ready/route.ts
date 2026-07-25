@@ -1,26 +1,60 @@
 import { NextResponse } from "next/server"
 
-import { getHealthReport } from "@/lib/health"
+import { getHealthReport, type HealthReport } from "@/lib/health"
+import { canRevealHealthDetails } from "@/lib/indexing/secret"
 import { consumeRateLimit } from "@/lib/rate-limit"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
 const READY_RATE_LIMIT = { limit: 60, windowMs: 60_000 }
+const READY_CACHE_TTL_MS = 5_000
+
+type CachedReport = {
+  expiresAt: number
+  report: HealthReport
+}
+
+let cachedReport: CachedReport | null = null
 
 function clientKey(request: Request) {
+  // Prefer the rightmost/trusted hop when a proxy chain is present.
+  // Fall back to x-real-ip, then a shared anonymous bucket (never invent IPs).
+  const realIp = request.headers.get("x-real-ip")?.trim()
+  if (realIp) return realIp
+
   const forwarded = request.headers.get("x-forwarded-for")
   if (forwarded) {
-    return forwarded.split(",")[0]?.trim() || "unknown"
+    const parts = forwarded
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+    const trusted = parts[parts.length - 1]
+    if (trusted) return trusted
   }
-  return request.headers.get("x-real-ip")?.trim() || "unknown"
+
+  return "anonymous"
+}
+
+async function loadHealthReport(): Promise<HealthReport> {
+  const now = Date.now()
+  if (cachedReport && cachedReport.expiresAt > now) {
+    return cachedReport.report
+  }
+
+  const report = await getHealthReport()
+  cachedReport = {
+    expiresAt: now + READY_CACHE_TTL_MS,
+    report,
+  }
+  return report
 }
 
 /**
  * Deployment readiness probe for load balancers.
  * Returns 503 when critical dependencies (database, Clerk, storage) are missing
  * or degraded. Public responses are status-only; full probe details require
- * `x-aether-health-secret` matching INDEXING_SECRET (or HEALTH_DETAIL_SECRET).
+ * `x-aether-health-secret` matching a strong HEALTH_DETAIL_SECRET or INDEXING_SECRET.
  */
 export async function GET(request: Request) {
   const throttle = await consumeRateLimit(
@@ -39,14 +73,11 @@ export async function GET(request: Request) {
     )
   }
 
-  const report = await getHealthReport()
+  const report = await loadHealthReport()
   const status = report.status === "ok" ? 200 : 503
-
-  const detailSecret =
-    process.env.HEALTH_DETAIL_SECRET?.trim() ||
-    process.env.INDEXING_SECRET?.trim()
-  const provided = request.headers.get("x-aether-health-secret")
-  const wantsDetail = Boolean(detailSecret && provided && provided === detailSecret)
+  const wantsDetail = canRevealHealthDetails(
+    request.headers.get("x-aether-health-secret")
+  )
 
   if (wantsDetail) {
     return NextResponse.json(report, { status })
