@@ -1,4 +1,5 @@
 import { isIndexingSecretStrong } from "@/lib/indexing/secret"
+import { probeClerk, probeSupabaseStorage } from "@/lib/health-probes"
 import { prisma } from "@/lib/prisma"
 
 export {
@@ -6,13 +7,9 @@ export {
   type LivenessReport,
 } from "@/lib/health-liveness"
 
-export type ProbeStatus = "ok" | "degraded" | "missing"
+export type { HealthProbe, ProbeStatus } from "@/lib/health-probes"
 
-export type HealthProbe = {
-  status: ProbeStatus
-  configured: boolean
-  detail: string
-}
+import type { HealthProbe } from "@/lib/health-probes"
 
 export type HealthReport = {
   status: "ok" | "degraded"
@@ -66,22 +63,21 @@ export async function getHealthReport(): Promise<HealthReport> {
     }
   }
 
+  const [clerk, storage] = await Promise.all([
+    probeClerk({
+      publishableKey: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+      secretKey: process.env.CLERK_SECRET_KEY,
+    }),
+    probeSupabaseStorage({
+      url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    }),
+  ])
+
   const probes: HealthReport["probes"] = {
     database,
-    clerk: configuredProbe(
-      Boolean(
-        process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY
-      ),
-      "Clerk keys present.",
-      "Clerk publishable or secret key missing."
-    ),
-    storage: configuredProbe(
-      Boolean(
-        process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
-      ),
-      "Supabase storage credentials present.",
-      "Supabase URL or service role key missing."
-    ),
+    clerk,
+    storage,
     openai: configuredProbe(
       Boolean(process.env.OPENAI_API_KEY),
       "OpenAI API key present.",
