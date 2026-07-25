@@ -165,9 +165,17 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   // ── 2. Chunk ────────────────────────────────────────────────────────────
   const chunks = chunkDocument(parsed.text, parsed.headings, parsed.pageCount)
 
-  // Clear any previous chunks only while this run still owns the lease.
+  // Clear previous chunks only while this run still owns the lease. A plain
+  // deleteMany would wipe a reclaiming run's rows if the original lease went
+  // stale mid-pipeline.
+  await prisma.$executeRaw`
+    DELETE FROM "DocumentChunk" AS c
+    USING "Document" AS d
+    WHERE c."documentId" = d.id
+      AND d.id = ${documentId}
+      AND d."indexingRunId" = ${runId}
+  `
   await assertRunActive(documentId, runId)
-  await prisma.documentChunk.deleteMany({ where: { documentId } })
 
   if (chunks.length === 0) {
     await setStatus(documentId, runId, "failed", {
@@ -208,8 +216,23 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
 
   let embeddings: number[][]
   try {
-    embeddings = await generateBatchEmbeddings(chunks.map((c) => c.content))
+    embeddings = await generateBatchEmbeddings(
+      chunks.map((c) => c.content),
+      {},
+      {
+        // Keep the lease fresh during long embedding batches so a reclaim
+        // cannot start while this run is still actively calling OpenAI.
+        onBatchComplete: async () => {
+          await assertRunActive(documentId, runId)
+          await prisma.document.updateMany({
+            where: { id: documentId, indexingRunId: runId },
+            data: { updatedAt: new Date() },
+          })
+        },
+      }
+    )
   } catch (err) {
+    if (isIndexingRunSupersededError(err)) throw err
     // Chunks remain for retry, but surface the failure to upload/reindex callers.
     const message =
       err instanceof Error ? err.message.slice(0, 240) : "Embedding provider failed"
@@ -242,11 +265,24 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
   for (let i = 0; i < created.length; i++) {
     const emb = embeddings[i]
     const vec = `[${emb.join(",")}]`
-    await prisma.$executeRaw`
-      UPDATE "DocumentChunk"
+    const updated = await prisma.$executeRaw`
+      UPDATE "DocumentChunk" AS c
       SET embedding = ${vec}::vector
-      WHERE id = ${created[i].id}
+      FROM "Document" AS d
+      WHERE c.id = ${created[i].id}
+        AND c."documentId" = d.id
+        AND d."indexingRunId" = ${runId}
     `
+    if (Number(updated) !== 1) {
+      throw new IndexingRunSupersededError(documentId, runId)
+    }
+    // Heartbeat every 25 vector writes so long publishes keep the lease warm.
+    if (i > 0 && i % 25 === 0) {
+      await prisma.document.updateMany({
+        where: { id: documentId, indexingRunId: runId },
+        data: { updatedAt: new Date() },
+      })
+    }
   }
 
   // Authorities are extracted at research time from retrieved chunk content.

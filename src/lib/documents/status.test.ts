@@ -5,6 +5,7 @@ import {
   STALE_INDEXING_MS,
   documentIndexingBusy,
   documentNeedsRetry,
+  isDocumentRetrievalReady,
 } from "./status.ts"
 
 describe("documentNeedsRetry", () => {
@@ -75,6 +76,32 @@ describe("documentNeedsRetry", () => {
         },
         now
       ),
+      false
+    )
+  })
+})
+
+describe("isDocumentRetrievalReady", () => {
+  it("requires both retrieval-ready indexing and ready retrieval", () => {
+    assert.equal(
+      isDocumentRetrievalReady({
+        indexingStatus: "retrieval-ready",
+        retrievalStatus: "ready",
+      }),
+      true
+    )
+    assert.equal(
+      isDocumentRetrievalReady({
+        indexingStatus: "indexed",
+        retrievalStatus: "ready",
+      }),
+      false
+    )
+    assert.equal(
+      isDocumentRetrievalReady({
+        indexingStatus: "retrieval-ready",
+        retrievalStatus: "pending",
+      }),
       false
     )
   })

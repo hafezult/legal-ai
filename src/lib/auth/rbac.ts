@@ -764,6 +764,12 @@ export async function deleteOwnedOrganization(
       where: { activeOrganizationId: organizationId },
       data: { activeOrganizationId: null },
     })
+    // Org delete SetNulls Matter.organizationId. Preserve an access path for
+    // creator-less org matters by assigning the deleting owner as creator.
+    await tx.matter.updateMany({
+      where: { organizationId, userId: null },
+      data: { userId: actorUserId },
+    })
     await tx.organization.delete({ where: { id: organizationId } })
   })
 

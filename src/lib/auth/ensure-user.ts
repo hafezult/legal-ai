@@ -29,18 +29,36 @@ export async function ensureAppUser() {
     [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
     null
 
-  const user = await prisma.user.upsert({
-    where: { clerkId: clerkUser.id },
-    create: {
-      clerkId: clerkUser.id,
-      email,
-      name,
-    },
-    update: {
-      email,
-      name,
-    },
-  })
+  let user
+  try {
+    user = await prisma.user.upsert({
+      where: { clerkId: clerkUser.id },
+      create: {
+        clerkId: clerkUser.id,
+        email,
+        name,
+      },
+      update: {
+        email,
+        name,
+      },
+    })
+  } catch {
+    // Unique email collisions (shared Clerk email / account reuse) must not
+    // block sign-in. Keep the existing row email and fall back to a stable
+    // per-Clerk placeholder on first create.
+    user = await prisma.user.upsert({
+      where: { clerkId: clerkUser.id },
+      create: {
+        clerkId: clerkUser.id,
+        email: `unverified+${clerkUser.id}@users.invalid`,
+        name,
+      },
+      update: {
+        name,
+      },
+    })
+  }
 
   try {
     await ensurePersonalOrganization(user)

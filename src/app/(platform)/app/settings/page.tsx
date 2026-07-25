@@ -162,6 +162,7 @@ export default async function SettingsPage() {
       const memberAdminActions = [
         "organization.invite_create",
         "organization.invite_revoke",
+        "organization.invite_refresh",
         "organization.invite_accept",
         "organization.member_add",
         "organization.member_role",

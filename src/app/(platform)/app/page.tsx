@@ -84,10 +84,8 @@ export default async function DashboardPage() {
           prisma.document.count({
             where: {
               matter: matterWhere,
-              OR: [
-                { retrievalStatus: "ready" },
-                { indexingStatus: "retrieval-ready" },
-              ],
+              retrievalStatus: "ready",
+              indexingStatus: "retrieval-ready",
             },
           }),
           prisma.researchSession.count({ where: { matter: matterWhere } }),

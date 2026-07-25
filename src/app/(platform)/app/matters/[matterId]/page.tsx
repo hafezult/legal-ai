@@ -13,7 +13,10 @@ import { MatterResearchPanel } from "@/components/matters/matter-research-panel"
 import { MatterStatusControls } from "@/components/matters/matter-status-controls"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import { getMatterAccess, matterAccessWhere, roleHasPermission } from "@/lib/auth/rbac"
-import { documentNeedsRetry } from "@/lib/documents/status"
+import {
+  documentNeedsRetry,
+  isDocumentRetrievalReady,
+} from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 import {
   createConversation,
@@ -282,9 +285,7 @@ export default async function MatterDetailPage({
   const indexedDocuments = matter.documents.filter((doc) =>
     ["indexed", "retrieval-ready"].includes(doc.indexingStatus)
   ).length
-  const retrievalReadyDocuments = matter.documents.filter(
-    (doc) => doc.retrievalStatus === "ready" || doc.indexingStatus === "retrieval-ready"
-  ).length
+  const retrievalReadyDocuments = matter.documents.filter(isDocumentRetrievalReady).length
   const failedDocuments = matter.documents.filter((doc) =>
     documentNeedsRetry(doc)
   ).length

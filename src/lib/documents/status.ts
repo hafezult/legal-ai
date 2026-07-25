@@ -30,6 +30,17 @@ export function documentIndexingBusy(
   return now.getTime() - updatedAt.getTime() < STALE_INDEXING_MS
 }
 
+/** True when a document is eligible for semantic retrieval (matches search SQL). */
+export function isDocumentRetrievalReady(doc: {
+  indexingStatus: string
+  retrievalStatus: string
+}): boolean {
+  return (
+    doc.retrievalStatus === "ready" &&
+    doc.indexingStatus === "retrieval-ready"
+  )
+}
+
 /** Documents that should expose a re-index retry control. */
 export function documentNeedsRetry(
   doc: {

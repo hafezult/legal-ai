@@ -188,8 +188,9 @@ model DocumentChunk {
 
 model ResearchSession {
   id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Creator; nullable so org matter work product survives user deletion.
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   matterId  String
   matter    Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
   query     String
@@ -203,8 +204,9 @@ model ResearchSession {
 
 model DraftDocument {
   id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Creator; nullable so org matter work product survives user deletion.
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   matterId    String
   matter      Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
   title       String

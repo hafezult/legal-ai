@@ -6,6 +6,7 @@ import {
   matterAccessWhereForActiveOrg,
   roleHasPermission,
 } from "@/lib/auth/rbac"
+import { isDocumentRetrievalReady } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -112,7 +113,7 @@ export default async function MemoryPage() {
     (sum, matter) =>
       sum +
       matter.documents.filter(
-        (doc) => doc.retrievalStatus === "ready" || doc.indexingStatus === "retrieval-ready"
+        (doc) => isDocumentRetrievalReady(doc)
       ).length,
     0
   )

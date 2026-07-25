@@ -9,7 +9,10 @@ import {
   matterAccessWhereForActiveOrg,
   roleHasPermission,
 } from "@/lib/auth/rbac"
-import { documentNeedsRetry } from "@/lib/documents/status"
+import {
+  documentNeedsRetry,
+  isDocumentRetrievalReady,
+} from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -118,9 +121,7 @@ export default async function DocumentsPage() {
   const indexedCount = documents.filter((doc) =>
     ["indexed", "retrieval-ready"].includes(doc.indexingStatus)
   ).length
-  const retrievalReadyCount = documents.filter(
-    (doc) => doc.retrievalStatus === "ready" || doc.indexingStatus === "retrieval-ready"
-  ).length
+  const retrievalReadyCount = documents.filter(isDocumentRetrievalReady).length
   const failedCount = documents.filter((doc) => documentNeedsRetry(doc)).length
 
   return (

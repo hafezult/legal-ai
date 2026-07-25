@@ -51,7 +51,8 @@ export async function generateEmbedding(
 
 export async function generateBatchEmbeddings(
   texts: string[],
-  config: Partial<EmbeddingConfig> = {}
+  config: Partial<EmbeddingConfig> = {},
+  options: { onBatchComplete?: () => void | Promise<void> } = {}
 ): Promise<number[][]> {
   const cfg = { ...DEFAULT_CONFIG, ...config }
   const BATCH = 100 // OpenAI max batch size
@@ -68,6 +69,9 @@ export async function generateBatchEmbeddings(
     }
 
     results.push(...batchResult)
+    if (options.onBatchComplete) {
+      await options.onBatchComplete()
+    }
   }
 
   return results

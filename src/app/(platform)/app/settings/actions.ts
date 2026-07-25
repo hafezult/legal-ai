@@ -574,7 +574,7 @@ export async function refreshOrganizationInviteLink(
       entityType: "organization_invite",
       entityId: invite.id,
       organizationId,
-      summary: `Rotated invite link for ${invite.email}`,
+      summary: "Rotated pending invite acceptance link",
     })
 
     revalidatePath("/app/settings")
