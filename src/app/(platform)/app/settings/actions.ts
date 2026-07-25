@@ -6,6 +6,7 @@ import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
+import { isInviteTokenShape } from "@/lib/auth/invite-token"
 import {
   acceptOrganizationInviteByToken,
   buildInviteAcceptUrl,
@@ -44,6 +45,8 @@ export type OrganizationActionState = {
   inviteCreated?: boolean
   inviteUrl?: string
   inviteEmailSent?: boolean
+  /** Present when Resend is configured but the outbound send failed. */
+  inviteEmailWarning?: string
   organizationId?: string
 }
 
@@ -168,6 +171,9 @@ export async function acceptInviteByToken(
 
   const trimmed = token.trim()
   if (!trimmed) return { error: "Invite token is required." }
+  if (!isInviteTokenShape(trimmed)) {
+    return { error: "Invite not found or link is invalid." }
+  }
 
   try {
     const result = await acceptOrganizationInviteByToken(actor.user, trimmed)
@@ -431,6 +437,10 @@ export async function addOrganizationMember(
       inviteCreated: true,
       inviteUrl,
       inviteEmailSent: emailResult.sent,
+      inviteEmailWarning:
+        !emailResult.sent && emailResult.reason === "request_failed"
+          ? "Invite email could not be delivered. Copy the link or use mailto instead."
+          : undefined,
     }
   } catch {
     return { error: "Unable to add member or create invite. Please try again." }

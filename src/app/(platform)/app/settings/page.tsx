@@ -9,6 +9,7 @@ import {
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { getHealthReport, type HealthReport } from "@/lib/health"
+import { isIndexingSecretStrong } from "@/lib/indexing/secret"
 import { prisma } from "@/lib/prisma"
 import { OrganizationAccessPanel } from "./_organization-panel"
 
@@ -97,8 +98,9 @@ export default async function SettingsPage() {
     },
     {
       label: "Indexing secret",
-      configured: Boolean(process.env.INDEXING_SECRET),
-      description: "Optional HTTP indexing route protection (upload/reindex run in-process).",
+      configured: isIndexingSecretStrong(process.env.INDEXING_SECRET),
+      description:
+        "Optional HTTP indexing route protection (upload/reindex run in-process). Placeholder values such as change-me do not count as configured.",
     },
     {
       label: "App URL",
@@ -110,6 +112,15 @@ export default async function SettingsPage() {
       configured: Boolean(process.env.RESEND_API_KEY),
       description:
         "Optional outbound invite delivery. Without it, invites still work via copyable links and mailto.",
+    },
+    {
+      label: "Upstash Redis",
+      configured: Boolean(
+        process.env.UPSTASH_REDIS_REST_URL?.trim() &&
+          process.env.UPSTASH_REDIS_REST_TOKEN?.trim()
+      ),
+      description:
+        "Optional shared rate limits across instances. Without it, expensive actions use in-process limits.",
     },
   ]
 

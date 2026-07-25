@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { indexingSecretRejectedReason } from "@/lib/indexing/secret"
 import { prisma } from "@/lib/prisma"
 import {
   isIndexingInProgressError,
@@ -8,30 +9,6 @@ import {
 
 // Allow up to 5 minutes for large documents
 export const maxDuration = 300
-
-const WEAK_INDEXING_SECRETS = new Set([
-  "change-me",
-  "changeme",
-  "secret",
-  "password",
-  "test",
-  "indexing",
-  "aether",
-])
-
-function indexingSecretRejectedReason(): string | null {
-  const secret = process.env.INDEXING_SECRET
-  if (process.env.NODE_ENV === "development") {
-    return null
-  }
-  if (!secret) {
-    return "INDEXING_SECRET is not configured"
-  }
-  if (WEAK_INDEXING_SECRETS.has(secret.toLowerCase())) {
-    return "INDEXING_SECRET is too weak for production"
-  }
-  return null
-}
 
 export async function POST(
   request: Request,

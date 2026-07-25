@@ -133,9 +133,14 @@ export function OrganizationAccessPanel({
           result.inviteCreated
             ? result.inviteEmailSent
               ? "Invite emailed and link ready to share."
-              : "Invite ready. Copy the link or open mail to deliver it."
+              : result.inviteEmailWarning
+                ? result.inviteEmailWarning
+                : "Invite ready. Copy the link or open mail to deliver it."
             : successText
-        setMessage({ type: "success", text })
+        setMessage({
+          type: result.inviteEmailWarning ? "error" : "success",
+          text,
+        })
         router.refresh()
       })
     },

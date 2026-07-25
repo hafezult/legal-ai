@@ -5,6 +5,13 @@ import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
+import {
+  ALLOWED_DOCUMENT_MIME,
+  detectAllowedDocument,
+  hasExpectedSignature,
+  MAX_DOCUMENT_BYTES,
+  sanitizeUploadName,
+} from "@/lib/documents/upload"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import {
@@ -35,69 +42,6 @@ export type DocumentDeleteState = {
   error?: string
   success?: boolean
   warning?: string
-}
-
-const ALLOWED_MIME: Record<string, true> = {
-  "application/pdf": true,
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
-  "text/plain": true,
-}
-
-const MAX_BYTES = 50 * 1024 * 1024 // 50 MB
-
-const DOCUMENT_TYPES = {
-  pdf: {
-    extension: ".pdf",
-    mimeType: "application/pdf",
-  },
-  docx: {
-    extension: ".docx",
-    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  },
-  txt: {
-    extension: ".txt",
-    mimeType: "text/plain",
-  },
-} as const
-
-type DocumentType = keyof typeof DOCUMENT_TYPES
-
-function detectAllowedDocument(file: File): { type: DocumentType; mimeType: string } | null {
-  const lowerName = file.name.toLowerCase()
-  const match = Object.entries(DOCUMENT_TYPES).find(([, config]) =>
-    lowerName.endsWith(config.extension)
-  )
-
-  if (!match) return null
-
-  const [type, config] = match as [DocumentType, (typeof DOCUMENT_TYPES)[DocumentType]]
-  if (file.type && file.type !== config.mimeType) return null
-
-  return { type, mimeType: config.mimeType }
-}
-
-function hasExpectedSignature(type: DocumentType, buffer: Buffer): boolean {
-  switch (type) {
-    case "pdf":
-      return buffer.subarray(0, 5).toString("utf8") === "%PDF-"
-    case "docx":
-      return (
-        buffer.length > 4 &&
-        buffer[0] === 0x50 &&
-        buffer[1] === 0x4b &&
-        [0x03, 0x05, 0x07].includes(buffer[2])
-      )
-    case "txt":
-      return !buffer.subarray(0, 1024).includes(0x00)
-  }
-}
-
-function sanitizeName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]/g, "_")
-    .replace(/_+/g, "_")
-    .slice(0, 120)
 }
 
 async function markIndexingTriggerFailed(documentId: string) {
@@ -187,10 +131,10 @@ export async function uploadDocument(
   if (!file || file.size === 0) return { error: "No file provided." }
 
   const documentType = detectAllowedDocument(file)
-  if (!documentType || !ALLOWED_MIME[documentType.mimeType]) {
+  if (!documentType || !ALLOWED_DOCUMENT_MIME[documentType.mimeType]) {
     return { error: "Unsupported format. Accepted: PDF, DOCX, TXT." }
   }
-  if (file.size > MAX_BYTES) {
+  if (file.size > MAX_DOCUMENT_BYTES) {
     return { error: "File exceeds the 50 MB ingestion limit." }
   }
 
@@ -207,7 +151,7 @@ export async function uploadDocument(
     return { error: msg }
   }
 
-  const storagePath = `${clerkId}/${matterId}/${Date.now()}-${sanitizeName(file.name)}`
+  const storagePath = `${clerkId}/${matterId}/${Date.now()}-${sanitizeUploadName(file.name)}`
 
   const { error: storageErr } = await uploadToStorage(
     storagePath,

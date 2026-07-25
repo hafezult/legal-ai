@@ -1,3 +1,4 @@
+import { isIndexingSecretStrong } from "@/lib/indexing/secret"
 import { prisma } from "@/lib/prisma"
 
 export type ProbeStatus = "ok" | "degraded" | "missing"
@@ -17,6 +18,7 @@ export type HealthReport = {
     storage: HealthProbe
     openai: HealthProbe
     indexing: HealthProbe
+    upstash: HealthProbe
   }
 }
 
@@ -96,14 +98,41 @@ export async function getHealthReport(): Promise<HealthReport> {
       "OpenAI API key present.",
       "OPENAI_API_KEY missing — retrieval and drafting stay offline."
     ),
-    indexing: configuredProbe(
-      Boolean(process.env.INDEXING_SECRET),
-      "Indexing secret present for the optional HTTP trigger route.",
-      "INDEXING_SECRET missing — HTTP indexing route stays locked outside development."
+    indexing: (() => {
+      const secret = process.env.INDEXING_SECRET
+      if (!secret?.trim()) {
+        return {
+          status: "missing" as const,
+          configured: false,
+          detail:
+            "INDEXING_SECRET missing — HTTP indexing route stays locked outside development.",
+        }
+      }
+      if (!isIndexingSecretStrong(secret)) {
+        return {
+          status: "degraded" as const,
+          configured: true,
+          detail:
+            "INDEXING_SECRET is a placeholder — HTTP indexing route rejects it outside development.",
+        }
+      }
+      return {
+        status: "ok" as const,
+        configured: true,
+        detail: "Indexing secret present for the optional HTTP trigger route.",
+      }
+    })(),
+    upstash: configuredProbe(
+      Boolean(
+        process.env.UPSTASH_REDIS_REST_URL?.trim() &&
+          process.env.UPSTASH_REDIS_REST_TOKEN?.trim()
+      ),
+      "Upstash Redis REST configured for shared rate limits.",
+      "Upstash unset — expensive actions use in-process rate limits."
     ),
   }
 
-  // Optional AI/indexing probes stay informational; missing keys must not
+  // Optional AI/indexing/Upstash probes stay informational; missing keys must not
   // mark the whole deployment unhealthy for load balancers / Settings banner.
   const degraded = CRITICAL_PROBES.some((key) => {
     const probe = probes[key]

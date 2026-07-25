@@ -60,21 +60,7 @@ export function matterAccessWhereForActiveOrg(
   }
 }
 
-/**
- * Whether the actor can write on a matter listed under the active org surface.
- * Org matters follow the active-org role; legacy personal matters grant the
- * creator owner-equivalent write even when the active org role is viewer.
- */
-export function canWriteListedMatter(
-  matter: { userId: string; organizationId: string | null },
-  actorUserId: string,
-  activeOrgCanWrite: boolean
-): boolean {
-  if (matter.organizationId === null) {
-    return matter.userId === actorUserId
-  }
-  return activeOrgCanWrite
-}
+export { canWriteListedMatter } from "@/lib/auth/matter-write"
 
 export type MatterAccess = {
   matterId: string
@@ -511,9 +497,11 @@ export async function acceptOrganizationInviteByToken(
     return { ok: false, error: "This invite has expired." }
   }
   if (!user.email || invite.email.toLowerCase() !== user.email.toLowerCase()) {
+    // Do not reveal the invitee email to the wrong signed-in account.
     return {
       ok: false,
-      error: `Sign in with ${invite.email} to accept this invite.`,
+      error:
+        "Sign in with the email address that received this invite to accept it.",
     }
   }
 
