@@ -117,11 +117,11 @@ export default async function WorkflowsPage() {
             Operations
           </p>
           <h1 className="mt-2 font-serif text-3xl tracking-tight text-white/[0.96] md:text-4xl">
-            Workflows
+            Indexing workflows
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
-            Monitor source ingestion as documents move through parsing, chunking,
-            embedding, and retrieval readiness.
+            Document ingestion pipeline monitor — track parsing, chunking,
+            embedding, and retrieval readiness, then retry failed sources.
           </p>
         </div>
         <Link

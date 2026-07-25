@@ -3,7 +3,10 @@
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
-import { acceptInviteByToken } from "@/app/(platform)/app/settings/actions"
+import {
+  acceptInviteByToken,
+  rejectInviteByToken,
+} from "@/app/(platform)/app/settings/actions"
 
 export function AcceptInviteClient({
   token,
@@ -24,28 +27,50 @@ export function AcceptInviteClient({
         Accepting will add you to{" "}
         <span className="text-white/75">{organizationName}</span> with the{" "}
         <span className="text-white/75">{role}</span> role and switch your active
-        workspace.
+        workspace. Declining removes this invite so an admin can send a new one
+        later if needed.
       </p>
       {error ? <p className="mt-3 text-xs text-amber-200/70">{error}</p> : null}
-      <button
-        type="button"
-        disabled={isPending}
-        onClick={() => {
-          setError(null)
-          startTransition(async () => {
-            const result = await acceptInviteByToken(token)
-            if (result.error) {
-              setError(result.error)
-              return
-            }
-            router.push("/app/settings")
-            router.refresh()
-          })
-        }}
-        className="mt-5 rounded-lg border border-white/[0.12] bg-white/[0.06] px-4 py-2.5 text-sm text-white/80 transition-colors hover:border-white/[0.2] hover:bg-white/[0.09] disabled:opacity-40"
-      >
-        {isPending ? "Accepting…" : "Accept invite"}
-      </button>
+      <div className="mt-5 flex flex-wrap gap-3">
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => {
+            setError(null)
+            startTransition(async () => {
+              const result = await acceptInviteByToken(token)
+              if (result.error) {
+                setError(result.error)
+                return
+              }
+              router.push("/app/settings")
+              router.refresh()
+            })
+          }}
+          className="rounded-lg border border-white/[0.12] bg-white/[0.06] px-4 py-2.5 text-sm text-white/80 transition-colors hover:border-white/[0.2] hover:bg-white/[0.09] disabled:opacity-40"
+        >
+          {isPending ? "Working…" : "Accept invite"}
+        </button>
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => {
+            setError(null)
+            startTransition(async () => {
+              const result = await rejectInviteByToken(token)
+              if (result.error) {
+                setError(result.error)
+                return
+              }
+              router.push("/app")
+              router.refresh()
+            })
+          }}
+          className="rounded-lg border border-white/[0.08] bg-transparent px-4 py-2.5 text-sm text-white/55 transition-colors hover:border-white/[0.14] hover:text-white/75 disabled:opacity-40"
+        >
+          Decline
+        </button>
+      </div>
     </div>
   )
 }

@@ -523,6 +523,72 @@ export async function createOwnedOrganization(
 }
 
 /**
+ * Decline a pending invite by opaque token when the signed-in user's email matches.
+ * Deletes the invite row so admins can re-invite the same address.
+ */
+export async function rejectOrganizationInviteByToken(
+  user: { id: string; email: string },
+  token: string
+): Promise<
+  | { ok: true; organizationId: string; organizationName: string }
+  | { ok: false; error: string }
+> {
+  if (!isInviteTokenShape(token)) {
+    return { ok: false, error: "Invite not found or link is invalid." }
+  }
+
+  const invite = await prisma.organizationInvite.findUnique({
+    where: { tokenHash: hashInviteToken(token) },
+    select: {
+      id: true,
+      email: true,
+      acceptedAt: true,
+      expiresAt: true,
+      organizationId: true,
+      organization: { select: { name: true } },
+    },
+  })
+
+  if (!invite) {
+    return { ok: false, error: "Invite not found or link is invalid." }
+  }
+  if (invite.acceptedAt) {
+    return { ok: false, error: "This invite was already accepted." }
+  }
+  if (invite.expiresAt.getTime() <= Date.now()) {
+    return { ok: false, error: "This invite has expired." }
+  }
+  if (!user.email || invite.email.toLowerCase() !== user.email.toLowerCase()) {
+    return {
+      ok: false,
+      error:
+        "Sign in with the email address that received this invite to decline it.",
+    }
+  }
+
+  // Conditional delete — only pending, unexpired invites for this id.
+  const deleted = await prisma.organizationInvite.deleteMany({
+    where: {
+      id: invite.id,
+      acceptedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+  })
+  if (deleted.count !== 1) {
+    return {
+      ok: false,
+      error: "This invite was already accepted, declined, or expired.",
+    }
+  }
+
+  return {
+    ok: true,
+    organizationId: invite.organizationId,
+    organizationName: invite.organization.name,
+  }
+}
+
+/**
  * Accept a pending invite by opaque token when the signed-in user's email matches.
  */
 export async function acceptOrganizationInviteByToken(

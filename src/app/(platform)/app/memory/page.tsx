@@ -125,11 +125,12 @@ export default async function MemoryPage() {
           Knowledge base
         </p>
         <h1 className="mt-2 font-serif text-3xl tracking-tight text-white/[0.96] md:text-4xl">
-          Memory
+          Matter memory
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
-          Matter-scoped source memory, retrieval chunks, research history, and
-          grounded drafts are isolated by the active organization workspace.
+          Registry of matter-scoped sources, retrieval chunks, research history,
+          and grounded drafts for the active organization — open a matter to
+          search and work with that knowledge.
         </p>
       </div>
 

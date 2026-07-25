@@ -164,6 +164,7 @@ export default async function SettingsPage() {
         "organization.invite_revoke",
         "organization.invite_refresh",
         "organization.invite_accept",
+        "organization.invite_reject",
         "organization.member_add",
         "organization.member_role",
         "organization.member_remove",

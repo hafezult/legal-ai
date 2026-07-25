@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth/invite-token"
 import {
   acceptOrganizationInviteByToken,
+  rejectOrganizationInviteByToken,
   buildInviteAcceptUrl,
   createOwnedOrganization,
   deleteOwnedOrganization,
@@ -208,6 +209,39 @@ export async function acceptInviteByToken(
     return { success: true, organizationId: result.organizationId }
   } catch {
     return { error: "Unable to accept invite. Please try again." }
+  }
+}
+
+export async function rejectInviteByToken(
+  token: string
+): Promise<OrganizationActionState> {
+  const actor = await requireActor()
+  if ("error" in actor) return { error: actor.error }
+
+  const trimmed = token.trim()
+  if (!trimmed) return { error: "Invite token is required." }
+  if (!isInviteTokenShape(trimmed)) {
+    return { error: "Invite not found or link is invalid." }
+  }
+
+  try {
+    const result = await rejectOrganizationInviteByToken(actor.user, trimmed)
+    if (!result.ok) return { error: result.error }
+
+    await recordAuditEvent({
+      userId: actor.user.id,
+      action: "organization.invite_reject",
+      entityType: "organization_invite",
+      entityId: result.organizationId,
+      organizationId: result.organizationId,
+      summary: `Declined invite to “${result.organizationName}”`,
+    })
+
+    revalidatePath("/app", "layout")
+    revalidatePath("/app/settings")
+    return { success: true, organizationId: result.organizationId }
+  } catch {
+    return { error: "Unable to decline invite. Please try again." }
   }
 }
 
