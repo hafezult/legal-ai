@@ -24,6 +24,7 @@ import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
 
 const DRAFT_RATE_LIMIT = { limit: 12, windowMs: 60_000 } as const
 const DRAFT_DELETE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
+const DRAFT_RESTORE_RATE_LIMIT = { limit: 40, windowMs: 60_000 } as const
 
 function rateLimitMessage(action: string, retryAfterMs: number): string {
   const seconds = Math.ceil(retryAfterMs / 1000)
@@ -120,8 +121,8 @@ async function generateGroundedDraft(
     })
     .join("\n\n---\n\n")
 
-  const { OpenAI } = await import("openai")
-  const client = new OpenAI({ apiKey })
+  const { createOpenAIClient } = await import("@/lib/ai/openai-client")
+  const client = await createOpenAIClient()
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
@@ -351,6 +352,14 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
       select: { id: true },
     })
     if (!user) return emptyResult("User session not found.")
+
+    const throttle = await consumeRateLimit(
+      `draft-restore:${user.id}`,
+      DRAFT_RESTORE_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return emptyResult(rateLimitMessage("Draft restore", throttle.retryAfterMs))
+    }
 
     const draft = await prisma.draftDocument.findFirst({
       where: {

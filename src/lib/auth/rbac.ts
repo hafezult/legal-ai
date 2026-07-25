@@ -373,6 +373,7 @@ export async function acceptPendingOrganizationInvites(user: {
   })
 
   let accepted = 0
+  let lastAcceptedOrganizationId: string | null = null
   for (const invite of invites) {
     const role: OrgRole =
       invite.role !== "owner" && isOrgRole(invite.role) ? invite.role : "member"
@@ -387,6 +388,7 @@ export async function acceptPendingOrganizationInvites(user: {
     if (!claimed.ok) continue
 
     accepted += 1
+    lastAcceptedOrganizationId = invite.organizationId
 
     await recordAuditEvent({
       userId: user.id,
@@ -396,6 +398,14 @@ export async function acceptPendingOrganizationInvites(user: {
       organizationId: invite.organizationId,
       summary: `Accepted invite to “${invite.organization.name}” as ${claimed.effectiveRole}`,
       metadata: { role: claimed.effectiveRole, via: "auto_email_match" },
+    })
+  }
+
+  // Match token accept: switch the active workspace so the join is visible.
+  if (lastAcceptedOrganizationId) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { activeOrganizationId: lastAcceptedOrganizationId },
     })
   }
 

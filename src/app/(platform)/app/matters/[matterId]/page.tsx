@@ -30,6 +30,8 @@ import {
 import { uploadDocument } from "./actions"
 
 export const dynamic = "force-dynamic"
+/** Upload/reindex run the indexing pipeline in-process on this segment. */
+export const maxDuration = 300
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 

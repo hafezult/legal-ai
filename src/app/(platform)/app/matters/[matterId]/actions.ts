@@ -225,7 +225,7 @@ export async function uploadDocument(
     entityType: "document",
     entityId: documentId,
     matterId,
-    summary: `Uploaded document “${file.name}”`,
+    summary: `Uploaded document “${safeFileName}”`,
     metadata: {
       mimeType: documentType.mimeType,
       fileSize: file.size,

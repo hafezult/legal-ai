@@ -4,17 +4,26 @@ import {
   selectVerifiedClerkEmail,
   unverifiedClerkEmailPlaceholder,
 } from "@/lib/auth/clerk-email"
+import { shouldAcceptPendingInvites } from "@/lib/auth/invite-auto-accept"
 import {
   acceptPendingOrganizationInvites,
   ensurePersonalOrganization,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
+export type EnsureAppUserOptions = {
+  /**
+   * When false, skip email auto-accept so `/app/invites/[token]` can show
+   * Accept/Decline. Defaults to true for general platform navigation.
+   */
+  acceptPendingInvites?: boolean
+}
+
 /**
  * Upserts the signed-in Clerk user into Postgres (idempotent), ensures a
- * personal organization workspace exists, and accepts outstanding invites.
+ * personal organization workspace exists, and optionally accepts outstanding invites.
  */
-export async function ensureAppUser() {
+export async function ensureAppUser(options: EnsureAppUserOptions = {}) {
   const clerkUser = await currentUser()
   if (!clerkUser) {
     return null
@@ -74,10 +83,12 @@ export async function ensureAppUser() {
     /* Organization provisioning is best-effort; retries on next navigation */
   }
 
-  try {
-    await acceptPendingOrganizationInvites(user)
-  } catch {
-    /* Invite acceptance is best-effort; retries on next navigation */
+  if (shouldAcceptPendingInvites(options)) {
+    try {
+      await acceptPendingOrganizationInvites(user)
+    } catch {
+      /* Invite acceptance is best-effort; retries on next navigation */
+    }
   }
 
   return user

@@ -134,7 +134,7 @@ describe("isAppUrlConfigured", () => {
 })
 
 describe("isNonPublicAppHostname", () => {
-  it("flags loopback, private, and metadata hosts", () => {
+  it("flags loopback, private, CGNAT, TEST-NET, and metadata hosts", () => {
     assert.equal(isNonPublicAppHostname("localhost"), true)
     assert.equal(isNonPublicAppHostname("app.localhost"), true)
     assert.equal(isNonPublicAppHostname("127.0.0.1"), true)
@@ -142,10 +142,17 @@ describe("isNonPublicAppHostname", () => {
     assert.equal(isNonPublicAppHostname("172.20.0.5"), true)
     assert.equal(isNonPublicAppHostname("192.168.0.1"), true)
     assert.equal(isNonPublicAppHostname("169.254.169.254"), true)
+    assert.equal(isNonPublicAppHostname("100.64.0.1"), true)
+    assert.equal(isNonPublicAppHostname("100.127.255.255"), true)
+    assert.equal(isNonPublicAppHostname("192.0.2.10"), true)
+    assert.equal(isNonPublicAppHostname("198.51.100.1"), true)
+    assert.equal(isNonPublicAppHostname("203.0.113.50"), true)
     assert.equal(isNonPublicAppHostname("::1"), true)
     assert.equal(isNonPublicAppHostname("fd12::1"), true)
     assert.equal(isNonPublicAppHostname("aether.example.com"), false)
     assert.equal(isNonPublicAppHostname("facebook.com"), false)
     assert.equal(isNonPublicAppHostname("8.8.8.8"), false)
+    assert.equal(isNonPublicAppHostname("100.63.255.255"), false)
+    assert.equal(isNonPublicAppHostname("100.128.0.1"), false)
   })
 })

@@ -20,6 +20,7 @@ import { MAX_RESEARCH_QUERY_CHARS } from "@/lib/research/limits"
 
 const RESEARCH_RATE_LIMIT = { limit: 12, windowMs: 60_000 } as const
 const RESEARCH_DELETE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
+const RESEARCH_RESTORE_RATE_LIMIT = { limit: 40, windowMs: 60_000 } as const
 
 function rateLimitMessage(action: string, retryAfterMs: number): string {
   const seconds = Math.ceil(retryAfterMs / 1000)
@@ -83,8 +84,8 @@ async function generateGroundedResponse(
     })
     .join("\n\n---\n\n")
 
-  const { OpenAI } = await import("openai")
-  const client = new OpenAI({ apiKey })
+  const { createOpenAIClient } = await import("@/lib/ai/openai-client")
+  const client = await createOpenAIClient()
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
@@ -273,35 +274,43 @@ export async function runResearch(
       summary: `Ran research query on “${matter.title}”`,
       metadata: { chunkCount: chunks.length, queryLength: query.length },
     })
-
-    const conversationTitle = query.replace(/\s+/g, " ").trim()
-    if (conversationTitle) {
-      await prisma.conversation.create({
-        data: {
-          matterId,
-          createdByUserId: user.id,
-          title:
-            conversationTitle.length > 120
-              ? `${conversationTitle.slice(0, 117)}…`
-              : conversationTitle,
-          messages: {
-            create: [
-              { role: "user", content: query },
-              ...(answer
-                ? [{ role: "assistant", content: answer }]
-                : []),
-            ],
-          },
-        },
-      })
-      await prisma.matter.update({
-        where: { id: matterId },
-        data: { updatedAt: new Date() },
-      })
-    }
   } catch {
     persistenceError =
       "Research completed, but the session could not be saved to matter history."
+  }
+
+  if (sessionId) {
+    try {
+      const conversationTitle = query.replace(/\s+/g, " ").trim()
+      if (conversationTitle) {
+        await prisma.conversation.create({
+          data: {
+            matterId,
+            createdByUserId: user.id,
+            title:
+              conversationTitle.length > 120
+                ? `${conversationTitle.slice(0, 117)}…`
+                : conversationTitle,
+            messages: {
+              create: [
+                { role: "user", content: query },
+                ...(answer
+                  ? [{ role: "assistant", content: answer }]
+                  : []),
+              ],
+            },
+          },
+        })
+        await prisma.matter.update({
+          where: { id: matterId },
+          data: { updatedAt: new Date() },
+        })
+      }
+    } catch {
+      persistenceError =
+        persistenceError ??
+        "Research session saved, but the matter conversation thread could not be created."
+    }
   }
 
   revalidatePath(`/app/matters/${matterId}`)
@@ -353,6 +362,16 @@ export async function restoreResearchSession(
       select: { id: true },
     })
     if (!user) return emptyResult("User session not found.")
+
+    const throttle = await consumeRateLimit(
+      `research-restore:${user.id}`,
+      RESEARCH_RESTORE_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return emptyResult(
+        rateLimitMessage("Research restore", throttle.retryAfterMs)
+      )
+    }
 
     const session = await prisma.researchSession.findFirst({
       where: {

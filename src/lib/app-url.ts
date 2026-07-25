@@ -57,11 +57,17 @@ export function isNonPublicAppHostname(hostname: string): boolean {
   const octets = parseIpv4Octets(host)
   if (!octets) return false
 
-  const [a, b] = octets
+  const [a, b, c] = octets
   if (a === 0 || a === 10 || a === 127) return true
   if (a === 169 && b === 254) return true
   if (a === 172 && b >= 16 && b <= 31) return true
   if (a === 192 && b === 168) return true
+  // CGNAT shared address space (RFC 6598)
+  if (a === 100 && b >= 64 && b <= 127) return true
+  // TEST-NET documentation ranges (RFC 5737)
+  if (a === 192 && b === 0 && c === 2) return true
+  if (a === 198 && b === 51 && c === 100) return true
+  if (a === 203 && b === 0 && c === 113) return true
   return false
 }
 

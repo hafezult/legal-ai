@@ -42,7 +42,8 @@ export default async function InviteAcceptPage({
   const { token } = await params
   if (!token || !isInviteTokenShape(token)) notFound()
 
-  const user = await ensureAppUser()
+  // Skip email auto-accept so Accept/Decline controls remain reachable.
+  const user = await ensureAppUser({ acceptPendingInvites: false })
   if (!user) return null
 
   let invite: {

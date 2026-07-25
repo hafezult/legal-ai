@@ -107,7 +107,8 @@ export async function sendOrganizationInviteEmail(
   }
 }
 
-function escapeHtml(value: string) {
+/** Escape untrusted strings before interpolating into invite HTML bodies. */
+export function escapeHtml(value: string) {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

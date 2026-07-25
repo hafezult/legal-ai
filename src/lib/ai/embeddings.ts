@@ -20,11 +20,8 @@ async function openAIEmbed(
   texts: string[],
   model: string
 ): Promise<number[][]> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.")
-
-  const { OpenAI } = await import("openai")
-  const client = new OpenAI({ apiKey })
+  const { createOpenAIClient } = await import("@/lib/ai/openai-client")
+  const client = await createOpenAIClient()
 
   const response = await client.embeddings.create({
     model,

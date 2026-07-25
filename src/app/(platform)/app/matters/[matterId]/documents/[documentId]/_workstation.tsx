@@ -184,7 +184,7 @@ function DocViewer({
             src={signedUrl}
             className="h-full w-full border-0"
             title={doc.fileName}
-            sandbox="allow-same-origin allow-scripts"
+            sandbox="allow-scripts"
             referrerPolicy="no-referrer"
           />
         ) : (

@@ -1,8 +1,11 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 
+import { SKIP_INVITE_AUTO_ACCEPT_HEADER } from "@/lib/auth/invite-auto-accept"
+
 const isProtectedRoute = createRouteMatcher(["/app(.*)"])
 const isAuthRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"])
+const isInviteRoute = createRouteMatcher(["/app/invites(.*)"])
 
 export default clerkMiddleware(async (auth, req) => {
   const { userId } = await auth()
@@ -16,6 +19,15 @@ export default clerkMiddleware(async (auth, req) => {
   if (isProtectedRoute(req)) {
     await auth.protect()
   }
+
+  // Stamp the request (not response) so RSC `headers()` can read it.
+  const requestHeaders = new Headers(req.headers)
+  if (isInviteRoute(req)) {
+    requestHeaders.set(SKIP_INVITE_AUTO_ACCEPT_HEADER, "1")
+  }
+  return NextResponse.next({
+    request: { headers: requestHeaders },
+  })
 })
 
 export const config = {

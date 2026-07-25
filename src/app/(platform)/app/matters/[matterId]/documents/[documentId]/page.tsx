@@ -16,6 +16,8 @@ import { DocumentWorkstation } from "./_workstation"
 import type { WorkstationData } from "./_workstation"
 
 export const dynamic = "force-dynamic"
+/** Reindex runs the indexing pipeline in-process on this segment. */
+export const maxDuration = 300
 
 export default async function DocumentViewerPage({
   params,
