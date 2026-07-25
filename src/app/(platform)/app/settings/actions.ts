@@ -31,9 +31,15 @@ import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 
 const INVITE_RATE_LIMIT = { limit: 10, windowMs: 60_000 } as const
+const INVITE_DECISION_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const ORG_CREATE_RATE_LIMIT = { limit: 5, windowMs: 60_000 } as const
 const MAX_INVITE_EMAIL_CHARS = 320
 const INVITE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function rateLimitMessage(action: string, retryAfterMs: number): string {
+  const seconds = Math.ceil(retryAfterMs / 1000)
+  return `${action} rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`
+}
 
 function isValidInviteEmail(email: string): boolean {
   return (
@@ -189,6 +195,14 @@ export async function acceptInviteByToken(
     return { error: "Invite not found or link is invalid." }
   }
 
+  const throttle = await consumeRateLimit(
+    `invite-accept:${actor.user.id}`,
+    INVITE_DECISION_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Invite accept", throttle.retryAfterMs) }
+  }
+
   try {
     const result = await acceptOrganizationInviteByToken(actor.user, trimmed)
     if (!result.ok) return { error: result.error }
@@ -222,6 +236,14 @@ export async function rejectInviteByToken(
   if (!trimmed) return { error: "Invite token is required." }
   if (!isInviteTokenShape(trimmed)) {
     return { error: "Invite not found or link is invalid." }
+  }
+
+  const throttle = await consumeRateLimit(
+    `invite-decline:${actor.user.id}`,
+    INVITE_DECISION_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Invite decline", throttle.retryAfterMs) }
   }
 
   try {
@@ -339,10 +361,7 @@ export async function addOrganizationMember(
     INVITE_RATE_LIMIT
   )
   if (!throttle.ok) {
-    const seconds = Math.ceil(throttle.retryAfterMs / 1000)
-    return {
-      error: `Invite rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`,
-    }
+    return { error: rateLimitMessage("Invite", throttle.retryAfterMs) }
   }
 
   try {
@@ -580,6 +599,14 @@ export async function refreshOrganizationInviteLink(
 ): Promise<OrganizationActionState> {
   const actor = await requireActor()
   if ("error" in actor) return { error: actor.error }
+
+  const throttle = await consumeRateLimit(
+    `invite-refresh:${actor.user.id}:${organizationId}`,
+    INVITE_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Invite refresh", throttle.retryAfterMs) }
+  }
 
   try {
     const admin = await requireOrgAdmin(actor.user.id, organizationId)
