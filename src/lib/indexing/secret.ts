@@ -3,6 +3,9 @@ import { createHash, timingSafeEqual } from "crypto"
 /** Minimum entropy length for production indexing / health-detail secrets. */
 export const MIN_SECRET_LENGTH = 32
 
+/** Reject secrets with too few distinct characters (low entropy). */
+export const MIN_SECRET_UNIQUE_CHARS = 10
+
 /** Placeholder values rejected for INDEXING_SECRET outside development. */
 const WEAK_INDEXING_SECRETS = new Set([
   "change-me",
@@ -17,12 +20,15 @@ const WEAK_INDEXING_SECRETS = new Set([
   "ci-indexing-secret",
 ])
 
-/** True when the secret is long enough and not a known placeholder. */
+/** True when the secret is long enough, varied, and not a known placeholder. */
 export function isIndexingSecretStrong(secret: string | undefined | null): boolean {
   const trimmed = secret?.trim()
   if (!trimmed) return false
   if (trimmed.length < MIN_SECRET_LENGTH) return false
-  return !WEAK_INDEXING_SECRETS.has(trimmed.toLowerCase())
+  if (WEAK_INDEXING_SECRETS.has(trimmed.toLowerCase())) return false
+  // Reject repeated/low-entropy strings that only meet the length floor.
+  if (new Set(trimmed).size < MIN_SECRET_UNIQUE_CHARS) return false
+  return true
 }
 
 function secretDigest(value: string): Buffer {

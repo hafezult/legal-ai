@@ -4,6 +4,7 @@ import { describe, it } from "node:test"
 import {
   consumeRateLimit,
   decideUpstashRateLimit,
+  inMemoryRateLimitBucketCountForTests,
   resetRateLimitBucketsForTests,
 } from "./rate-limit.ts"
 
@@ -21,6 +22,15 @@ describe("consumeRateLimit", () => {
     if (!blocked.ok) {
       assert.ok(blocked.retryAfterMs >= 1000)
     }
+  })
+
+  it("evicts stale/overflow in-memory buckets under key flood", async () => {
+    resetRateLimitBucketsForTests()
+    const options = { limit: 5, windowMs: 60_000 }
+    for (let i = 0; i < 5_050; i += 1) {
+      assert.equal((await consumeRateLimit(`flood:${i}`, options)).ok, true)
+    }
+    assert.ok(inMemoryRateLimitBucketCountForTests() <= 5_000)
   })
 })
 

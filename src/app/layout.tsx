@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     template: "%s · Aether",
   },
   description:
-    "Workflow orchestration, AI legal reasoning, and enterprise document intelligence for modern law firms.",
+    "Matter-scoped legal research, grounded drafting, and document intelligence for modern law firms.",
 }
 
 export default function RootLayout({

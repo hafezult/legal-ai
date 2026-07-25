@@ -11,7 +11,7 @@ import {
 } from "@/lib/auth/rbac"
 import {
   documentNeedsRetry,
-  isDocumentRetrievalReady,
+  STALE_INDEXING_MS,
 } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 
@@ -31,6 +31,15 @@ type WorkflowDocument = {
   }
 }
 
+const PIPELINE_STATUSES = [
+  "pending",
+  "parsing",
+  "chunking",
+  "embedding",
+  "indexed",
+  "retrieval-ready",
+] as const
+
 function fmtShortDate(d: Date) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -46,6 +55,10 @@ export default async function WorkflowsPage() {
 
   let documents: WorkflowDocument[] = []
   let canWrite = false
+  let trackedCount = 0
+  let readyCount = 0
+  let failedCount = 0
+  let statusCounts: Record<string, number> = {}
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -56,27 +69,72 @@ export default async function WorkflowsPage() {
         : true
       canWrite = orgCanWrite
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
-      const rows = await prisma.document.findMany({
-        where: { matter: matterWhere },
-        orderBy: { uploadedAt: "desc" },
-        take: 40,
-        select: {
-          id: true,
-          fileName: true,
-          indexingStatus: true,
-          retrievalStatus: true,
-          uploadedAt: true,
-          updatedAt: true,
-          matter: {
-            select: {
-              id: true,
-              title: true,
-              userId: true,
-              organizationId: true,
+      const documentWhere = { matter: matterWhere }
+      const staleBefore = new Date(Date.now() - STALE_INDEXING_MS)
+
+      const [rows, total, ready, failed, statusGroups] = await Promise.all([
+        prisma.document.findMany({
+          where: documentWhere,
+          orderBy: { uploadedAt: "desc" },
+          take: 40,
+          select: {
+            id: true,
+            fileName: true,
+            indexingStatus: true,
+            retrievalStatus: true,
+            uploadedAt: true,
+            updatedAt: true,
+            matter: {
+              select: {
+                id: true,
+                title: true,
+                userId: true,
+                organizationId: true,
+              },
             },
           },
-        },
-      })
+        }),
+        prisma.document.count({ where: documentWhere }),
+        prisma.document.count({
+          where: {
+            ...documentWhere,
+            retrievalStatus: "ready",
+            indexingStatus: "retrieval-ready",
+          },
+        }),
+        prisma.document.count({
+          where: {
+            ...documentWhere,
+            OR: [
+              { indexingStatus: "failed" },
+              { retrievalStatus: "failed" },
+              {
+                indexingStatus: "indexed",
+                retrievalStatus: "pending",
+              },
+              {
+                indexingStatus: {
+                  in: ["pending", "parsing", "chunking", "embedding"],
+                },
+                updatedAt: { lt: staleBefore },
+              },
+            ],
+          },
+        }),
+        prisma.document.groupBy({
+          by: ["indexingStatus"],
+          where: documentWhere,
+          _count: { _all: true },
+        }),
+      ])
+
+      trackedCount = total
+      readyCount = ready
+      failedCount = failed
+      statusCounts = Object.fromEntries(
+        statusGroups.map((row) => [row.indexingStatus, row._count._all])
+      )
+
       documents = rows.map((doc) => ({
         id: doc.id,
         fileName: doc.fileName,
@@ -96,18 +154,12 @@ export default async function WorkflowsPage() {
     /* DB unavailable */
   }
 
-  const statusCounts = documents.reduce<Record<string, number>>((acc, doc) => {
-    acc[doc.indexingStatus] = (acc[doc.indexingStatus] ?? 0) + 1
-    return acc
-  }, {})
   const activeCount =
     (statusCounts.pending ?? 0) +
     (statusCounts.parsing ?? 0) +
     (statusCounts.chunking ?? 0) +
     (statusCounts.embedding ?? 0)
-  const readyCount = documents.filter(isDocumentRetrievalReady).length
   const failedDocuments = documents.filter((doc) => documentNeedsRetry(doc))
-  const failedCount = failedDocuments.length
 
   return (
     <div className="space-y-8">
@@ -134,7 +186,7 @@ export default async function WorkflowsPage() {
 
       <div className="grid gap-3 sm:grid-cols-4">
         {[
-          { label: "Tracked sources", value: documents.length },
+          { label: "Tracked sources", value: trackedCount },
           { label: "Active pipeline", value: activeCount },
           { label: "Retrieval-ready", value: readyCount },
           { label: "Failed", value: failedCount },
@@ -158,8 +210,7 @@ export default async function WorkflowsPage() {
           Pipeline stages
         </p>
         <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          {["pending", "parsing", "chunking", "embedding", "indexed", "retrieval-ready"].map(
-            (status) => (
+          {PIPELINE_STATUSES.map((status) => (
               <div
                 key={status}
                 className="rounded-lg border border-white/[0.06] bg-black/20 px-3 py-3"
@@ -171,8 +222,7 @@ export default async function WorkflowsPage() {
                   {statusCounts[status] ?? 0}
                 </p>
               </div>
-            )
-          )}
+            ))}
         </div>
       </div>
 

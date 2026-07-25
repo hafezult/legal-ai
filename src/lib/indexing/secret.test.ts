@@ -6,15 +6,16 @@ import {
   indexingSecretRejectedReason,
   isIndexingSecretStrong,
   MIN_SECRET_LENGTH,
+  MIN_SECRET_UNIQUE_CHARS,
   resolveHealthDetailSecret,
   secretsMatch,
 } from "./secret.ts"
 
-const STRONG_SECRET = "ci-indexing-secret-e129-min-32chars!"
-const STRONG_DETAIL = "ready-detail-secret-e129-min-32chars!"
+const STRONG_SECRET = "ci-indexing-secret-779a-min-32chars!"
+const STRONG_DETAIL = "ready-detail-secret-779a-min-32chars!"
 
 describe("indexing secret helpers", () => {
-  it("rejects empty, short, and placeholder secrets", () => {
+  it("rejects empty, short, placeholder, and low-entropy secrets", () => {
     assert.equal(isIndexingSecretStrong(""), false)
     assert.equal(isIndexingSecretStrong(null), false)
     assert.equal(isIndexingSecretStrong("change-me"), false)
@@ -25,8 +26,11 @@ describe("indexing secret helpers", () => {
     assert.equal(isIndexingSecretStrong("x"), false)
     assert.equal(isIndexingSecretStrong("ci-indexing-secret"), false)
     assert.equal(isIndexingSecretStrong("a".repeat(MIN_SECRET_LENGTH - 1)), false)
+    assert.equal(isIndexingSecretStrong("a".repeat(MIN_SECRET_LENGTH)), false)
+    assert.equal(isIndexingSecretStrong("ab".repeat(MIN_SECRET_LENGTH)), false)
     assert.equal(isIndexingSecretStrong(STRONG_SECRET), true)
     assert.ok(STRONG_SECRET.length >= MIN_SECRET_LENGTH)
+    assert.ok(new Set(STRONG_SECRET).size >= MIN_SECRET_UNIQUE_CHARS)
   })
 
   it("allows missing secrets only in development", () => {

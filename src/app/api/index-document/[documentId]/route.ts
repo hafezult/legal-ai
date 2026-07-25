@@ -17,6 +17,8 @@ export const maxDuration = 300
 
 const INDEX_HTTP_RATE_LIMIT = { limit: 30, windowMs: 60_000 }
 const INDEX_AUTH_RATE_LIMIT = { limit: 60, windowMs: 60_000 }
+/** Cluster-/process-wide cap so a valid secret cannot fan out unbounded work. */
+const INDEX_GLOBAL_RATE_LIMIT = { limit: 10, windowMs: 60_000 }
 
 function clientKey(request: Request) {
   // Prefer platform-provided x-real-ip. Ignore client-controlled
@@ -85,12 +87,30 @@ export async function POST(
     )
   }
 
+  const globalThrottle = await consumeRateLimit(
+    "index-http-global",
+    INDEX_GLOBAL_RATE_LIMIT
+  )
+  if (!globalThrottle.ok) {
+    return NextResponse.json(
+      { error: "Indexing rate limit exceeded" },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.ceil(globalThrottle.retryAfterMs / 1000)),
+        },
+      }
+    )
+  }
+
   const document = await prisma.document.findUnique({
     where: { id: documentId },
     select: { id: true },
   })
   if (!document) {
-    return NextResponse.json({ error: "Document not found" }, { status: 404 })
+    // Same shape as unauthorized failures once past the secret gate — avoid
+    // confirming document existence to holders of a leaked shared secret.
+    return NextResponse.json({ error: "Indexing unavailable" }, { status: 404 })
   }
 
   try {

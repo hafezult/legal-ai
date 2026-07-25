@@ -17,8 +17,8 @@ const exactTitles: Record<string, { title: string; subtitle?: string }> = {
   "/app/research": { title: "Research", subtitle: "Authority and retrieval" },
   "/app/drafting": { title: "Drafting", subtitle: "Grounded draft generation" },
   "/app/documents": { title: "Documents", subtitle: "Intelligence and lineage" },
-  "/app/workflows": { title: "Workflows", subtitle: "Orchestration status" },
-  "/app/memory": { title: "Memory", subtitle: "Firm and matter memory" },
+  "/app/workflows": { title: "Workflows", subtitle: "Indexing pipeline status" },
+  "/app/memory": { title: "Memory", subtitle: "Matter-scoped memory" },
   "/app/settings": { title: "Settings", subtitle: "Account and workspace" },
 }
 

@@ -1,3 +1,4 @@
+import { resolveAppBaseUrl } from "@/lib/app-url"
 import { recordAuditEvent } from "@/lib/audit"
 import { hashInviteToken, isInviteTokenShape } from "@/lib/auth/invite-token"
 import { prisma } from "@/lib/prisma"
@@ -665,11 +666,7 @@ export async function acceptOrganizationInviteByToken(
 
 /** Absolute invite acceptance URL for sharing / mailto delivery. */
 export function buildInviteAcceptUrl(token: string) {
-  const base = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(
-    /\/$/,
-    ""
-  )
-  return `${base}/app/invites/${token}`
+  return `${resolveAppBaseUrl()}/app/invites/${token}`
 }
 
 /**

@@ -80,7 +80,9 @@ export default async function DashboardPage() {
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
       ;[matterCount, retrievalReadyCount, researchSessionCount, recentSessions, recentMatters] =
         await Promise.all([
-          prisma.matter.count({ where: matterWhere }),
+          prisma.matter.count({
+            where: { ...matterWhere, status: "active" },
+          }),
           prisma.document.count({
             where: {
               matter: matterWhere,
@@ -103,7 +105,7 @@ export default async function DashboardPage() {
             },
           }),
           prisma.matter.findMany({
-            where: matterWhere,
+            where: { ...matterWhere, status: "active" },
             orderBy: { updatedAt: "desc" },
             take: 5,
             select: {

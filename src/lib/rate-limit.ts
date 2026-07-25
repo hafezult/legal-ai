@@ -4,6 +4,9 @@ type Bucket = {
 
 const buckets = new Map<string, Bucket>()
 
+/** Cap in-process keys so attacker-chosen IPs/ids cannot grow memory unboundedly. */
+const MAX_IN_MEMORY_BUCKETS = 5_000
+
 type RateLimitResult = { ok: true } | { ok: false; retryAfterMs: number }
 
 export type UpstashPipelineDecision =
@@ -38,6 +41,23 @@ export function decideUpstashRateLimit(args: {
   }
 }
 
+function evictStaleBuckets(now: number, windowMs: number) {
+  for (const [key, bucket] of buckets) {
+    bucket.timestamps = bucket.timestamps.filter(
+      (stamp) => now - stamp < windowMs
+    )
+    if (bucket.timestamps.length === 0) {
+      buckets.delete(key)
+    }
+  }
+  // Map iteration is insertion-ordered; drop oldest keys when still over cap.
+  while (buckets.size > MAX_IN_MEMORY_BUCKETS) {
+    const oldestKey = buckets.keys().next().value
+    if (oldestKey === undefined) break
+    buckets.delete(oldestKey)
+  }
+}
+
 function consumeInMemory(
   key: string,
   options: { limit: number; windowMs: number }
@@ -55,7 +75,17 @@ function consumeInMemory(
 
   bucket.timestamps.push(now)
   buckets.set(key, bucket)
+
+  if (buckets.size > MAX_IN_MEMORY_BUCKETS) {
+    evictStaleBuckets(now, options.windowMs)
+  }
+
   return { ok: true }
+}
+
+/** Test helper — current in-process bucket count. */
+export function inMemoryRateLimitBucketCountForTests() {
+  return buckets.size
 }
 
 function upstashConfigured(): boolean {

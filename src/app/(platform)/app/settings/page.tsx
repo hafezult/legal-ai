@@ -99,7 +99,7 @@ export default async function SettingsPage() {
       label: "Indexing secret",
       configured: isIndexingSecretStrong(process.env.INDEXING_SECRET),
       description:
-        "Optional HTTP indexing route protection (upload/reindex run in-process). Secrets shorter than 32 characters or placeholders such as change-me do not count as configured.",
+        "Optional HTTP indexing route protection (upload/reindex run in-process). Secrets shorter than 32 characters, with fewer than 10 distinct characters, or placeholders such as change-me do not count as configured.",
     },
     {
       label: "App URL",

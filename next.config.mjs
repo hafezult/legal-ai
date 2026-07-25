@@ -31,7 +31,7 @@ const nextConfig = {
               "img-src 'self' data: blob: https://*.clerk.com https://img.clerk.com https://*.supabase.co",
               "font-src 'self' data:",
               "connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://api.openai.com https://*.supabase.co https://api.resend.com",
-              "frame-src https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com",
+              "frame-src https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com https://*.supabase.co",
               "frame-ancestors 'none'",
               "base-uri 'self'",
               "form-action 'self'",
