@@ -30,6 +30,35 @@ describe("resolveAppBaseUrl", () => {
       /NEXT_PUBLIC_APP_URL is not configured/
     )
   })
+
+  it("rejects localhost and invalid origins outside development", () => {
+    assert.throws(
+      () =>
+        resolveAppBaseUrl({
+          NODE_ENV: "production",
+          NEXT_PUBLIC_APP_URL: "http://localhost:3000",
+        }),
+      /absolute http\(s\) origin/
+    )
+    assert.throws(
+      () =>
+        resolveAppBaseUrl({
+          NODE_ENV: "production",
+          NEXT_PUBLIC_APP_URL: "not-a-url",
+        }),
+      /absolute http\(s\) origin/
+    )
+  })
+
+  it("allows localhost when NODE_ENV is development", () => {
+    assert.equal(
+      resolveAppBaseUrl({
+        NODE_ENV: "development",
+        NEXT_PUBLIC_APP_URL: "http://localhost:3000/",
+      }),
+      "http://localhost:3000"
+    )
+  })
 })
 
 describe("isAppUrlConfigured", () => {

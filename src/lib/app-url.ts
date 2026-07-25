@@ -3,12 +3,44 @@
  * Development may fall back to localhost; deployed environments must set
  * NEXT_PUBLIC_APP_URL so invites never mint broken localhost URLs.
  */
+
+function parseAppOrigin(
+  configured: string,
+  env: NodeJS.ProcessEnv
+): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(configured)
+  } catch {
+    return null
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return null
+  }
+
+  if (env.NODE_ENV !== "development") {
+    const host = parsed.hostname.toLowerCase()
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
+      return null
+    }
+  }
+
+  return parsed.origin
+}
+
 export function resolveAppBaseUrl(
   env: NodeJS.ProcessEnv = process.env
 ): string {
   const configured = env.NEXT_PUBLIC_APP_URL?.trim()
   if (configured) {
-    return configured.replace(/\/$/, "")
+    const origin = parseAppOrigin(configured, env)
+    if (!origin) {
+      throw new Error(
+        "NEXT_PUBLIC_APP_URL must be an absolute http(s) origin (non-localhost outside development)"
+      )
+    }
+    return origin
   }
   if (env.NODE_ENV === "development") {
     return "http://localhost:3000"
@@ -25,23 +57,5 @@ export function isAppUrlConfigured(
 ): boolean {
   const configured = env.NEXT_PUBLIC_APP_URL?.trim()
   if (!configured) return false
-
-  let parsed: URL
-  try {
-    parsed = new URL(configured)
-  } catch {
-    return false
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return false
-  }
-
-  if (env.NODE_ENV === "development") return true
-
-  const host = parsed.hostname.toLowerCase()
-  if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
-    return false
-  }
-  return true
+  return parseAppOrigin(configured, env) !== null
 }

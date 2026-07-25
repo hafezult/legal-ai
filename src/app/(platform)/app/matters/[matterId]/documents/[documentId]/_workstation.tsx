@@ -4,7 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 
-import { documentIndexingBusy } from "@/lib/documents/status"
+import {
+  documentIndexingBusy,
+  isDocumentRetrievalReady,
+} from "@/lib/documents/status"
 
 // ── Serialised types (passed from RSC) ────────────────────────────────────
 
@@ -19,6 +22,7 @@ export type WorkstationDoc = {
   uploadStatus: string
   indexingStatus: string
   retrievalStatus: string
+  publishedRunId: string | null
   parseStatus: string
   parsedText: string | null
   uploadedAt: string
@@ -213,6 +217,7 @@ function TabOverview({
   sessionCount: number
   authorityCount: number
 }) {
+  const retrievalReady = isDocumentRetrievalReady(doc)
   const pipeline = [
     {
       label: "Upload",
@@ -239,26 +244,25 @@ function TabOverview({
       note:
         embeddedCount > 0
           ? `${embeddedCount} / ${doc.chunkCount}`
-          : doc.indexingStatus === "failed" && doc.retrievalStatus === "ready"
+          : doc.indexingStatus === "failed" && retrievalReady
             ? "Published index retained"
             : doc.indexingStatus,
       // Published embeddings stay usable mid-reindex / after a failed reindex.
       done:
         doc.indexingStatus === "retrieval-ready" ||
-        (doc.retrievalStatus === "ready" && embeddedCount > 0),
+        (retrievalReady && embeddedCount > 0),
       detail:
         embeddedCount > 0
-          ? doc.indexingStatus !== "retrieval-ready" &&
-            doc.retrievalStatus === "ready"
+          ? doc.indexingStatus !== "retrieval-ready" && retrievalReady
             ? "Prior published vectors still live"
             : "Vector representations stored"
           : "",
     },
     {
       label: "Retrieval ready",
-      note: doc.retrievalStatus === "ready" ? "Active" : "Pending",
-      done: doc.retrievalStatus === "ready",
-      detail: doc.retrievalStatus === "ready" ? "Available for research queries" : "",
+      note: retrievalReady ? "Active" : "Pending",
+      done: retrievalReady,
+      detail: retrievalReady ? "Available for research queries" : "",
     },
   ]
 
@@ -768,6 +772,7 @@ function TabRetrieval({
 // ── Tab: Timeline ──────────────────────────────────────────────────────────
 
 function TabTimeline({ doc, chunkCount }: { doc: WorkstationDoc; chunkCount: number }) {
+  const retrievalReady = isDocumentRetrievalReady(doc)
   const events = [
     {
       label: "Document ingested",
@@ -804,8 +809,8 @@ function TabTimeline({ doc, chunkCount }: { doc: WorkstationDoc; chunkCount: num
     {
       label: "Retrieval ready",
       detail: "Available for semantic research queries",
-      time: doc.retrievalStatus === "ready" ? doc.updatedAt : null,
-      done: doc.retrievalStatus === "ready",
+      time: retrievalReady ? doc.updatedAt : null,
+      done: retrievalReady,
     },
   ]
 
@@ -1065,11 +1070,12 @@ export function DocumentWorkstation({
   ])
 
   const indexingBusy = documentIndexingBusy(doc)
+  const retrievalReady = isDocumentRetrievalReady(doc)
   const reindexLabel = indexingBusy
     ? "Indexing in progress"
     : doc.indexingStatus === "failed" || doc.retrievalStatus === "failed"
       ? "Retry indexing"
-      : doc.retrievalStatus === "ready"
+      : retrievalReady
         ? "Re-index source"
         : "Run indexing"
 

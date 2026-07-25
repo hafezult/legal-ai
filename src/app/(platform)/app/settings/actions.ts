@@ -34,6 +34,8 @@ import { consumeRateLimit } from "@/lib/rate-limit"
 const INVITE_RATE_LIMIT = { limit: 10, windowMs: 60_000 } as const
 const INVITE_DECISION_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const ORG_CREATE_RATE_LIMIT = { limit: 5, windowMs: 60_000 } as const
+/** Active workspace switches — higher than admin mutations (sidebar UX). */
+const ORG_SWITCH_RATE_LIMIT = { limit: 30, windowMs: 60_000 } as const
 /** Shared throttle for destructive / membership org admin mutations. */
 const ORG_ADMIN_MUTATION_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const MAX_INVITE_EMAIL_CHARS = 320
@@ -283,6 +285,14 @@ export async function switchActiveOrganization(
 ): Promise<OrganizationActionState> {
   const actor = await requireActor()
   if ("error" in actor) return { error: actor.error }
+
+  const throttle = await consumeRateLimit(
+    `org-switch:${actor.user.id}`,
+    ORG_SWITCH_RATE_LIMIT
+  )
+  if (!throttle.ok) {
+    return { error: rateLimitMessage("Organization switch", throttle.retryAfterMs) }
+  }
 
   try {
     const active = await setActiveOrganization(actor.user.id, organizationId)

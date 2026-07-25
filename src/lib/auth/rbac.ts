@@ -4,6 +4,7 @@ import { hashInviteToken, isInviteTokenShape } from "@/lib/auth/invite-token"
 import {
   INVITE_PURGE_BATCH_SIZE,
   claimInvitePurgeSlot,
+  inviteExpiryDate,
 } from "@/lib/auth/invite-retention"
 import {
   matterAccessWhere,
@@ -32,6 +33,8 @@ export type { OrgPermission, OrgRole }
 export { matterAccessWhere, matterAccessWhereForActiveOrg }
 
 export { canWriteListedMatter } from "@/lib/auth/matter-write"
+
+export { inviteExpiryDate }
 
 /**
  * Delete expired, unaccepted organization invites (bounded batch).
@@ -347,8 +350,6 @@ export async function ensurePersonalOrganization(user: {
   return organization.id
 }
 
-const INVITE_TTL_MS = 1000 * 60 * 60 * 24 * 14
-
 /** Accept outstanding email invites for a newly synced user. */
 export async function acceptPendingOrganizationInvites(user: {
   id: string
@@ -465,10 +466,6 @@ async function claimOrganizationInviteAcceptance(args: {
   } catch {
     return { ok: false }
   }
-}
-
-export function inviteExpiryDate(from: Date = new Date()) {
-  return new Date(from.getTime() + INVITE_TTL_MS)
 }
 
 function slugifyOrganizationName(name: string, salt: string) {

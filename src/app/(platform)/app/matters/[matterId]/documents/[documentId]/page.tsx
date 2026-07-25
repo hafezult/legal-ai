@@ -169,6 +169,7 @@ export default async function DocumentViewerPage({
         uploadStatus: doc.uploadStatus,
         indexingStatus: doc.indexingStatus,
         retrievalStatus: doc.retrievalStatus,
+        publishedRunId: doc.publishedRunId,
         parseStatus: doc.parseStatus,
         parsedText: doc.parsedText,
         uploadedAt: doc.uploadedAt.toISOString(),

@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - cursor/overall-project-finalization-c498
+      - cursor/overall-project-finalization-1c26
 
 jobs:
   validate:
@@ -21,7 +21,7 @@ jobs:
       SUPABASE_DOCUMENT_BUCKET: legal-documents
       OPENAI_API_KEY: ""
       NEXT_PUBLIC_APP_URL: http://localhost:3000
-      INDEXING_SECRET: aether-ci-validate-c498-x7k9m2p4q8w1!
+      INDEXING_SECRET: aether-ci-validate-1c26-x7k9m2p4q8w1!
 
     steps:
       - name: Check out repository
