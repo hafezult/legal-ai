@@ -21,9 +21,7 @@ type MemoryMatter = {
     retrievalStatus: string
     publishedRunId: string | null
   }[]
-  conversations: {
-    _count: { messages: number }
-  }[]
+  messageCount: number
   _count: {
     chunks: number
     researchSessions: number
@@ -54,44 +52,58 @@ export default async function MemoryPage() {
       const activeOrg = await getActiveOrganization(user.id)
       canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
-      const [matterRows, messageTotal] = await Promise.all([
-        prisma.matter.findMany({
-          where: matterWhere,
-          orderBy: { updatedAt: "desc" },
-          select: {
-            id: true,
-            title: true,
-            clientName: true,
-            updatedAt: true,
-            documents: {
-              select: {
-                indexingStatus: true,
-                retrievalStatus: true,
-                publishedRunId: true,
+      const [matterRows, messageTotal, conversationMessageRows] =
+        await Promise.all([
+          prisma.matter.findMany({
+            where: matterWhere,
+            orderBy: { updatedAt: "desc" },
+            select: {
+              id: true,
+              title: true,
+              clientName: true,
+              updatedAt: true,
+              documents: {
+                select: {
+                  indexingStatus: true,
+                  retrievalStatus: true,
+                  publishedRunId: true,
+                },
+              },
+              _count: {
+                select: {
+                  chunks: true,
+                  researchSessions: true,
+                  conversations: true,
+                  draftDocuments: true,
+                },
               },
             },
-            conversations: {
-              select: {
-                _count: { select: { messages: true } },
-              },
+          }),
+          // Workspace total for the summary strip.
+          prisma.conversationMessage.count({
+            where: { conversation: { matter: matterWhere } },
+          }),
+          // Per-matter message totals without nesting conversation graphs on
+          // every matter row (one flat conversation projection instead).
+          prisma.conversation.findMany({
+            where: { matter: matterWhere },
+            select: {
+              matterId: true,
+              _count: { select: { messages: true } },
             },
-            _count: {
-              select: {
-                chunks: true,
-                researchSessions: true,
-                conversations: true,
-                draftDocuments: true,
-              },
-            },
-          },
-        }),
-        // Aggregate once for the summary strip — avoids a second pass over the
-        // conversation-graph payload when only the workspace total is needed.
-        prisma.conversationMessage.count({
-          where: { conversation: { matter: matterWhere } },
-        }),
-      ])
-      matters = matterRows
+          }),
+        ])
+      const messagesByMatter = new Map<string, number>()
+      for (const row of conversationMessageRows) {
+        messagesByMatter.set(
+          row.matterId,
+          (messagesByMatter.get(row.matterId) ?? 0) + row._count.messages
+        )
+      }
+      matters = matterRows.map((matter) => ({
+        ...matter,
+        messageCount: messagesByMatter.get(matter.id) ?? 0,
+      }))
       messageCount = messageTotal
     }
   } catch {
@@ -245,17 +257,8 @@ export default async function MemoryPage() {
                   {matter._count.conversations} conversation
                   {matter._count.conversations === 1 ? "" : "s"}
                   {" · "}
-                  {matter.conversations.reduce(
-                    (sum, conversation) => sum + conversation._count.messages,
-                    0
-                  )}{" "}
-                  message
-                  {matter.conversations.reduce(
-                    (sum, conversation) => sum + conversation._count.messages,
-                    0
-                  ) === 1
-                    ? ""
-                    : "s"}
+                  {matter.messageCount} message
+                  {matter.messageCount === 1 ? "" : "s"}
                 </p>
               </div>
               <span className="hidden w-36 shrink-0 truncate text-sm text-white/40 md:block">
