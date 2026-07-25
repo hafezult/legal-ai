@@ -3,7 +3,9 @@ import Link from "next/link"
 
 import {
   getActiveOrganization,
+  isOrgRole,
   matterAccessWhereForActiveOrg,
+  roleAtLeast,
 } from "@/lib/auth/rbac"
 import { getHealthReport } from "@/lib/health"
 import { prisma } from "@/lib/prisma"
@@ -62,6 +64,7 @@ export default async function DashboardPage() {
     _count: { documents: number; researchSessions: number }
   }[] = []
   let retrievalReadyCount = 0
+  let canViewHealthDetails = false
 
   try {
     const user = await prisma.user.findUnique({
@@ -71,6 +74,9 @@ export default async function DashboardPage() {
     if (user) {
       dataAvailable = true
       const activeOrg = await getActiveOrganization(user.id)
+      const activeRole =
+        activeOrg && isOrgRole(activeOrg.role) ? activeOrg.role : "viewer"
+      canViewHealthDetails = roleAtLeast(activeRole, "admin")
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
       ;[matterCount, retrievalReadyCount, researchSessionCount, recentSessions, recentMatters] =
         await Promise.all([
@@ -117,25 +123,37 @@ export default async function DashboardPage() {
     /* Database unavailable in local dev */
   }
 
-  const health = await getHealthReport().catch(() => null)
+  // Dependency probe details stay admin/owner-only; members see workspace signals.
+  const health = canViewHealthDetails
+    ? await getHealthReport().catch(() => null)
+    : null
 
   const systemLayers: SystemLayer[] = [
     {
       label: "Authentication layer",
-      status: health?.probes.clerk.status === "ok" ? "operational" : "pending",
+      status: health
+        ? health.probes.clerk.status === "ok"
+          ? "operational"
+          : "pending"
+        : "operational",
     },
     {
       label: "Data plane",
-      status:
-        health?.probes.database.status === "ok"
+      status: health
+        ? health.probes.database.status === "ok"
           ? "operational"
-          : dataAvailable
-            ? "operational"
-            : "degraded",
+          : "degraded"
+        : dataAvailable
+          ? "operational"
+          : "degraded",
     },
     {
       label: "AI orchestration",
-      status: health?.probes.openai.status === "ok" ? "operational" : "pending",
+      status: health
+        ? health.probes.openai.status === "ok"
+          ? "operational"
+          : "pending"
+        : "pending",
     },
     {
       label: "Document index",
