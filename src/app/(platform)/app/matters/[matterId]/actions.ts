@@ -46,9 +46,16 @@ export type DocumentDeleteState = {
   warning?: string
 }
 
+/**
+ * Only stamp failure for documents still queued as `pending`.
+ * Never overwrite an active/reclaimed lease via unconditional update.
+ */
 async function markIndexingTriggerFailed(documentId: string) {
-  await prisma.document.update({
-    where: { id: documentId },
+  await prisma.document.updateMany({
+    where: {
+      id: documentId,
+      indexingStatus: "pending",
+    },
     data: {
       indexingStatus: "failed",
       retrievalStatus: "failed",

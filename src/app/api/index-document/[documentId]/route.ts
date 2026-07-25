@@ -16,11 +16,38 @@ import {
 export const maxDuration = 300
 
 const INDEX_HTTP_RATE_LIMIT = { limit: 30, windowMs: 60_000 }
+const INDEX_AUTH_RATE_LIMIT = { limit: 60, windowMs: 60_000 }
+
+function clientKey(request: Request) {
+  // Prefer platform-provided x-real-ip. Ignore client-controlled
+  // x-forwarded-for chains that can rotate rate-limit buckets.
+  const realIp = request.headers.get("x-real-ip")?.trim()
+  if (realIp) return realIp
+  return "anonymous"
+}
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ documentId: string }> }
 ) {
+  // Throttle before secret checks so weak/missing secrets cannot be probed
+  // without bound.
+  const authThrottle = await consumeRateLimit(
+    `index-http-auth:${clientKey(request)}`,
+    INDEX_AUTH_RATE_LIMIT
+  )
+  if (!authThrottle.ok) {
+    return NextResponse.json(
+      { error: "Indexing rate limit exceeded" },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.ceil(authThrottle.retryAfterMs / 1000)),
+        },
+      }
+    )
+  }
+
   // Validate internal secret. Local development may omit it, but deployed
   // environments must configure a non-trivial INDEXING_SECRET.
   const rejected = indexingSecretRejectedReason()

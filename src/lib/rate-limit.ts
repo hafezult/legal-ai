@@ -142,11 +142,20 @@ async function consumeUpstash(
 
     if (!decision.ok) {
       // Drop the rejected attempt so retries do not inflate the window.
-      await upstashCommand(base, token, [
-        "ZREM",
-        redisKey,
-        decision.rejectMember,
-      ])
+      // Retry once; if cleanup still fails, fall back to in-memory so the
+      // denied member does not remain and extend distributed lockout.
+      const removed =
+        (await upstashCommand(base, token, [
+          "ZREM",
+          redisKey,
+          decision.rejectMember,
+        ])) ||
+        (await upstashCommand(base, token, [
+          "ZREM",
+          redisKey,
+          decision.rejectMember,
+        ]))
+      if (!removed) return null
       return { ok: false, retryAfterMs: decision.retryAfterMs }
     }
 

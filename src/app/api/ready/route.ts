@@ -18,21 +18,11 @@ type CachedReport = {
 let cachedReport: CachedReport | null = null
 
 function clientKey(request: Request) {
-  // Prefer the rightmost/trusted hop when a proxy chain is present.
-  // Fall back to x-real-ip, then a shared anonymous bucket (never invent IPs).
+  // Prefer platform-provided x-real-ip only. Client-controlled
+  // x-forwarded-for chains can rotate buckets when no trusted proxy
+  // overwrites the header, so fall back to a shared anonymous key.
   const realIp = request.headers.get("x-real-ip")?.trim()
   if (realIp) return realIp
-
-  const forwarded = request.headers.get("x-forwarded-for")
-  if (forwarded) {
-    const parts = forwarded
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean)
-    const trusted = parts[parts.length - 1]
-    if (trusted) return trusted
-  }
-
   return "anonymous"
 }
 

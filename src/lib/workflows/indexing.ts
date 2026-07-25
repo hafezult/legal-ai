@@ -188,22 +188,35 @@ export async function runIndexingPipeline(documentId: string): Promise<void> {
     )
   }
 
-  // Persist chunks without embeddings
-  const created = await prisma.$transaction(
-    chunks.map((c) =>
-      prisma.documentChunk.create({
-        data: {
-          documentId,
-          matterId: doc.matterId,
-          content: c.content,
-          chunkIndex: c.chunkIndex,
-          tokenCount: c.tokenCount,
-          pageRef: c.pageRef,
-          headingPath: c.headingPath,
-        },
-      })
+  // Persist chunks without embeddings. Create in batches with lease heartbeats
+  // so a long insert cannot go stale and leave orphan rows for a reclaim.
+  const created: { id: string }[] = []
+  const CREATE_BATCH = 40
+  for (let offset = 0; offset < chunks.length; offset += CREATE_BATCH) {
+    await assertRunActive(documentId, runId)
+    const slice = chunks.slice(offset, offset + CREATE_BATCH)
+    const batch = await prisma.$transaction(
+      slice.map((c) =>
+        prisma.documentChunk.create({
+          data: {
+            documentId,
+            matterId: doc.matterId,
+            content: c.content,
+            chunkIndex: c.chunkIndex,
+            tokenCount: c.tokenCount,
+            pageRef: c.pageRef,
+            headingPath: c.headingPath,
+          },
+          select: { id: true },
+        })
+      )
     )
-  )
+    created.push(...batch)
+    await prisma.document.updateMany({
+      where: { id: documentId, indexingRunId: runId },
+      data: { updatedAt: new Date() },
+    })
+  }
 
   await setStatus(documentId, runId, "embedding", { chunkCount: chunks.length })
 

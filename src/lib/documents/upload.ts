@@ -71,7 +71,12 @@ export function hasExpectedSignature(
 export function sanitizeUploadName(name: string): string {
   return name
     .toLowerCase()
+    // Drop path segments / traversal before character filtering.
+    .replace(/^.*[\\/]/, "")
+    .replace(/\.\.+/g, ".")
+    .replace(/^\.+/, "")
     .replace(/[^a-z0-9._-]/g, "_")
     .replace(/_+/g, "_")
+    .replace(/^\.+/, "")
     .slice(0, 120)
 }

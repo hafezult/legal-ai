@@ -49,5 +49,9 @@ describe("document upload validators", () => {
   it("sanitizes storage object names", () => {
     assert.equal(sanitizeUploadName("My Brief (v2).PDF"), "my_brief_v2_.pdf")
     assert.equal(sanitizeUploadName("a".repeat(200)).length, 120)
+    assert.equal(sanitizeUploadName("../secret.pdf"), "secret.pdf")
+    assert.equal(sanitizeUploadName("..\\nested\\brief.pdf"), "brief.pdf")
+    assert.equal(sanitizeUploadName("...hidden.pdf"), "hidden.pdf")
   })
 })
+
