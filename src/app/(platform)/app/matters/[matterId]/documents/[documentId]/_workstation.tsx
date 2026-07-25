@@ -1,7 +1,10 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+
+import { documentIndexingBusy } from "@/lib/documents/status"
 
 // ── Serialised types (passed from RSC) ────────────────────────────────────
 
@@ -57,6 +60,18 @@ export type WorkstationData = {
   embeddedCount: number
   signedUrl: string | null
 }
+
+export type DocumentIndexAction = () => Promise<{
+  error?: string
+  success?: boolean
+  warning?: string
+}>
+
+export type DocumentDeleteAction = () => Promise<{
+  error?: string
+  success?: boolean
+  warning?: string
+}>
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -788,8 +803,21 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "timeline",    label: "Timeline" },
 ]
 
-export function DocumentWorkstation({ data }: { data: WorkstationData }) {
+export function DocumentWorkstation({
+  data,
+  reindexAction,
+  deleteAction,
+  canWrite = true,
+  canDelete = true,
+}: {
+  data: WorkstationData
+  reindexAction: DocumentIndexAction
+  deleteAction: DocumentDeleteAction
+  canWrite?: boolean
+  canDelete?: boolean
+}) {
   const { doc, chunks, sessions, authorities, embeddedCount, signedUrl } = data
+  const router = useRouter()
 
   // Split pane
   const [splitPos, setSplitPos] = useState(DEFAULT_SPLIT)
@@ -802,16 +830,67 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
   // Mobile view toggle
   const [mobilePanel, setMobilePanel] = useState<"document" | "intelligence">("document")
 
+  const [isReindexing, startReindexTransition] = useTransition()
+  const [isDeleting, startDeleteTransition] = useTransition()
+  const [reindexMessage, setReindexMessage] = useState<{
+    type: "success" | "error"
+    text: string
+  } | null>(null)
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null)
+
+  const runReindex = useCallback(() => {
+    setReindexMessage(null)
+    startReindexTransition(async () => {
+      const result = await reindexAction()
+      if (result.error) {
+        setReindexMessage({ type: "error", text: result.error })
+        router.refresh()
+        return
+      }
+
+      setReindexMessage({
+        type: "success",
+        text: result.warning ?? "Indexing completed.",
+      })
+      router.refresh()
+    })
+  }, [reindexAction, router])
+
+  const runDelete = useCallback(() => {
+    const confirmed = window.confirm(
+      `Remove "${doc.fileName}" from this matter? Indexed chunks will be deleted.`
+    )
+    if (!confirmed) return
+
+    setDeleteMessage(null)
+    startDeleteTransition(async () => {
+      const result = await deleteAction()
+      if (result.error) {
+        setDeleteMessage(result.error)
+        return
+      }
+      if (result.warning) {
+        window.alert(result.warning)
+      }
+      router.push(`/app/matters/${doc.matterId}`)
+      router.refresh()
+    })
+  }, [deleteAction, doc.fileName, doc.matterId, router])
+
   // Restore persisted preferences
   useEffect(() => {
-    try {
-      const s = localStorage.getItem(STORAGE_SPLIT)
-      if (s) setSplitPos(Math.max(20, Math.min(80, Number(s))))
-      const t = localStorage.getItem(STORAGE_TAB) as Tab | null
-      if (t && TABS.some((tab) => tab.id === t)) setActiveTab(t)
-    } catch {
-      /* ignore */
-    }
+    const timer = window.setTimeout(() => {
+      try {
+        const s = localStorage.getItem(STORAGE_SPLIT)
+        if (s) setSplitPos(Math.max(20, Math.min(80, Number(s))))
+        const t = localStorage.getItem(STORAGE_TAB) as Tab | null
+        if (t && TABS.some((tab) => tab.id === t)) setActiveTab(t)
+      } catch {
+        /* ignore */
+      }
+    }, 0)
+
+    return () => window.clearTimeout(timer)
   }, [])
 
   // Persist split position
@@ -829,6 +908,41 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
     e.preventDefault()
     dragging.current = true
   }, [])
+
+  const nudgeSplit = useCallback((delta: number) => {
+    setSplitPos((prev) => Math.max(20, Math.min(80, prev + delta)))
+  }, [])
+
+  const onResizeKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const step = e.shiftKey ? 10 : 2
+      if (e.key === "ArrowLeft") {
+        e.preventDefault()
+        nudgeSplit(-step)
+        return
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault()
+        nudgeSplit(step)
+        return
+      }
+      if (e.key === "Home") {
+        e.preventDefault()
+        setSplitPos(20)
+        return
+      }
+      if (e.key === "End") {
+        e.preventDefault()
+        setSplitPos(80)
+        return
+      }
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault()
+        setSplitPos(DEFAULT_SPLIT)
+      }
+    },
+    [nudgeSplit]
+  )
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -877,6 +991,15 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
     }
   }, [activeTab, doc, chunks, sessions, authorities, embeddedCount])
 
+  const indexingBusy = documentIndexingBusy(doc)
+  const reindexLabel = indexingBusy
+    ? "Indexing in progress"
+    : doc.indexingStatus === "failed" || doc.retrievalStatus === "failed"
+      ? "Retry indexing"
+      : doc.retrievalStatus === "ready"
+        ? "Re-index source"
+        : "Run indexing"
+
   return (
     <div
       className="-mx-4 -my-6 flex flex-col overflow-hidden sm:-mx-6 sm:-my-8"
@@ -913,11 +1036,19 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
           <DocViewer doc={doc} signedUrl={signedUrl} />
         </div>
 
-        {/* ── Drag handle ───────────────────────────────────────────── */}
+        {/* ── Drag / keyboard resize handle ─────────────────────────── */}
         <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize document and intelligence panels"
+          aria-valuemin={20}
+          aria-valuemax={80}
+          aria-valuenow={Math.round(splitPos)}
+          tabIndex={0}
           onMouseDown={startDrag}
-          className="hidden w-1 shrink-0 cursor-col-resize bg-white/[0.03] transition-colors hover:bg-white/[0.09] lg:block"
-          title="Drag to resize"
+          onKeyDown={onResizeKeyDown}
+          className="hidden w-1 shrink-0 cursor-col-resize bg-white/[0.03] transition-colors hover:bg-white/[0.09] focus-visible:bg-white/[0.14] focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-white/40 lg:block"
+          title="Drag or use arrow keys to resize"
         />
 
         {/* ── Right: Intelligence panel ─────────────────────────────── */}
@@ -928,13 +1059,47 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
         >
           {/* Back link + Tab bar */}
           <div className="shrink-0 border-b border-white/[0.06]">
-            <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-0">
+            <div className="flex items-center justify-between gap-3 px-4 pt-3 pb-0">
               <Link
                 href={`/app/matters/${doc.matterId}`}
                 className="text-[10px] text-white/25 transition-colors hover:text-white/52"
               >
                 ← {doc.matterTitle}
               </Link>
+              <div className="flex min-w-0 items-center gap-2">
+                {(reindexMessage || deleteMessage) && (
+                  <p
+                    className={`hidden truncate text-[10px] sm:block ${
+                      deleteMessage || reindexMessage?.type === "error"
+                        ? "text-red-300/60"
+                        : "text-white/36"
+                    }`}
+                    title={deleteMessage ?? reindexMessage?.text}
+                  >
+                    {deleteMessage ?? reindexMessage?.text}
+                  </p>
+                )}
+                {canWrite ? (
+                  <button
+                    type="button"
+                    onClick={runReindex}
+                    disabled={isReindexing || isDeleting || indexingBusy}
+                    className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.02] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/64 disabled:pointer-events-none disabled:opacity-45"
+                  >
+                    {isReindexing || indexingBusy ? "Indexing..." : reindexLabel}
+                  </button>
+                ) : null}
+                {canDelete ? (
+                  <button
+                    type="button"
+                    onClick={runDelete}
+                    disabled={isDeleting || isReindexing}
+                    className="shrink-0 rounded-full border border-red-400/15 bg-red-400/[0.04] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-red-200/45 transition-colors hover:border-red-400/28 hover:text-red-200/70 disabled:pointer-events-none disabled:opacity-45"
+                  >
+                    {isDeleting ? "Removing..." : "Remove"}
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="flex gap-0 overflow-x-auto px-3 pt-2">
               {TABS.map((tab) => (
