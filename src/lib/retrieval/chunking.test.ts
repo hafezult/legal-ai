@@ -54,4 +54,26 @@ describe("chunkDocument", () => {
       "citation fragment should remain in chunk content"
     )
   })
+
+  it("assigns monotonically nondecreasing page refs within pageCount", () => {
+    const paragraphs = Array.from({ length: 20 }, (_, i) =>
+      `Section ${i + 1}. ${"authority ".repeat(70)}`.trim()
+    )
+    const text = paragraphs.join("\n\n")
+    const pageCount = 5
+    const chunks = chunkDocument(text, [], pageCount, {
+      chunkSize: 100,
+      overlap: 20,
+    })
+
+    assert.ok(chunks.length >= 3)
+    let previous = 1
+    for (const chunk of chunks) {
+      assert.ok(chunk.pageRef !== null)
+      assert.ok((chunk.pageRef ?? 0) >= 1)
+      assert.ok((chunk.pageRef ?? 0) <= pageCount)
+      assert.ok((chunk.pageRef ?? 0) >= previous)
+      previous = chunk.pageRef ?? previous
+    }
+  })
 })
