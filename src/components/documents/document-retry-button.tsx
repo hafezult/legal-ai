@@ -15,6 +15,7 @@ export function DocumentRetryButton({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
 
   const onRetry = useCallback(
     (event: React.MouseEvent) => {
@@ -22,12 +23,16 @@ export function DocumentRetryButton({
       event.stopPropagation()
       if (isPending) return
       setError(null)
+      setWarning(null)
 
       startTransition(async () => {
         const result = await reindexDocument(matterId, documentId)
         if (result.error) {
           setError(result.error)
           return
+        }
+        if (result.warning) {
+          setWarning(result.warning)
         }
         router.refresh()
       })
@@ -48,6 +53,11 @@ export function DocumentRetryButton({
       {error ? (
         <p className="max-w-[9rem] text-right text-[10px] leading-snug text-red-300/60">
           {error}
+        </p>
+      ) : null}
+      {!error && warning ? (
+        <p className="max-w-[9rem] text-right text-[10px] leading-snug text-amber-200/55">
+          {warning}
         </p>
       ) : null}
     </div>
