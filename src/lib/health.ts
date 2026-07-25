@@ -1,6 +1,11 @@
 import { isIndexingSecretStrong } from "@/lib/indexing/secret"
 import { prisma } from "@/lib/prisma"
 
+export {
+  getLivenessReport,
+  type LivenessReport,
+} from "@/lib/health-liveness"
+
 export type ProbeStatus = "ok" | "degraded" | "missing"
 
 export type HealthProbe = {
@@ -22,11 +27,6 @@ export type HealthReport = {
   }
 }
 
-export type LivenessReport = {
-  status: "ok"
-  checkedAt: string
-}
-
 /** Probes that must be healthy for the deployment to be considered ready. */
 const CRITICAL_PROBES = ["database", "clerk", "storage"] as const
 
@@ -38,17 +38,6 @@ function configuredProbe(
   return configured
     ? { status: "ok", configured: true, detail: readyDetail }
     : { status: "missing", configured: false, detail: missingDetail }
-}
-
-/**
- * Cheap public liveness signal for load balancers.
- * Does not touch Postgres or external services.
- */
-export function getLivenessReport(): LivenessReport {
-  return {
-    status: "ok",
-    checkedAt: new Date().toISOString(),
-  }
 }
 
 export async function getHealthReport(): Promise<HealthReport> {
