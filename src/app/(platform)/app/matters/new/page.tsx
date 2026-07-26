@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import {
   getActiveOrganization,
   roleHasPermission,
@@ -14,7 +15,8 @@ export default async function NewMatterPage() {
   const { userId: clerkId } = await auth()
   if (!clerkId) return null
 
-  let canWrite = true
+  let canWrite = false
+  let loadFailed = false
 
   try {
     const user = await prisma.user.findUnique({
@@ -23,10 +25,24 @@ export default async function NewMatterPage() {
     })
     if (user) {
       const activeOrg = await getActiveOrganization(user.id)
+      // No active org: allow the intake form; createMatter enforces membership.
       canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
+    } else {
+      // User row missing (ensureAppUser race) — keep form; action re-checks.
+      canWrite = true
     }
   } catch {
-    /* DB unavailable — form still renders; server action will enforce */
+    loadFailed = true
+  }
+
+  if (loadFailed) {
+    return (
+      <WorkspaceLoadError
+        title="Matter intake unavailable"
+        description="Aether could not verify organization permissions for matter creation. Retry in a moment, or check Settings readiness probes if this persists."
+        homeHref="/app/matters"
+      />
+    )
   }
 
   if (!canWrite) {

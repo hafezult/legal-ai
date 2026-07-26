@@ -3,6 +3,7 @@ import Link from "next/link"
 import { currentUser } from "@clerk/nextjs/server"
 import { notFound } from "next/navigation"
 
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import {
   selectVerifiedClerkEmail,
   selectVerifiedClerkEmails,
@@ -59,6 +60,7 @@ export default async function InviteAcceptPage({
     acceptedAt: Date | null
     organizationName: string
   } | null = null
+  let loadFailed = false
 
   try {
     const row = await prisma.organizationInvite.findUnique({
@@ -81,7 +83,17 @@ export default async function InviteAcceptPage({
       }
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
+  }
+
+  if (loadFailed) {
+    return (
+      <WorkspaceLoadError
+        title="Invitation service unavailable"
+        description="Aether could not reach the invitation data plane. Retry in a moment — do not assume this invite was revoked."
+        homeHref="/app/settings"
+      />
+    )
   }
 
   if (!invite) {
