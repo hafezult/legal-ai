@@ -75,6 +75,8 @@ export type WorkstationData = {
   doc: WorkstationDoc
   chunks: WorkstationChunk[]
   sessions: WorkstationSession[]
+  /** True when research-session lookup failed (do not treat as empty). */
+  sessionsLoadFailed?: boolean
   authorities: WorkstationAuthority[]
   embeddedCount: number
   signedUrl: string | null
@@ -221,11 +223,13 @@ function TabOverview({
   embeddedCount,
   sessionCount,
   authorityCount,
+  sessionsLoadFailed = false,
 }: {
   doc: WorkstationDoc
   embeddedCount: number
   sessionCount: number
   authorityCount: number
+  sessionsLoadFailed?: boolean
 }) {
   const retrievalReady = isDocumentRetrievalReady(doc)
   const pipeline = [
@@ -280,7 +284,10 @@ function TabOverview({
     { label: "Chunks",       value: String(doc.chunkCount) },
     { label: "Embedded",     value: `${embeddedCount} / ${doc.chunkCount}` },
     { label: "Authorities",  value: String(authorityCount) },
-    { label: "Research uses",value: String(sessionCount) },
+    {
+      label: "Research uses",
+      value: sessionsLoadFailed ? "—" : String(sessionCount),
+    },
     { label: "Pages",        value: doc.pageCount ? String(doc.pageCount) : "—" },
     { label: "File size",    value: fmtBytes(doc.fileSize) },
     { label: "Confidence",   value: doc.extractionConf != null ? `${Math.round(doc.extractionConf * 100)}%` : "—" },
@@ -663,16 +670,36 @@ function TabRetrieval({
   matterId,
   sessions,
   chunks,
+  sessionsLoadFailed = false,
 }: {
   matterId: string
   sessions: WorkstationSession[]
   chunks: WorkstationChunk[]
+  sessionsLoadFailed?: boolean
 }) {
   const docChunkSet = useMemo(() => new Set(chunks.map((c) => c.id)), [chunks])
   const chunkByIndex = useMemo(
     () => new Map(chunks.map((c) => [c.id, c])),
     [chunks]
   )
+
+  if (sessionsLoadFailed) {
+    return (
+      <div
+        role="alert"
+        aria-live="polite"
+        className="flex h-full items-center justify-center p-6 text-center"
+      >
+        <div>
+          <p className="text-sm text-amber-100/70">Retrieval trail unavailable</p>
+          <p className="mt-1 text-xs text-white/35">
+            Aether could not load research sessions for this source. Retry the
+            workstation shortly — do not assume this document has never been cited.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   if (sessions.length === 0) {
     return (
@@ -895,6 +922,7 @@ export function DocumentWorkstation({
     doc,
     chunks,
     sessions,
+    sessionsLoadFailed = false,
     authorities,
     embeddedCount,
     signedUrl,
@@ -1059,6 +1087,7 @@ export function DocumentWorkstation({
             embeddedCount={embeddedCount}
             sessionCount={sessions.length}
             authorityCount={authorities.length}
+            sessionsLoadFailed={sessionsLoadFailed}
           />
         )
       case "chunks":
@@ -1073,6 +1102,7 @@ export function DocumentWorkstation({
             matterId={doc.matterId}
             sessions={sessions}
             chunks={chunks}
+            sessionsLoadFailed={sessionsLoadFailed}
           />
         )
       case "timeline":
@@ -1083,6 +1113,7 @@ export function DocumentWorkstation({
     doc,
     chunks,
     sessions,
+    sessionsLoadFailed,
     authorities,
     embeddedCount,
     parsedTextTruncated,

@@ -535,8 +535,27 @@ export function ResearchClient({
           </div>
 
           {/* ── Results ───────────────────────────────────────────────── */}
+          <p
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            className="sr-only"
+          >
+            {isPending
+              ? "Retrieving grounded research…"
+              : isRestoring
+                ? "Restoring research session…"
+                : isDeleting
+                  ? "Deleting research session…"
+                  : results
+                    ? "Research results ready."
+                    : ""}
+          </p>
           {isPending && (
-            <div className="animate-pulse space-y-4 pt-4">
+            <div
+              aria-hidden="true"
+              className="animate-pulse space-y-4 pt-4"
+            >
               <div className="h-2.5 w-48 rounded bg-white/[0.05]" />
               {[0, 1, 2].map((i) => (
                 <div key={i} className="rounded-lg border border-white/[0.05] bg-white/[0.01] p-5">

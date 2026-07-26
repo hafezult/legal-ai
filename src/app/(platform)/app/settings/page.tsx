@@ -425,80 +425,82 @@ export default async function SettingsPage() {
         )}
       </div>
 
-      <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015] p-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.2em] text-white/35">
-              Activity trail
-            </p>
-            <p className="mt-1.5 text-sm leading-relaxed text-white/40">
-              Ownership-scoped audit events for matter, document, research,
-              conversation, draft, and organization mutations.
-            </p>
-          </div>
-          <p className="text-xs tabular-nums text-white/28">
-            {activity.length} recent event{activity.length === 1 ? "" : "s"}
-          </p>
-        </div>
-
-        {activity.length === 0 ? (
-          <div className="mt-6 rounded-lg border border-white/[0.06] bg-black/20 px-5 py-10 text-center">
-            <p className="font-serif text-base text-white/45">No audit events yet</p>
-            <p className="mx-auto mt-2 max-w-sm text-sm text-white/28">
-              Create matters, upload sources, run research, or manage conversations to
-              populate the workspace trail.
-            </p>
-          </div>
-        ) : (
-          <div className="mt-6 overflow-hidden rounded-lg border border-white/[0.06]">
-            <div className="flex items-center gap-4 border-b border-white/[0.06] bg-black/20 px-4 py-2.5">
-              <span className="w-40 shrink-0 text-[10px] uppercase tracking-[0.16em] text-white/32">
-                Action
-              </span>
-              <span className="min-w-0 flex-1 text-[10px] uppercase tracking-[0.16em] text-white/32">
-                Summary
-              </span>
-              <span className="hidden w-28 shrink-0 text-right text-[10px] uppercase tracking-[0.16em] text-white/32 sm:block">
-                When
-              </span>
+      {!loadFailed ? (
+        <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015] p-6">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-white/35">
+                Activity trail
+              </p>
+              <p className="mt-1.5 text-sm leading-relaxed text-white/40">
+                Ownership-scoped audit events for matter, document, research,
+                conversation, draft, and organization mutations.
+              </p>
             </div>
-            {activity.map((event) => {
-              const row = (
-                <div className="flex items-center gap-4 border-t border-white/[0.04] px-4 py-3 first:border-t-0">
-                  <span className="w-40 shrink-0 truncate text-[11px] uppercase tracking-[0.08em] text-white/40">
-                    {actionLabel(event.action)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-white/72">{event.summary}</p>
-                    <p className="mt-0.5 text-[11px] text-white/28">{event.entityType}</p>
-                  </div>
-                  <span className="hidden w-28 shrink-0 text-right text-xs text-white/25 sm:block">
-                    {fmtShortDate(event.createdAt)}
-                  </span>
-                </div>
-              )
-
-              if (event.matterId) {
-                return (
-                  <Link
-                    key={event.id}
-                    href={`/app/matters/${event.matterId}`}
-                    className="block transition-colors duration-150 hover:bg-white/[0.025]"
-                  >
-                    {row}
-                  </Link>
-                )
-              }
-
-              return (
-                <div key={event.id} className="block">
-                  {row}
-                </div>
-              )
-            })}
+            <p className="text-xs tabular-nums text-white/28">
+              {activity.length} recent event{activity.length === 1 ? "" : "s"}
+            </p>
           </div>
-        )}
-      </div>
+
+          {activity.length === 0 ? (
+            <div className="mt-6 rounded-lg border border-white/[0.06] bg-black/20 px-5 py-10 text-center">
+              <p className="font-serif text-base text-white/45">No audit events yet</p>
+              <p className="mx-auto mt-2 max-w-sm text-sm text-white/28">
+                Create matters, upload sources, run research, or manage conversations to
+                populate the workspace trail.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-6 overflow-hidden rounded-lg border border-white/[0.06]">
+              <div className="flex items-center gap-4 border-b border-white/[0.06] bg-black/20 px-4 py-2.5">
+                <span className="w-40 shrink-0 text-[10px] uppercase tracking-[0.16em] text-white/32">
+                  Action
+                </span>
+                <span className="min-w-0 flex-1 text-[10px] uppercase tracking-[0.16em] text-white/32">
+                  Summary
+                </span>
+                <span className="hidden w-28 shrink-0 text-right text-[10px] uppercase tracking-[0.16em] text-white/32 sm:block">
+                  When
+                </span>
+              </div>
+              {activity.map((event) => {
+                const row = (
+                  <div className="flex items-center gap-4 border-t border-white/[0.04] px-4 py-3 first:border-t-0">
+                    <span className="w-40 shrink-0 truncate text-[11px] uppercase tracking-[0.08em] text-white/40">
+                      {actionLabel(event.action)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm text-white/72">{event.summary}</p>
+                      <p className="mt-0.5 text-[11px] text-white/28">{event.entityType}</p>
+                    </div>
+                    <span className="hidden w-28 shrink-0 text-right text-xs text-white/25 sm:block">
+                      {fmtShortDate(event.createdAt)}
+                    </span>
+                  </div>
+                )
+
+                if (event.matterId) {
+                  return (
+                    <Link
+                      key={event.id}
+                      href={`/app/matters/${event.matterId}`}
+                      className="block transition-colors duration-150 hover:bg-white/[0.025]"
+                    >
+                      {row}
+                    </Link>
+                  )
+                }
+
+                return (
+                  <div key={event.id} className="block">
+                    {row}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-3">
         {[

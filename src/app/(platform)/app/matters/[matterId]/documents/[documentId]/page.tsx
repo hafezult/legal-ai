@@ -148,6 +148,7 @@ export default async function DocumentViewerPage({
       citationSnapshot: string | null
       createdAt: Date
     }[] = []
+    let sessionsLoadFailed = false
 
     try {
       const candidates = await prisma.researchSession.findMany({
@@ -171,7 +172,7 @@ export default async function DocumentViewerPage({
         )
         .slice(0, 20)
     } catch {
-      /* ignore */
+      sessionsLoadFailed = true
     }
 
     // Prefer full chunk text for authorities; parsedText alone is capped.
@@ -242,6 +243,7 @@ export default async function DocumentViewerPage({
           headingPath: entry.headingPath,
         })),
       })),
+      sessionsLoadFailed,
       authorities: authorities.map((a) => ({
         citation: a.citation,
         type: a.type,

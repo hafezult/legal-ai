@@ -524,8 +524,27 @@ export function DraftingClient({
             )}
           </div>
 
+          <p
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            className="sr-only"
+          >
+            {isPending
+              ? "Preparing grounded draft…"
+              : isRestoring
+                ? "Restoring draft…"
+                : isDeleting
+                  ? "Deleting draft…"
+                  : results
+                    ? "Draft results ready."
+                    : ""}
+          </p>
           {isPending && (
-            <div className="animate-pulse space-y-4 pt-4">
+            <div
+              aria-hidden="true"
+              className="animate-pulse space-y-4 pt-4"
+            >
               <div className="h-2.5 w-48 rounded bg-white/[0.05]" />
               {[0, 1, 2].map((index) => (
                 <div

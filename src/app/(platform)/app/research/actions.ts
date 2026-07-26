@@ -175,7 +175,21 @@ export async function runResearch(
   }
 
   const embeddingConfigured = isEmbeddingConfigured()
-  const indexedChunks = await indexedChunkCount(matterId).catch(() => 0)
+  let indexedChunks = 0
+  try {
+    indexedChunks = await indexedChunkCount(matterId)
+  } catch (err) {
+    if (err instanceof Error) {
+      console.error("[runResearch] indexedChunkCount", err.message.slice(0, 240))
+    }
+    return {
+      ...emptyResult(
+        "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
+      ),
+      matterTitle: matter.title,
+      embeddingConfigured,
+    }
+  }
 
   if (!embeddingConfigured) {
     return {
