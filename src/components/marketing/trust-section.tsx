@@ -81,8 +81,8 @@ export function TrustSection() {
             </p>
             <ul className="mt-8 space-y-4 text-sm leading-relaxed text-white/[0.58]">
               <li className="border-l border-white/[0.12] pl-4">
-                Tenant isolation and customer-controlled retention policies where
-                supported by deployment model.
+                Organization-scoped tenant isolation with role-based access; retention
+                windows are controlled by your database and storage operators.
               </li>
               <li className="border-l border-white/[0.12] pl-4">
                 Audit-friendly logging of human and automated actions across workflows.
