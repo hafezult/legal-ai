@@ -18,15 +18,21 @@ export default async function AppLayout({
     const user = await ensureAppUser({ acceptPendingInvites: false })
     if (user) {
       organizations = await listUserOrganizations(user.id)
-      const row = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { activeOrganizationId: true },
-      })
-      activeOrganizationId =
-        row?.activeOrganizationId &&
-        organizations.some((org) => org.id === row.activeOrganizationId)
-          ? row.activeOrganizationId
-          : organizations[0]?.id ?? null
+      // Provisioning always creates a personal org — an empty roster after
+      // ensureAppUser means sync failed and must not look like a valid shell.
+      if (organizations.length === 0) {
+        shellLoadFailed = true
+      } else {
+        const row = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { activeOrganizationId: true },
+        })
+        activeOrganizationId =
+          row?.activeOrganizationId &&
+          organizations.some((org) => org.id === row.activeOrganizationId)
+            ? row.activeOrganizationId
+            : organizations[0]?.id ?? null
+      }
     }
   } catch {
     shellLoadFailed = true

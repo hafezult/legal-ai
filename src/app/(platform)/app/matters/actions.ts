@@ -170,7 +170,11 @@ export async function createMatter(
     return { error: "Unable to reach the data layer. Please try again." }
   }
 
-  if (!user) redirect("/sign-in")
+  // Authenticated Clerk without a provisioned app row is a sync failure —
+  // surface a structured action error (same as sibling matter mutations).
+  if (!user) {
+    return { error: "Session not found. Please sign in again." }
+  }
 
   const createThrottle = await consumeRateLimit(
     `matter-create:${user.id}`,

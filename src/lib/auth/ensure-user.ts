@@ -78,11 +78,10 @@ export async function ensureAppUser(options: EnsureAppUserOptions = {}) {
     })
   }
 
-  try {
-    await ensurePersonalOrganization(user)
-  } catch {
-    /* Organization provisioning is best-effort; retries on next navigation */
-  }
+  // Personal-org provisioning must not be swallowed: platform shell and invite
+  // pages catch thrown failures and surface WorkspaceLoadError / shellLoadFailed
+  // instead of rendering a false empty workspace.
+  await ensurePersonalOrganization(user)
 
   // Invite matching must use the currently verified Clerk email, never a
   // collision-fallback / placeholder persisted on the User row.
