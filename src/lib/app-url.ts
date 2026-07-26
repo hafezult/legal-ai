@@ -116,6 +116,8 @@ export function isNonPublicAppHostname(hostname: string): boolean {
     if ((first & 0xffc0) === 0xfec0) return true
     // Multicast ff00::/8
     if ((first & 0xff00) === 0xff00) return true
+    // Documentation range 2001:db8::/32 (RFC 3849)
+    if (first === 0x2001 && hextets[1] === 0xdb8) return true
 
     return false
   }

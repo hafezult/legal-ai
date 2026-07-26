@@ -368,7 +368,11 @@ export async function runIndexingPipeline(
   if (!isEmbeddingConfigured()) {
     // No API key — keep staged chunks for retry; restore prior publish if any.
     if (preservePublished) {
-      await restorePublishedReady(documentId, runId)
+      // Durable failed signal so Workflows/Documents still surface Retry while
+      // the prior publish stays searchable (parity with failOrRestore).
+      await restorePublishedReady(documentId, runId, {
+        indexingStatus: "failed",
+      })
       return {
         warning:
           "Embeddings unavailable. Prior published index left unchanged. Configure OPENAI_API_KEY and retry to refresh retrieval.",

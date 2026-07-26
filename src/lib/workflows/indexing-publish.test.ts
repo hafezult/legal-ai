@@ -112,4 +112,16 @@ describe("restorePublishedStatusFields", () => {
       parseStatus: "parsed",
     })
   })
+
+  it("embeddings-unavailable reindex restore must use failed for Retry parity", () => {
+    // Soft-skip when OPENAI_API_KEY is unset still needs documentNeedsRetry.
+    assert.equal(
+      restorePublishedStatusFields({ indexingStatus: "failed" }).indexingStatus,
+      "failed"
+    )
+    assert.equal(
+      restorePublishedStatusFields({ indexingStatus: "failed" }).retrievalStatus,
+      "ready"
+    )
+  })
 })

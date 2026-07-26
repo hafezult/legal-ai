@@ -170,11 +170,33 @@ describe("isNonPublicAppHostname", () => {
     assert.equal(isNonPublicAppHostname("0:0:0:0:0:ffff:7f00:1"), true)
     assert.equal(isNonPublicAppHostname("fec0::1"), true)
     assert.equal(isNonPublicAppHostname("ff02::1"), true)
+    // Documentation prefix 2001:db8::/32 (RFC 3849)
+    assert.equal(isNonPublicAppHostname("2001:db8::1"), true)
+    assert.equal(isNonPublicAppHostname("2001:db8:abcd::"), true)
+    assert.equal(isNonPublicAppHostname("[2001:db8::a]"), true)
     assert.equal(isNonPublicAppHostname("aether.example.com"), false)
     assert.equal(isNonPublicAppHostname("facebook.com"), false)
     assert.equal(isNonPublicAppHostname("8.8.8.8"), false)
     assert.equal(isNonPublicAppHostname("100.63.255.255"), false)
     assert.equal(isNonPublicAppHostname("100.128.0.1"), false)
     assert.equal(isNonPublicAppHostname("2001:4860:4860::8888"), false)
+  })
+
+  it("rejects IPv6 documentation origins outside development", () => {
+    assert.throws(
+      () =>
+        resolveAppBaseUrl({
+          NODE_ENV: "production",
+          NEXT_PUBLIC_APP_URL: "https://[2001:db8::1]",
+        }),
+      /absolute https origin/
+    )
+    assert.equal(
+      isAppUrlConfigured({
+        NODE_ENV: "production",
+        NEXT_PUBLIC_APP_URL: "https://[2001:db8::10]",
+      }),
+      false
+    )
   })
 })

@@ -104,10 +104,7 @@ export function OrganizationSwitcher({
           id="org-switcher-error"
           role="alert"
           aria-live="polite"
-          className={cn(
-            "mt-1.5 text-[10px] leading-snug text-red-300/80",
-            collapsed && "lg:hidden"
-          )}
+          className="mt-1.5 text-[10px] leading-snug text-red-300/80"
         >
           {error}
         </p>
