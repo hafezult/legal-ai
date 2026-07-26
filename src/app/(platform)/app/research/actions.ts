@@ -424,7 +424,20 @@ export async function restoreResearchSession(
       practiceDirs: grouped.practiceDirs.map((a) => a.normalized),
       statutory: grouped.statutory.map((a) => a.normalized),
     }
-    const indexedChunks = await indexedChunkCount(session.matterId).catch(() => chunks.length)
+    let indexedChunks = 0
+    try {
+      indexedChunks = await indexedChunkCount(session.matterId)
+    } catch (err) {
+      if (err instanceof Error) {
+        console.error(
+          "[restoreResearchSession] indexedChunkCount",
+          err.message.slice(0, 240)
+        )
+      }
+      return emptyResult(
+        "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
+      )
+    }
 
     return {
       query: session.query,

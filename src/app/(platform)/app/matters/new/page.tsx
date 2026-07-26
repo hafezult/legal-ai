@@ -23,13 +23,14 @@ export default async function NewMatterPage() {
       where: { clerkId },
       select: { id: true },
     })
-    if (user) {
+    if (!user) {
+      // Authenticated Clerk session without a provisioned app user — surface
+      // WorkspaceLoadError (same invariant as other platform pages).
+      loadFailed = true
+    } else {
       const activeOrg = await getActiveOrganization(user.id)
       // No active org: allow the intake form; createMatter enforces membership.
       canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
-    } else {
-      // User row missing (ensureAppUser race) — keep form; action re-checks.
-      canWrite = true
     }
   } catch {
     loadFailed = true

@@ -407,7 +407,20 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
       draft.chunkIds,
       draft.citationSnapshot
     )
-    const indexedChunks = await indexedChunkCount(draft.matterId).catch(() => chunks.length)
+    let indexedChunks = 0
+    try {
+      indexedChunks = await indexedChunkCount(draft.matterId)
+    } catch (err) {
+      if (err instanceof Error) {
+        console.error(
+          "[restoreDraft] indexedChunkCount",
+          err.message.slice(0, 240)
+        )
+      }
+      return emptyResult(
+        "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
+      )
+    }
 
     return {
       draftId: draft.id,
