@@ -6,6 +6,47 @@ export const ALLOWED_DOCUMENT_MIME: Record<string, true> = {
 
 export const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024 // 50 MB
 
+/**
+ * Multipart overhead above the 50 MB file cap — used for early Content-Length
+ * rejection before the body is buffered.
+ */
+export const MAX_UPLOAD_REQUEST_BYTES = MAX_DOCUMENT_BYTES + 1024 * 1024
+
+export type UploadContentLengthResult =
+  | { ok: true; bytes: number }
+  | { ok: false; error: string; status: 400 | 411 | 413 }
+
+/**
+ * Require a finite Content-Length before multipart parsing so chunked or
+ * unknown-length bodies cannot bypass the early size gate.
+ */
+export function validateUploadContentLength(
+  contentLengthHeader: string | null
+): UploadContentLengthResult {
+  if (contentLengthHeader == null || contentLengthHeader.trim() === "") {
+    return {
+      ok: false,
+      error: "Content-Length header required.",
+      status: 411,
+    }
+  }
+
+  const bytes = Number(contentLengthHeader)
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return { ok: false, error: "Invalid Content-Length.", status: 400 }
+  }
+
+  if (bytes > MAX_UPLOAD_REQUEST_BYTES) {
+    return {
+      ok: false,
+      error: "File exceeds the 50 MB ingestion limit.",
+      status: 413,
+    }
+  }
+
+  return { ok: true, bytes }
+}
+
 export const DOCUMENT_TYPES = {
   pdf: {
     extension: ".pdf",

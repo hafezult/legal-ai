@@ -6,6 +6,7 @@ import {
   detectAllowedDocument,
   hasExpectedSignature,
   MAX_DOCUMENT_BYTES,
+  MAX_UPLOAD_REQUEST_BYTES,
   sanitizeUploadName,
 } from "@/lib/documents/upload"
 import { prisma } from "@/lib/prisma"
@@ -27,11 +28,7 @@ export type IngestUploadResult = {
   warning?: string
 }
 
-/**
- * Multipart overhead above the 50 MB file cap — used for early Content-Length
- * rejection before the body is buffered.
- */
-export const MAX_UPLOAD_REQUEST_BYTES = MAX_DOCUMENT_BYTES + 1024 * 1024
+export { MAX_UPLOAD_REQUEST_BYTES }
 
 async function markIndexingTriggerFailed(documentId: string) {
   await prisma.document.updateMany({

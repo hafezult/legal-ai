@@ -5,9 +5,9 @@ import { requireMatterPermission } from "@/lib/auth/rbac"
 import { isDocumentIdShape } from "@/lib/documents/ids"
 import {
   ingestUploadedDocument,
-  MAX_UPLOAD_REQUEST_BYTES,
   type IngestUploadResult,
 } from "@/lib/documents/ingest-upload"
+import { validateUploadContentLength } from "@/lib/documents/upload"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 
@@ -27,18 +27,14 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ matterId: string }> }
 ) {
-  const contentLength = request.headers.get("content-length")
-  if (contentLength) {
-    const bytes = Number(contentLength)
-    if (!Number.isFinite(bytes) || bytes < 0) {
-      return jsonResult({ error: "Invalid Content-Length." }, 400)
-    }
-    if (bytes > MAX_UPLOAD_REQUEST_BYTES) {
-      return jsonResult(
-        { error: "File exceeds the 50 MB ingestion limit." },
-        413
-      )
-    }
+  const contentLengthCheck = validateUploadContentLength(
+    request.headers.get("content-length")
+  )
+  if (!contentLengthCheck.ok) {
+    return jsonResult(
+      { error: contentLengthCheck.error },
+      contentLengthCheck.status
+    )
   }
 
   const { userId: clerkId } = await auth()

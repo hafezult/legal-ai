@@ -4,10 +4,65 @@ import { describe, it } from "node:test"
 import {
   detectAllowedDocument,
   hasExpectedSignature,
+  MAX_UPLOAD_REQUEST_BYTES,
   sanitizeUploadName,
+  validateUploadContentLength,
 } from "./upload.ts"
 
 describe("document upload validators", () => {
+  it("requires Content-Length before multipart parsing", () => {
+    assert.deepEqual(validateUploadContentLength(null), {
+      ok: false,
+      error: "Content-Length header required.",
+      status: 411,
+    })
+    assert.deepEqual(validateUploadContentLength(""), {
+      ok: false,
+      error: "Content-Length header required.",
+      status: 411,
+    })
+    assert.deepEqual(validateUploadContentLength("   "), {
+      ok: false,
+      error: "Content-Length header required.",
+      status: 411,
+    })
+  })
+
+  it("rejects invalid and oversize Content-Length values", () => {
+    assert.deepEqual(validateUploadContentLength("not-a-number"), {
+      ok: false,
+      error: "Invalid Content-Length.",
+      status: 400,
+    })
+    assert.deepEqual(validateUploadContentLength("-1"), {
+      ok: false,
+      error: "Invalid Content-Length.",
+      status: 400,
+    })
+    assert.deepEqual(
+      validateUploadContentLength(String(MAX_UPLOAD_REQUEST_BYTES + 1)),
+      {
+        ok: false,
+        error: "File exceeds the 50 MB ingestion limit.",
+        status: 413,
+      }
+    )
+  })
+
+  it("accepts finite in-range Content-Length values", () => {
+    assert.deepEqual(validateUploadContentLength("0"), {
+      ok: true,
+      bytes: 0,
+    })
+    assert.deepEqual(
+      validateUploadContentLength(String(MAX_UPLOAD_REQUEST_BYTES)),
+      {
+        ok: true,
+        bytes: MAX_UPLOAD_REQUEST_BYTES,
+      }
+    )
+  })
+
   it("detects allowed extensions and MIME pairs", () => {
     assert.deepEqual(
       detectAllowedDocument({ name: "Brief.PDF", type: "application/pdf" }),

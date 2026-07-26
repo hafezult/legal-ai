@@ -120,28 +120,35 @@ export function OrganizationAccessPanel({
     ) => {
       setMessage(null)
       startTransition(async () => {
-        const result = await action()
-        if (result.error) {
-          setMessage({ type: "error", text: result.error })
-          return
+        try {
+          const result = await action()
+          if (result.error) {
+            setMessage({ type: "error", text: result.error })
+            return
+          }
+          if (result.inviteCreated && result.inviteUrl) {
+            setLastInviteUrl(result.inviteUrl)
+          }
+          onSuccess?.(result)
+          const text =
+            result.inviteCreated
+              ? result.inviteEmailSent
+                ? "Invite emailed and link ready to share."
+                : result.inviteEmailWarning
+                  ? result.inviteEmailWarning
+                  : "Invite ready. Copy the link or open mail to deliver it."
+              : successText
+          setMessage({
+            type: result.inviteEmailWarning ? "error" : "success",
+            text,
+          })
+          router.refresh()
+        } catch {
+          setMessage({
+            type: "error",
+            text: "Unable to complete that action. Please try again.",
+          })
         }
-        if (result.inviteCreated && result.inviteUrl) {
-          setLastInviteUrl(result.inviteUrl)
-        }
-        onSuccess?.(result)
-        const text =
-          result.inviteCreated
-            ? result.inviteEmailSent
-              ? "Invite emailed and link ready to share."
-              : result.inviteEmailWarning
-                ? result.inviteEmailWarning
-                : "Invite ready. Copy the link or open mail to deliver it."
-            : successText
-        setMessage({
-          type: result.inviteEmailWarning ? "error" : "success",
-          text,
-        })
-        router.refresh()
       })
     },
     [router]
@@ -159,16 +166,27 @@ export function OrganizationAccessPanel({
 
   const mintInviteUrl = useCallback(
     async (inviteId: string): Promise<string | null> => {
-      const result = await refreshOrganizationInviteLink(organizationId, inviteId)
-      if (result.error || !result.inviteUrl) {
+      try {
+        const result = await refreshOrganizationInviteLink(
+          organizationId,
+          inviteId
+        )
+        if (result.error || !result.inviteUrl) {
+          setMessage({
+            type: "error",
+            text: result.error || "Unable to mint invite link.",
+          })
+          return null
+        }
+        setLastInviteUrl(result.inviteUrl)
+        return result.inviteUrl
+      } catch {
         setMessage({
           type: "error",
-          text: result.error || "Unable to mint invite link.",
+          text: "Unable to mint invite link. Please try again.",
         })
         return null
       }
-      setLastInviteUrl(result.inviteUrl)
-      return result.inviteUrl
     },
     [organizationId]
   )
@@ -177,9 +195,9 @@ export function OrganizationAccessPanel({
     (inviteId: string) => {
       setMessage(null)
       startTransition(async () => {
-        const url = await mintInviteUrl(inviteId)
-        if (!url) return
         try {
+          const url = await mintInviteUrl(inviteId)
+          if (!url) return
           await navigator.clipboard.writeText(url)
           setCopiedInviteId(inviteId)
           setTimeout(() => setCopiedInviteId(null), 2000)
@@ -199,9 +217,20 @@ export function OrganizationAccessPanel({
     (invite: InviteRow) => {
       setMessage(null)
       startTransition(async () => {
-        const url = await mintInviteUrl(invite.id)
-        if (!url) return
-        window.location.href = buildMailto(invite.email, organizationName, url)
+        try {
+          const url = await mintInviteUrl(invite.id)
+          if (!url) return
+          window.location.href = buildMailto(
+            invite.email,
+            organizationName,
+            url
+          )
+        } catch {
+          setMessage({
+            type: "error",
+            text: "Unable to open invite email. Please try again.",
+          })
+        }
       })
     },
     [mintInviteUrl, organizationName]

@@ -66,14 +66,19 @@ export function AcceptInviteClient({
             setError(null)
             setPendingAction("accept")
             startTransition(async () => {
-              const result = await acceptInviteByToken(token)
-              if (result.error) {
-                setError(result.error)
+              try {
+                const result = await acceptInviteByToken(token)
+                if (result.error) {
+                  setError(result.error)
+                  setPendingAction(null)
+                  return
+                }
+                router.push("/app/settings")
+                router.refresh()
+              } catch {
+                setError("Unable to process invite. Please try again.")
                 setPendingAction(null)
-                return
               }
-              router.push("/app/settings")
-              router.refresh()
             })
           }}
           className="rounded-lg border border-white/[0.12] bg-white/[0.06] px-4 py-2.5 text-sm text-white/80 transition-colors hover:border-white/[0.2] hover:bg-white/[0.09] disabled:opacity-40"
@@ -87,14 +92,19 @@ export function AcceptInviteClient({
             setError(null)
             setPendingAction("decline")
             startTransition(async () => {
-              const result = await rejectInviteByToken(token)
-              if (result.error) {
-                setError(result.error)
+              try {
+                const result = await rejectInviteByToken(token)
+                if (result.error) {
+                  setError(result.error)
+                  setPendingAction(null)
+                  return
+                }
+                router.push("/app")
+                router.refresh()
+              } catch {
+                setError("Unable to process invite. Please try again.")
                 setPendingAction(null)
-                return
               }
-              router.push("/app")
-              router.refresh()
             })
           }}
           className="rounded-lg border border-white/[0.08] bg-transparent px-4 py-2.5 text-sm text-white/55 transition-colors hover:border-white/[0.14] hover:text-white/75 disabled:opacity-40"

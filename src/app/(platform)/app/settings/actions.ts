@@ -72,15 +72,29 @@ export type OrganizationActionState = {
 }
 
 async function requireActor() {
-  const { userId: clerkId } = await auth()
+  let clerkId: string | null
+  try {
+    const authState = await auth()
+    clerkId = authState.userId
+  } catch {
+    return {
+      error: "Identity service unavailable. Retry in a moment." as const,
+    }
+  }
   if (!clerkId) return { error: "Authentication required." as const }
 
-  const user = await prisma.user.findUnique({
-    where: { clerkId },
-    select: { id: true, email: true, name: true },
-  })
-  if (!user) return { error: "Session not found. Please sign in again." as const }
-  return { user }
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true, email: true, name: true },
+    })
+    if (!user) {
+      return { error: "Session not found. Please sign in again." as const }
+    }
+    return { user }
+  } catch {
+    return { error: "Data layer unreachable. Please try again." as const }
+  }
 }
 
 /**
