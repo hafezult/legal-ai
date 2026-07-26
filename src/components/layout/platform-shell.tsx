@@ -76,6 +76,15 @@ export function PlatformShell({
 
   const closeMobile = useCallback(() => setMobileOpen(false), [])
 
+  useEffect(() => {
+    if (!mobileOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMobile()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [mobileOpen, closeMobile])
+
   const meta = resolveMeta(pathname)
   const activeName = organizations.find((org) => org.id === activeOrganizationId)?.name
   const subtitle = activeName
@@ -106,7 +115,8 @@ export function PlatformShell({
         <AppTopbar
           title={meta.title}
           subtitle={subtitle}
-          onOpenSidebar={() => setMobileOpen(true)}
+          mobileNavOpen={mobileOpen}
+          onOpenSidebar={() => setMobileOpen((open) => !open)}
         />
         <main
           className={cn(

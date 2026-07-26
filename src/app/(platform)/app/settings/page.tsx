@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import {
   getActiveOrganization,
   isOrgRole,
@@ -151,6 +152,7 @@ export default async function SettingsPage() {
   let health: HealthReport | null = null
   let canViewHealthDetails = false
   let canManageMembers = false
+  let loadFailed = false
 
   try {
     const user = await prisma.user.findUnique({
@@ -290,7 +292,7 @@ export default async function SettingsPage() {
       }
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
   }
 
   return (
@@ -309,7 +311,11 @@ export default async function SettingsPage() {
         </p>
       </div>
 
-      {organization ? (
+      {loadFailed ? (
+        <WorkspaceLoadError title="Organization settings unavailable" />
+      ) : null}
+
+      {!loadFailed && organization ? (
         <OrganizationAccessPanel
           organizationId={organization.id}
           organizationName={organization.name}

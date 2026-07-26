@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import {
   getActiveOrganization,
   isOrgRole,
@@ -48,6 +49,7 @@ export default async function DashboardPage() {
   let matterCount = 0
   let researchSessionCount = 0
   let dataAvailable = false
+  let loadFailed = false
   let recentSessions: {
     id: string
     query: string
@@ -120,7 +122,7 @@ export default async function DashboardPage() {
         ])
     }
   } catch {
-    /* Database unavailable in local dev */
+    loadFailed = true
   }
 
   // Dependency probe details stay admin/owner-only; members see workspace signals.
@@ -177,6 +179,10 @@ export default async function DashboardPage() {
         </p>
       </div>
 
+      {loadFailed ? (
+        <WorkspaceLoadError title="Mission control data unavailable" />
+      ) : (
+        <>
       {/* Primary stat cards */}
       <div className="grid gap-4 sm:grid-cols-3">
         {[
@@ -332,6 +338,8 @@ export default async function DashboardPage() {
           and membership management across matter workspaces.
         </p>
       </div>
+        </>
+      )}
     </div>
   )
 }

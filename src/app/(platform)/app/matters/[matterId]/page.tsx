@@ -5,6 +5,7 @@ import { notFound } from "next/navigation"
 import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { DocumentUploadZone } from "@/components/documents/document-upload-zone"
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { MatterConversationsPanel } from "@/components/matters/matter-conversations-panel"
 import { MatterDeleteControls } from "@/components/matters/matter-delete-controls"
 import { MatterDraftsPanel } from "@/components/matters/matter-drafts-panel"
@@ -188,6 +189,7 @@ export default async function MatterDetailPage({
   let matter: MatterData | null = null
   let canWrite = false
   let canDelete = false
+  let loadFailed = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -323,7 +325,17 @@ export default async function MatterDetailPage({
       }
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
+  }
+
+  if (loadFailed) {
+    return (
+      <WorkspaceLoadError
+        title="Matter workspace unavailable"
+        description="Aether could not load this matter from the data plane. Retry shortly, or verify Settings readiness if the outage continues."
+        homeHref="/app/matters"
+      />
+    )
   }
 
   if (!matter) notFound()

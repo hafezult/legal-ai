@@ -3,6 +3,7 @@ import Link from "next/link"
 
 import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import {
   canWriteListedMatter,
   getActiveOrganization,
@@ -69,6 +70,7 @@ export default async function DocumentsPage() {
 
   let documents: DocumentRow[] = []
   let canWrite = false
+  let loadFailed = false
   let sourceCount = 0
   let indexedCount = 0
   let retrievalReadyCount = 0
@@ -154,7 +156,7 @@ export default async function DocumentsPage() {
       canWrite = orgCanWrite || documents.some((doc) => doc.canWrite)
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
   }
 
   return (
@@ -169,34 +171,38 @@ export default async function DocumentsPage() {
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
             Cross-matter source registry with ingestion, indexing, and retrieval readiness.
-            {sourceCount > documents.length
+            {!loadFailed && sourceCount > documents.length
               ? ` Showing the ${documents.length} most recently uploaded of ${sourceCount}.`
               : null}
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-2 text-right sm:grid-cols-4">
-          {[
-            { label: "Sources", value: sourceCount },
-            { label: "Indexed", value: indexedCount },
-            { label: "Retrieval", value: retrievalReadyCount },
-            { label: "Failed", value: failedCount },
-          ].map((stat) => (
-            <div
-              key={stat.label}
-              className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-4 py-2.5"
-            >
-              <p className="text-[10px] uppercase tracking-[0.14em] text-white/30">
-                {stat.label}
-              </p>
-              <p className="mt-1 font-light text-2xl tabular-nums text-white/82">
-                {stat.value}
-              </p>
-            </div>
-          ))}
-        </div>
+        {!loadFailed ? (
+          <div className="grid grid-cols-2 gap-2 text-right sm:grid-cols-4">
+            {[
+              { label: "Sources", value: sourceCount },
+              { label: "Indexed", value: indexedCount },
+              { label: "Retrieval", value: retrievalReadyCount },
+              { label: "Failed", value: failedCount },
+            ].map((stat) => (
+              <div
+                key={stat.label}
+                className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-4 py-2.5"
+              >
+                <p className="text-[10px] uppercase tracking-[0.14em] text-white/30">
+                  {stat.label}
+                </p>
+                <p className="mt-1 font-light text-2xl tabular-nums text-white/82">
+                  {stat.value}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
-      {documents.length === 0 ? (
+      {loadFailed ? (
+        <WorkspaceLoadError title="Document registry unavailable" />
+      ) : documents.length === 0 ? (
         <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.01] px-8 py-16 text-center">
           <p className="font-serif text-lg text-white/45">No documents uploaded</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-white/28">

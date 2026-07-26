@@ -30,7 +30,15 @@ export function AcceptInviteClient({
         workspace. Declining removes this invite so an admin can send a new one
         later if needed.
       </p>
-      {error ? <p className="mt-3 text-xs text-amber-200/70">{error}</p> : null}
+      {error ? (
+        <p
+          role="alert"
+          aria-live="polite"
+          className="mt-3 text-xs text-amber-200/70"
+        >
+          {error}
+        </p>
+      ) : null}
       <div className="mt-5 flex flex-wrap gap-3">
         <button
           type="button"

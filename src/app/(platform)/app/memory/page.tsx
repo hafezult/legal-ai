@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import {
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
@@ -49,6 +50,7 @@ export default async function MemoryPage() {
   let matters: MemoryMatter[] = []
   let canWrite = false
   let messageCount = 0
+  let loadFailed = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -116,7 +118,7 @@ export default async function MemoryPage() {
       messageCount = messageTotal
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
   }
 
   const documentCount = matters.reduce((sum, matter) => sum + matter.documents.length, 0)
@@ -161,6 +163,10 @@ export default async function MemoryPage() {
         </p>
       </div>
 
+      {loadFailed ? (
+        <WorkspaceLoadError title="Matter memory unavailable" />
+      ) : (
+        <>
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-7">
         {[
           { label: "Matters", value: matters.length },
@@ -288,6 +294,8 @@ export default async function MemoryPage() {
             </Link>
           ))}
         </div>
+      )}
+        </>
       )}
     </div>
   )

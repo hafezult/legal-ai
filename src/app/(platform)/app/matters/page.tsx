@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import {
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
@@ -40,6 +41,7 @@ export default async function MattersPage() {
 
   let matters: MatterRow[] = []
   let canWrite = false
+  let loadFailed = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -62,7 +64,7 @@ export default async function MattersPage() {
       })
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
   }
 
   return (
@@ -94,7 +96,9 @@ export default async function MattersPage() {
         )}
       </div>
 
-      {matters.length === 0 ? (
+      {loadFailed ? (
+        <WorkspaceLoadError title="Matter registry unavailable" />
+      ) : matters.length === 0 ? (
         /* Empty state */
         <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.01] px-8 py-20 text-center">
           <p className="font-serif text-xl text-white/50">No matters registered</p>

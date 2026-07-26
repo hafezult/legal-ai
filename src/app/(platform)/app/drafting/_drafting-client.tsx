@@ -403,7 +403,11 @@ export function DraftingClient({
               </div>
 
               {localError && (
-                <div className="rounded-lg border border-red-400/[0.15] bg-red-400/[0.04] px-4 py-3">
+                <div
+                  role="alert"
+                  aria-live="polite"
+                  className="rounded-lg border border-red-400/[0.15] bg-red-400/[0.04] px-4 py-3"
+                >
                   <p className="text-sm text-red-400/68">{localError}</p>
                 </div>
               )}
@@ -426,7 +430,13 @@ export function DraftingClient({
                 generate new work product or delete drafts.
               </p>
               {localError && (
-                <p className="mt-3 text-sm text-red-400/68">{localError}</p>
+                <p
+                  role="alert"
+                  aria-live="polite"
+                  className="mt-3 text-sm text-red-400/68"
+                >
+                  {localError}
+                </p>
               )}
             </div>
           )}
@@ -440,6 +450,15 @@ export function DraftingClient({
                 {matterDrafts.length} shown
               </span>
             </div>
+            {localError ? (
+              <p
+                role="alert"
+                aria-live="polite"
+                className="mt-3 text-sm text-red-400/68"
+              >
+                {localError}
+              </p>
+            ) : null}
             {matterDrafts.length === 0 ? (
               <p className="mt-4 text-sm leading-relaxed text-white/32">
                 No saved drafts for this matter yet. Generate a grounded draft to persist

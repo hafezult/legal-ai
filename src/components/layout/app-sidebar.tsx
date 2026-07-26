@@ -53,6 +53,7 @@ export function AppSidebar({
 
   return (
     <aside
+      id="app-sidebar-nav"
       className={cn(
         "fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-white/[0.06] bg-zinc-950/95 backdrop-blur-xl transition-transform duration-300 ease-out lg:static lg:translate-x-0",
         mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
@@ -107,6 +108,7 @@ export function AppSidebar({
               key={href}
               href={href}
               onClick={onNavigate}
+              aria-current={active ? "page" : undefined}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-2.5 py-2 text-[13px] transition-colors duration-200",
                 active

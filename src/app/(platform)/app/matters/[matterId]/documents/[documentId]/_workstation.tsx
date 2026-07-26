@@ -1,6 +1,14 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type CSSProperties,
+} from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 
@@ -1118,10 +1126,14 @@ export function DocumentWorkstation({
 
         {/* ── Left: Source document ─────────────────────────────────── */}
         <div
-          className={`flex flex-col overflow-hidden border-r border-white/[0.06] ${
+          className={`flex w-full flex-col overflow-hidden border-r border-white/[0.06] ${
             mobilePanel === "document" ? "flex" : "hidden"
-          } lg:flex`}
-          style={{ width: `${splitPos}%` }}
+          } lg:flex lg:w-[var(--ws-split)]`}
+          style={
+            {
+              ["--ws-split"]: `${splitPos}%`,
+            } as CSSProperties
+          }
         >
           <DocViewer doc={doc} signedUrl={signedUrl} />
         </div>

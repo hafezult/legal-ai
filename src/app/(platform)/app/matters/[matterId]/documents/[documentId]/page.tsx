@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { notFound } from "next/navigation"
 
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { matterAccessWhere, getMatterAccess, roleHasPermission } from "@/lib/auth/rbac"
 import { isParsedTextTruncated } from "@/lib/documents/parsed-text"
 import { extractAuthorities } from "@/lib/legal/authorities"
@@ -29,6 +30,8 @@ export default async function DocumentViewerPage({
   const { matterId, documentId } = await params
 
   let data: WorkstationData | null = null
+  let loadFailed = false
+  let missing = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -64,8 +67,9 @@ export default async function DocumentViewerPage({
       },
     })
 
-    if (!doc) return notFound()
-
+    if (!doc) {
+      missing = true
+    } else {
     // Prefer published generation so mid-reindex staging rows stay hidden.
     const chunkWhere = inspectionChunkWhere({
       id: documentId,
@@ -215,11 +219,22 @@ export default async function DocumentViewerPage({
       signedUrl,
       parsedTextTruncated: isParsedTextTruncated(doc.parsedText),
     }
+    }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
   }
 
-  if (!data) notFound()
+  if (loadFailed) {
+    return (
+      <WorkspaceLoadError
+        title="Document workstation unavailable"
+        description="Aether could not load this source from the data plane. Retry shortly, or verify Settings readiness if the outage continues."
+        homeHref={`/app/matters/${matterId}`}
+      />
+    )
+  }
+
+  if (missing || !data) notFound()
 
   let canWrite = false
   let canDelete = false

@@ -51,12 +51,20 @@ export function DocumentRetryButton({
         {isPending ? "Retrying…" : "Retry"}
       </button>
       {error ? (
-        <p className="max-w-[9rem] text-right text-[10px] leading-snug text-red-300/60">
+        <p
+          role="alert"
+          aria-live="polite"
+          className="max-w-[9rem] text-right text-[10px] leading-snug text-red-300/60"
+        >
           {error}
         </p>
       ) : null}
       {!error && warning ? (
-        <p className="max-w-[9rem] text-right text-[10px] leading-snug text-amber-200/55">
+        <p
+          role="status"
+          aria-live="polite"
+          className="max-w-[9rem] text-right text-[10px] leading-snug text-amber-200/55"
+        >
           {warning}
         </p>
       ) : null}

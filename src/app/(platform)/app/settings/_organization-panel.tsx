@@ -405,6 +405,8 @@ export function OrganizationAccessPanel({
 
       {message ? (
         <p
+          role={message.type === "error" ? "alert" : "status"}
+          aria-live="polite"
           className={`mt-4 text-xs ${
             message.type === "error" ? "text-amber-200/70" : "text-emerald-200/70"
           }`}

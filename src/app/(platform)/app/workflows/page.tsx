@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client"
 
 import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import {
   canWriteListedMatter,
   getActiveOrganization,
@@ -70,6 +71,7 @@ export default async function WorkflowsPage() {
 
   let documents: WorkflowDocument[] = []
   let canWrite = false
+  let loadFailed = false
   let trackedCount = 0
   let readyCount = 0
   let failedCount = 0
@@ -189,7 +191,7 @@ export default async function WorkflowsPage() {
       canWrite = orgCanWrite || documents.some((doc) => doc.canWrite)
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
   }
 
   const retriableFailed = failedDocuments.filter((doc) => doc.canWrite)
@@ -217,6 +219,10 @@ export default async function WorkflowsPage() {
         </Link>
       </div>
 
+      {loadFailed ? (
+        <WorkspaceLoadError title="Workflow monitor unavailable" />
+      ) : (
+        <>
       <div className="grid gap-3 sm:grid-cols-4">
         {[
           { label: "Tracked sources", value: trackedCount },
@@ -373,6 +379,8 @@ export default async function WorkflowsPage() {
             </div>
           ))}
         </div>
+      )}
+        </>
       )}
     </div>
   )

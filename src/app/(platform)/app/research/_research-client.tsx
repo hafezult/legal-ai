@@ -412,7 +412,11 @@ export function ResearchClient({
               </div>
 
               {localError && (
-                <div className="rounded-lg border border-red-400/[0.15] bg-red-400/[0.04] px-4 py-3">
+                <div
+                  role="alert"
+                  aria-live="polite"
+                  className="rounded-lg border border-red-400/[0.15] bg-red-400/[0.04] px-4 py-3"
+                >
                   <p className="text-sm text-red-400/68">{localError}</p>
                 </div>
               )}
@@ -435,7 +439,13 @@ export function ResearchClient({
                 run new queries or delete sessions.
               </p>
               {localError && (
-                <p className="mt-3 text-sm text-red-400/68">{localError}</p>
+                <p
+                  role="alert"
+                  aria-live="polite"
+                  className="mt-3 text-sm text-red-400/68"
+                >
+                  {localError}
+                </p>
               )}
             </div>
           )}
@@ -450,6 +460,15 @@ export function ResearchClient({
                 {matterSessions.length} shown
               </span>
             </div>
+            {localError ? (
+              <p
+                role="alert"
+                aria-live="polite"
+                className="mt-3 text-sm text-red-400/68"
+              >
+                {localError}
+              </p>
+            ) : null}
             {matterSessions.length === 0 ? (
               <p className="mt-4 text-sm leading-relaxed text-white/32">
                 No saved sessions for this matter yet. Run a query to persist a

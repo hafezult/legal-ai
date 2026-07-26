@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server"
 
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import {
   canDeleteListedMatter,
   canDeleteWorkProduct,
@@ -29,6 +30,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
   const initialMatterId = params.matter?.trim() || undefined
   const initialSessionId = params.session?.trim() || undefined
 
+  let loadFailed = false
   let matters: {
     id: string
     title: string
@@ -201,7 +203,11 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
       }
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
+  }
+
+  if (loadFailed) {
+    return <WorkspaceLoadError title="Research workspace unavailable" />
   }
 
   return (

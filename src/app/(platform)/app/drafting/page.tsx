@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server"
 
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import {
   canDeleteListedMatter,
   canDeleteWorkProduct,
@@ -29,6 +30,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
   const initialMatterId = params.matter?.trim() || undefined
   const initialDraftId = params.draft?.trim() || undefined
 
+  let loadFailed = false
   let matters: {
     id: string
     title: string
@@ -208,7 +210,11 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
       }
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
+  }
+
+  if (loadFailed) {
+    return <WorkspaceLoadError title="Drafting workspace unavailable" />
   }
 
   return (
