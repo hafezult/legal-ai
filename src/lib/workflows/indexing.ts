@@ -14,6 +14,10 @@ import {
 import { PARSED_TEXT_MAX_CHARS } from "@/lib/documents/parsed-text"
 import { STALE_INDEXING_MS } from "@/lib/documents/status"
 import {
+  canStartEmbeddingBatch,
+  remainingEmbedBudgetMs,
+} from "@/lib/workflows/indexing-deadline"
+import {
   IndexingInProgressError,
   IndexingRunSupersededError,
   isIndexingInProgressError,
@@ -242,6 +246,9 @@ export async function runIndexingPipeline(
     throw new IndexingInProgressError(documentId)
   }
   const { runId, preservePublished } = claim
+  // Wall-clock for the whole pipeline (not just embedding) so long parse/chunk
+  // phases cannot leave embedding with a fresh budget that overruns maxDuration.
+  const pipelineStartedAtMs = Date.now()
 
   const failOrRestore = async (
     indexingStatus: PipelineStatus,
@@ -388,6 +395,16 @@ export async function runIndexingPipeline(
     }
   }
 
+  const embedBudgetMs = remainingEmbedBudgetMs(pipelineStartedAtMs, Date.now())
+  if (!canStartEmbeddingBatch(embedBudgetMs)) {
+    // Parse/chunk already consumed the end-to-end budget — fail via the same
+    // restore path so Retry stays visible and prior publish (if any) stays live.
+    await failOrRestore("indexed", { retrievalStatus: "failed" })
+    const message = `Insufficient pipeline budget remaining for embeddings (${embedBudgetMs}ms)`
+    console.error(`[indexing] embedding skipped for ${documentId}:`, message)
+    throw new Error(`Embedding failed: ${message}`)
+  }
+
   let embeddings: number[][]
   try {
     embeddings = await generateBatchEmbeddings(
@@ -403,9 +420,9 @@ export async function runIndexingPipeline(
             data: { updatedAt: new Date() },
           })
         },
-        // Leave headroom under the 300s page/route maxDuration for parse +
-        // vector writes; fail cleanly so the lease can restore/retry.
-        deadlineMs: 240_000,
+        // Remaining end-to-end budget (parse/chunk already subtracted), leaving
+        // post-embed reserve for vector writes under the 300s maxDuration.
+        deadlineMs: embedBudgetMs,
       }
     )
   } catch (err) {

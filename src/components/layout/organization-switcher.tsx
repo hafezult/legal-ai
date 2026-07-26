@@ -33,20 +33,28 @@ export function OrganizationSwitcher({
 
   if (organizations.length === 1) {
     return (
-      <div className={cn("px-1", collapsed && "lg:px-0 lg:text-center")}>
+      <div
+        className={cn("px-1", collapsed && "lg:px-0 lg:text-center")}
+        aria-label={`Workspace: ${active.name}`}
+      >
         <p
           className={cn(
             "flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-white/35",
             collapsed && "lg:justify-center"
           )}
         >
-          <Building2 className="size-3.5 shrink-0 opacity-70" strokeWidth={1.5} />
-          <span className={cn(collapsed && "lg:hidden")}>Workspace</span>
+          <Building2
+            className="size-3.5 shrink-0 opacity-70"
+            strokeWidth={1.5}
+            aria-hidden
+          />
+          {/* Keep label in the a11y tree when the sidebar is icon-only. */}
+          <span className={cn(collapsed && "lg:sr-only")}>Workspace</span>
         </p>
         <p
           className={cn(
             "mt-1 truncate text-[11px] leading-relaxed text-white/45",
-            collapsed && "lg:hidden"
+            collapsed && "lg:sr-only"
           )}
           title={active.name}
         >
@@ -64,8 +72,13 @@ export function OrganizationSwitcher({
           collapsed && "lg:justify-center"
         )}
       >
-        <Building2 className="size-3.5 shrink-0 opacity-70" strokeWidth={1.5} />
-        <span className={cn(collapsed && "lg:hidden")}>Workspace</span>
+        <Building2
+          className="size-3.5 shrink-0 opacity-70"
+          strokeWidth={1.5}
+          aria-hidden
+        />
+        {/* Keep label in the a11y tree when the sidebar is icon-only. */}
+        <span className={cn(collapsed && "lg:sr-only")}>Workspace</span>
       </p>
       <select
         value={active.id}
