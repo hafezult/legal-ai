@@ -1157,18 +1157,6 @@ export function DocumentWorkstation({
                 ← {doc.matterTitle}
               </Link>
               <div className="flex min-w-0 items-center gap-2">
-                {(reindexMessage || deleteMessage) && (
-                  <p
-                    className={`hidden truncate text-[10px] sm:block ${
-                      deleteMessage || reindexMessage?.type === "error"
-                        ? "text-red-300/60"
-                        : "text-white/36"
-                    }`}
-                    title={deleteMessage ?? reindexMessage?.text}
-                  >
-                    {deleteMessage ?? reindexMessage?.text}
-                  </p>
-                )}
                 {canWrite ? (
                   <button
                     type="button"
@@ -1191,6 +1179,19 @@ export function DocumentWorkstation({
                 ) : null}
               </div>
             </div>
+            {(reindexMessage || deleteMessage) && (
+              <p
+                role="status"
+                aria-live="polite"
+                className={`px-4 pb-2 text-[10px] leading-relaxed ${
+                  deleteMessage || reindexMessage?.type === "error"
+                    ? "text-red-300/70"
+                    : "text-white/40"
+                }`}
+              >
+                {deleteMessage ?? reindexMessage?.text}
+              </p>
+            )}
             <div className="flex gap-0 overflow-x-auto px-3 pt-2">
               {TABS.map((tab) => (
                 <button

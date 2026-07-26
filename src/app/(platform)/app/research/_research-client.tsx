@@ -174,8 +174,13 @@ export function ResearchClient({
   const [isPending, startTransition] = useTransition()
   const [isDeleting, startDeleteTransition] = useTransition()
   const [isRestoring, startRestoreTransition] = useTransition()
+  // Failed restores return matterId: "" — treat empty as missing so ?? can fall through.
+  const restoredMatterId = initialResults?.matterId?.trim() || undefined
   const initialMatter =
-    initialResults?.matterId ??
+    (restoredMatterId &&
+    matters.some((matter) => matter.id === restoredMatterId)
+      ? restoredMatterId
+      : undefined) ??
     (initialMatterId && matters.some((matter) => matter.id === initialMatterId)
       ? initialMatterId
       : undefined) ??

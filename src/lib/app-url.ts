@@ -118,6 +118,21 @@ export function isNonPublicAppHostname(hostname: string): boolean {
     if ((first & 0xff00) === 0xff00) return true
     // Documentation range 2001:db8::/32 (RFC 3849)
     if (first === 0x2001 && hextets[1] === 0xdb8) return true
+    // Benchmarking 2001:2::/48 (RFC 5180)
+    if (first === 0x2001 && hextets[1] === 0x2) return true
+    // Discard-only 100::/64 (RFC 6666)
+    if (
+      first === 0x100 &&
+      hextets[1] === 0 &&
+      hextets[2] === 0 &&
+      hextets[3] === 0
+    ) {
+      return true
+    }
+    // Local-use NAT64 64:ff9b:1::/48 (RFC 8215)
+    if (first === 0x64 && hextets[1] === 0xff9b && hextets[2] === 0x1) {
+      return true
+    }
 
     return false
   }
@@ -136,6 +151,10 @@ export function isNonPublicAppHostname(hostname: string): boolean {
   if (a === 192 && b === 0 && c === 2) return true
   if (a === 198 && b === 51 && c === 100) return true
   if (a === 203 && b === 0 && c === 113) return true
+  // Benchmarking range (RFC 2544 / RFC 6815)
+  if (a === 198 && (b === 18 || b === 19)) return true
+  // Multicast 224.0.0.0/4 and reserved 240.0.0.0/4 (includes broadcast)
+  if (a >= 224) return true
   return false
 }
 
