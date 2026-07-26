@@ -137,6 +137,10 @@ export async function getMatterAccess(
   }
 }
 
+/** Returned when matter permission checks fail due to data-layer outage. */
+export const PERMISSION_VERIFY_UNAVAILABLE_ERROR =
+  "Unable to verify workspace permissions."
+
 export async function requireMatterPermission(
   userId: string,
   matterId: string,
@@ -158,7 +162,7 @@ export async function requireMatterPermission(
     }
     return { ok: true, access }
   } catch {
-    return { ok: false, error: "Unable to verify workspace permissions." }
+    return { ok: false, error: PERMISSION_VERIFY_UNAVAILABLE_ERROR }
   }
 }
 
@@ -415,6 +419,8 @@ export async function acceptPendingOrganizationInvites(user: {
 /**
  * Atomically claim an invite (acceptedAt still null), upsert membership, and
  * mark the invite accepted. Concurrent acceptors lose on the conditional update.
+ * When `switchActive` is set, the active workspace update is part of the same
+ * transaction so Accept cannot report failure after membership already applied.
  */
 async function claimOrganizationInviteAcceptance(args: {
   inviteId: string
@@ -422,7 +428,11 @@ async function claimOrganizationInviteAcceptance(args: {
   userId: string
   role: OrgRole
   acceptedAt: Date
-}): Promise<{ ok: true; effectiveRole: OrgRole } | { ok: false }> {
+  switchActive?: boolean
+}): Promise<
+  | { ok: true; effectiveRole: OrgRole }
+  | { ok: false; reason: "conflict" | "unavailable" }
+> {
   try {
     return await prisma.$transaction(async (tx) => {
       const claimed = await tx.organizationInvite.updateMany({
@@ -434,7 +444,7 @@ async function claimOrganizationInviteAcceptance(args: {
         data: { acceptedAt: args.acceptedAt },
       })
       if (claimed.count !== 1) {
-        return { ok: false as const }
+        return { ok: false as const, reason: "conflict" as const }
       }
 
       const existing = await tx.organizationMember.findUnique({
@@ -471,10 +481,17 @@ async function claimOrganizationInviteAcceptance(args: {
         effectiveRole = existing.role
       }
 
+      if (args.switchActive) {
+        await tx.user.update({
+          where: { id: args.userId },
+          data: { activeOrganizationId: args.organizationId },
+        })
+      }
+
       return { ok: true as const, effectiveRole }
     })
   } catch {
-    return { ok: false }
+    return { ok: false, reason: "unavailable" }
   }
 }
 
@@ -506,33 +523,45 @@ export async function createOwnedOrganization(
   const slug = slugifyOrganizationName(name, `${userId.slice(-4)}${Date.now().toString(36).slice(-4)}`)
 
   try {
-    const organization = await prisma.organization.create({
-      data: {
-        name,
-        slug,
-        members: {
-          create: {
-            userId,
-            role: "owner",
+    return await prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.create({
+        data: {
+          name,
+          slug,
+          members: {
+            create: {
+              userId,
+              role: "owner",
+            },
           },
         },
-      },
-      select: { id: true, name: true, slug: true },
-    })
+        select: { id: true, name: true, slug: true },
+      })
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: { activeOrganizationId: organization.id },
-    })
+      await tx.user.update({
+        where: { id: userId },
+        data: { activeOrganizationId: organization.id },
+      })
 
-    return {
-      id: organization.id,
-      name: organization.name,
-      slug: organization.slug,
-      role: "owner",
+      return {
+        id: organization.id,
+        name: organization.name,
+        slug: organization.slug,
+        role: "owner" as const,
+      }
+    })
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error &&
+      "code" in error &&
+      (error as { code?: string }).code === "P2002"
+    ) {
+      return {
+        error: "Unable to create organization. Please try a different name.",
+      }
     }
-  } catch {
-    return { error: "Unable to create organization. Please try a different name." }
+    return { error: "Unable to create organization. Please try again." }
   }
 }
 
@@ -686,18 +715,20 @@ export async function acceptOrganizationInviteByToken(
     userId: user.id,
     role,
     acceptedAt: new Date(),
+    switchActive: true,
   })
   if (!claimed.ok) {
+    if (claimed.reason === "unavailable") {
+      return {
+        ok: false,
+        error: "Unable to accept invite. Please try again.",
+      }
+    }
     return {
       ok: false,
       error: "This invite was already accepted or expired. Refresh and try again.",
     }
   }
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { activeOrganizationId: invite.organizationId },
-  })
 
   return {
     ok: true,

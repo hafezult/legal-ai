@@ -4,7 +4,10 @@ import {
   AUTH_REQUIRED_ERROR,
   requireClerkId,
 } from "@/lib/auth/require-actor"
-import { requireMatterPermission } from "@/lib/auth/rbac"
+import {
+  PERMISSION_VERIFY_UNAVAILABLE_ERROR,
+  requireMatterPermission,
+} from "@/lib/auth/rbac"
 import { isDocumentIdShape } from "@/lib/documents/ids"
 import {
   ingestUploadedDocument,
@@ -84,7 +87,9 @@ export async function POST(
 
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) {
-      return jsonResult({ error: permission.error }, 403)
+      const status =
+        permission.error === PERMISSION_VERIFY_UNAVAILABLE_ERROR ? 503 : 403
+      return jsonResult({ error: permission.error }, status)
     }
   } catch {
     return jsonResult({ error: "Data layer unreachable. Please try again." }, 503)
