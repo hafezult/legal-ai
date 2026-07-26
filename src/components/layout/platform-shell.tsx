@@ -80,15 +80,19 @@ export function PlatformShell({
     if (!mobileOpen) return
 
     const desktopQuery = window.matchMedia("(min-width: 1024px)")
-    if (desktopQuery.matches) {
-      closeMobile()
-      return
-    }
-
     const onViewportChange = () => {
       if (desktopQuery.matches) closeMobile()
     }
     desktopQuery.addEventListener("change", onViewportChange)
+
+    // Dismiss the drawer if it opens while already at desktop width.
+    if (desktopQuery.matches) {
+      const timer = window.setTimeout(() => closeMobile(), 0)
+      return () => {
+        desktopQuery.removeEventListener("change", onViewportChange)
+        window.clearTimeout(timer)
+      }
+    }
 
     const sidebar = document.getElementById("app-sidebar-nav")
     const main = document.getElementById("app-main")
@@ -115,8 +119,9 @@ export function PlatformShell({
           )
         : []
 
-    const initial = focusables()[0]
-    initial?.focus()
+    const focusTimer = window.setTimeout(() => {
+      focusables()[0]?.focus()
+    }, 0)
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -153,6 +158,7 @@ export function PlatformShell({
     window.addEventListener("keydown", onKeyDown)
     return () => {
       desktopQuery.removeEventListener("change", onViewportChange)
+      window.clearTimeout(focusTimer)
       window.removeEventListener("keydown", onKeyDown)
       if (main) main.inert = false
       previouslyFocused?.focus()
