@@ -4,8 +4,11 @@ const config: Record<string, { label: string; cls: string }> = {
   pending:          { label: "Pending",         cls: "border-white/[0.07] text-white/28" },
   uploaded:         { label: "Uploaded",        cls: "border-white/[0.12] text-white/52" },
   parsing:          { label: "Parsing",         cls: "border-amber-400/[0.22] text-amber-400/58" },
+  chunking:         { label: "Chunking",        cls: "border-amber-400/[0.22] text-amber-400/58" },
+  embedding:        { label: "Embedding",       cls: "border-amber-400/[0.22] text-amber-400/58" },
   indexing:         { label: "Indexing",        cls: "border-amber-400/[0.22] text-amber-400/58" },
   indexed:          { label: "Indexed",         cls: "border-white/[0.16] text-white/68" },
+  ready:            { label: "Ready",           cls: "border-white/[0.2] text-white/75" },
   "retrieval-ready":{ label: "Retrieval ready", cls: "border-white/[0.2] text-white/75" },
   failed:           { label: "Failed",          cls: "border-red-400/[0.2] text-red-400/58" },
 }
