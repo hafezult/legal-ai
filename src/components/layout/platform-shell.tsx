@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react"
 
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppTopbar } from "@/components/layout/app-topbar"
+import type { ShellOrganization } from "@/components/layout/organization-switcher"
 import { cn } from "@/lib/utils"
 
 const STORAGE_KEY = "aether-shell-sidebar-collapsed"
@@ -14,10 +15,10 @@ const exactTitles: Record<string, { title: string; subtitle?: string }> = {
   "/app/matters": { title: "Matters", subtitle: "Matter registry" },
   "/app/matters/new": { title: "Matter intake", subtitle: "Governed initialization" },
   "/app/research": { title: "Research", subtitle: "Authority and retrieval" },
-  "/app/drafting": { title: "Drafting", subtitle: "Controlled drafting surface" },
+  "/app/drafting": { title: "Drafting", subtitle: "Grounded draft generation" },
   "/app/documents": { title: "Documents", subtitle: "Intelligence and lineage" },
-  "/app/workflows": { title: "Workflows", subtitle: "Orchestration status" },
-  "/app/memory": { title: "Memory", subtitle: "Firm and matter memory" },
+  "/app/workflows": { title: "Workflows", subtitle: "Indexing pipeline status" },
+  "/app/memory": { title: "Memory", subtitle: "Matter-scoped memory" },
   "/app/settings": { title: "Settings", subtitle: "Account and workspace" },
 }
 
@@ -35,21 +36,33 @@ function resolveMeta(pathname: string): { title: string; subtitle?: string } {
   return { title: "Workspace", subtitle: "Aether" }
 }
 
-export function PlatformShell({ children }: { children: React.ReactNode }) {
+export function PlatformShell({
+  children,
+  organizations = [],
+  activeOrganizationId = null,
+}: {
+  children: React.ReactNode
+  organizations?: ShellOrganization[]
+  activeOrganizationId?: string | null
+}) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
-    try {
-      if (localStorage.getItem(STORAGE_KEY) === "1") {
-        setCollapsed(true)
+    const timer = window.setTimeout(() => {
+      try {
+        if (localStorage.getItem(STORAGE_KEY) === "1") {
+          setCollapsed(true)
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
-    }
-    setHydrated(true)
+      setHydrated(true)
+    }, 0)
+
+    return () => window.clearTimeout(timer)
   }, [])
 
   useEffect(() => {
@@ -63,7 +76,20 @@ export function PlatformShell({ children }: { children: React.ReactNode }) {
 
   const closeMobile = useCallback(() => setMobileOpen(false), [])
 
+  useEffect(() => {
+    if (!mobileOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMobile()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [mobileOpen, closeMobile])
+
   const meta = resolveMeta(pathname)
+  const activeName = organizations.find((org) => org.id === activeOrganizationId)?.name
+  const subtitle = activeName
+    ? `${meta.subtitle ?? "Aether"} · ${activeName}`
+    : meta.subtitle
 
   return (
     <div className="flex min-h-screen bg-zinc-950 text-white">
@@ -81,13 +107,16 @@ export function PlatformShell({ children }: { children: React.ReactNode }) {
         onToggleCollapse={() => setCollapsed((c) => !c)}
         mobileOpen={mobileOpen}
         onNavigate={closeMobile}
+        organizations={organizations}
+        activeOrganizationId={activeOrganizationId}
       />
 
       <div className="flex min-w-0 flex-1 flex-col lg:pl-0">
         <AppTopbar
           title={meta.title}
-          subtitle={meta.subtitle}
-          onOpenSidebar={() => setMobileOpen(true)}
+          subtitle={subtitle}
+          mobileNavOpen={mobileOpen}
+          onOpenSidebar={() => setMobileOpen((open) => !open)}
         />
         <main
           className={cn(
