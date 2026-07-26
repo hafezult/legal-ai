@@ -33,6 +33,7 @@ import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import {
   inviteDecisionKey,
+  inviteIssuanceKey,
   orgAdminMutationKey,
 } from "@/lib/rate-limit-policy"
 
@@ -432,7 +433,7 @@ export async function addOrganizationMember(
   }
 
   const throttle = await consumeRateLimit(
-    `invite:${actor.user.id}:${organizationId}`,
+    inviteIssuanceKey(actor.user.id),
     INVITE_RATE_LIMIT
   )
   if (!throttle.ok) {
@@ -670,7 +671,7 @@ export async function refreshOrganizationInviteLink(
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
-    `invite-refresh:${actor.user.id}:${organizationId}`,
+    inviteIssuanceKey(actor.user.id),
     INVITE_RATE_LIMIT
   )
   if (!throttle.ok) {

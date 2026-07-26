@@ -47,10 +47,20 @@ const selectCls =
 
 const labelCls = "mb-2 block text-[10px] uppercase tracking-[0.18em] text-white/40"
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string
+  htmlFor: string
+  children: React.ReactNode
+}) {
   return (
     <div>
-      <p className={labelCls}>{label}</p>
+      <label className={labelCls} htmlFor={htmlFor}>
+        {label}
+      </label>
       {children}
     </div>
   )
@@ -109,8 +119,9 @@ export function NewMatterForm() {
           )}
 
           {/* Title */}
-          <Field label="Matter title">
+          <Field label="Matter title" htmlFor="new-matter-title">
             <input
+              id="new-matter-title"
               type="text"
               name="title"
               maxLength={MAX_MATTER_TITLE_CHARS}
@@ -122,8 +133,9 @@ export function NewMatterForm() {
 
           {/* Client + Billing code */}
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Client name">
+            <Field label="Client name" htmlFor="new-matter-client">
               <input
+                id="new-matter-client"
                 type="text"
                 name="clientName"
                 maxLength={MAX_MATTER_CLIENT_CHARS}
@@ -132,8 +144,9 @@ export function NewMatterForm() {
                 className={inputCls}
               />
             </Field>
-            <Field label="Billing code">
+            <Field label="Billing code" htmlFor="new-matter-billing">
               <input
+                id="new-matter-billing"
                 type="text"
                 name="billingCode"
                 maxLength={MAX_MATTER_BILLING_CHARS}
@@ -146,8 +159,8 @@ export function NewMatterForm() {
 
           {/* Practice area + Jurisdiction */}
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Practice area">
-              <select name="practiceArea" className={selectCls}>
+            <Field label="Practice area" htmlFor="new-matter-practice">
+              <select id="new-matter-practice" name="practiceArea" className={selectCls}>
                 {PRACTICE_AREAS.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
@@ -155,8 +168,9 @@ export function NewMatterForm() {
                 ))}
               </select>
             </Field>
-            <Field label="Jurisdiction">
+            <Field label="Jurisdiction" htmlFor="new-matter-jurisdiction">
               <input
+                id="new-matter-jurisdiction"
                 type="text"
                 name="jurisdiction"
                 maxLength={MAX_MATTER_JURISDICTION_CHARS}
@@ -169,8 +183,8 @@ export function NewMatterForm() {
 
           {/* Status + Risk level */}
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Status">
-              <select name="status" className={selectCls}>
+            <Field label="Status" htmlFor="new-matter-status">
+              <select id="new-matter-status" name="status" className={selectCls}>
                 {STATUS_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
@@ -178,8 +192,13 @@ export function NewMatterForm() {
                 ))}
               </select>
             </Field>
-            <Field label="Risk level">
-              <select name="riskLevel" defaultValue="medium" className={selectCls}>
+            <Field label="Risk level" htmlFor="new-matter-risk">
+              <select
+                id="new-matter-risk"
+                name="riskLevel"
+                defaultValue="medium"
+                className={selectCls}
+              >
                 {RISK_LEVELS.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
@@ -190,8 +209,9 @@ export function NewMatterForm() {
           </div>
 
           {/* Description */}
-          <Field label="Matter description">
+          <Field label="Matter description" htmlFor="new-matter-description">
             <textarea
+              id="new-matter-description"
               name="description"
               rows={4}
               maxLength={MAX_MATTER_DESCRIPTION_CHARS}

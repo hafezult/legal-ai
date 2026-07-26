@@ -14,3 +14,8 @@ export function orgAdminMutationKey(userId: string): string {
 export function inviteDecisionKey(userId: string): string {
   return `invite-decision:${userId}`
 }
+
+/** Invite mint + token refresh share one per-user bucket (no orgId fan-out). */
+export function inviteIssuanceKey(userId: string): string {
+  return `invite-issuance:${userId}`
+}
