@@ -1,23 +1,69 @@
 import { auth } from "@clerk/nextjs/server"
+import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 
-import { prisma } from "@/lib/prisma"
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { matterAccessWhere, getMatterAccess, roleHasPermission } from "@/lib/auth/rbac"
+import { isParsedTextTruncated } from "@/lib/documents/parsed-text"
 import { extractAuthorities } from "@/lib/legal/authorities"
+import { prisma } from "@/lib/prisma"
+import {
+  sessionReferencesDocument,
+  snapshotEntriesForDocument,
+} from "@/lib/retrieval/citation-snapshot"
 import { createSignedUrl } from "@/lib/storage/documents"
+import { inspectionChunkWhere } from "@/lib/workflows/indexing-publish"
+import { deleteDocument, reindexDocument } from "../../actions"
 import { DocumentWorkstation } from "./_workstation"
 import type { WorkstationData } from "./_workstation"
 
 export const dynamic = "force-dynamic"
+/** Reindex runs the indexing pipeline in-process on this segment. */
+export const maxDuration = 300
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ matterId: string; documentId: string }>
+}): Promise<Metadata> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { title: "Document workstation" }
+
+  const { matterId, documentId } = await params
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { title: "Document workstation" }
+
+    const doc = await prisma.document.findFirst({
+      where: {
+        id: documentId,
+        matterId,
+        matter: matterAccessWhere(user.id),
+      },
+      select: { fileName: true },
+    })
+    if (!doc) return { title: "Document workstation" }
+    return { title: `${doc.fileName} · workstation` }
+  } catch {
+    return { title: "Document workstation" }
+  }
+}
 
 export default async function DocumentViewerPage({
   params,
 }: {
-  params: { matterId: string; documentId: string }
+  params: Promise<{ matterId: string; documentId: string }>
 }) {
-  const { userId: clerkId } = auth()
+  const { userId: clerkId } = await auth()
   if (!clerkId) return null
+  const { matterId, documentId } = await params
 
   let data: WorkstationData | null = null
+  let loadFailed = false
+  let missing = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -25,9 +71,9 @@ export default async function DocumentViewerPage({
 
     const doc = await prisma.document.findFirst({
       where: {
-        id: params.documentId,
-        matterId: params.matterId,
-        matter: { userId: user.id },
+        id: documentId,
+        matterId,
+        matter: matterAccessWhere(user.id),
       },
       select: {
         id: true,
@@ -47,16 +93,23 @@ export default async function DocumentViewerPage({
         createdAt: true,
         updatedAt: true,
         matterId: true,
+        publishedRunId: true,
+        indexingRunId: true,
         matter: { select: { title: true, clientName: true } },
-        _count: { select: { chunks: true } },
       },
     })
 
-    if (!doc) return notFound()
-
-    // Fetch all chunks ordered by index
+    if (!doc) {
+      missing = true
+    } else {
+    // Prefer published generation so mid-reindex staging rows stay hidden.
+    const chunkWhere = inspectionChunkWhere({
+      id: documentId,
+      publishedRunId: doc.publishedRunId,
+      indexingRunId: doc.indexingRunId,
+    })
     const rawChunks = await prisma.documentChunk.findMany({
-      where: { documentId: params.documentId },
+      where: chunkWhere,
       orderBy: { chunkIndex: "asc" },
       select: {
         id: true,
@@ -85,38 +138,57 @@ export default async function DocumentViewerPage({
       }
     }
 
-    // Research sessions that referenced any chunk of this document
+    // Research sessions that referenced this document (live chunk ids or
+    // immutable citation snapshots — survives publish-swap after reindex).
     const chunkIds = rawChunks.map((c) => c.id)
     let rawSessions: {
       id: string
       query: string
       chunkIds: string[]
+      citationSnapshot: string | null
       createdAt: Date
     }[] = []
 
-    if (chunkIds.length > 0) {
-      try {
-        rawSessions = await prisma.researchSession.findMany({
-          where: { chunkIds: { hasSome: chunkIds } },
-          orderBy: { createdAt: "desc" },
-          take: 20,
-          select: { id: true, query: true, chunkIds: true, createdAt: true },
-        })
-      } catch {
-        /* ignore */
-      }
+    try {
+      const candidates = await prisma.researchSession.findMany({
+        where: { matterId },
+        orderBy: { createdAt: "desc" },
+        take: 80,
+        select: {
+          id: true,
+          query: true,
+          chunkIds: true,
+          citationSnapshot: true,
+          createdAt: true,
+        },
+      })
+      rawSessions = candidates
+        .filter((session) =>
+          sessionReferencesDocument(session, {
+            fileName: doc.fileName,
+            chunkIds,
+          })
+        )
+        .slice(0, 20)
+    } catch {
+      /* ignore */
     }
 
-    // Extract authorities
-    const authorities = doc.parsedText
-      ? extractAuthorities(doc.parsedText)
+    // Prefer full chunk text for authorities; parsedText alone is capped.
+    const authoritySource =
+      rawChunks.length > 0
+        ? rawChunks.map((c) => c.content).join("\n\n")
+        : (doc.parsedText ?? "")
+    const authorities = authoritySource
+      ? extractAuthorities(authoritySource)
       : []
 
     // Signed URL (2 hours)
     let signedUrl: string | null = null
     if (doc.storagePath) {
       try {
-        const { data: urlData } = await createSignedUrl(doc.storagePath, 7200)
+        // Short-lived preview URL; reload the workstation page to refresh.
+        const { data: urlData } = await createSignedUrl(doc.storagePath, 900)
         signedUrl = urlData?.signedUrl ?? null
       } catch {
         /* storage unavailable */
@@ -131,11 +203,12 @@ export default async function DocumentViewerPage({
         mimeType: doc.mimeType,
         fileSize: doc.fileSize,
         pageCount: doc.pageCount,
-        chunkCount: doc._count.chunks,
+        chunkCount: rawChunks.length,
         extractionConf: doc.extractionConf,
         uploadStatus: doc.uploadStatus,
         indexingStatus: doc.indexingStatus,
         retrievalStatus: doc.retrievalStatus,
+        publishedRunId: doc.publishedRunId,
         parseStatus: doc.parseStatus,
         parsedText: doc.parsedText,
         uploadedAt: doc.uploadedAt.toISOString(),
@@ -159,6 +232,15 @@ export default async function DocumentViewerPage({
         query: s.query,
         chunkIds: s.chunkIds,
         createdAt: s.createdAt.toISOString(),
+        snapshotExcerpts: snapshotEntriesForDocument(
+          s.citationSnapshot,
+          doc.fileName
+        ).map((entry) => ({
+          id: entry.id,
+          content: entry.content,
+          pageRef: entry.pageRef,
+          headingPath: entry.headingPath,
+        })),
       })),
       authorities: authorities.map((a) => ({
         citation: a.citation,
@@ -167,12 +249,53 @@ export default async function DocumentViewerPage({
       })),
       embeddedCount: embeddedIds.size,
       signedUrl,
+      parsedTextTruncated: isParsedTextTruncated(doc.parsedText),
+    }
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
   }
 
-  if (!data) notFound()
+  if (loadFailed) {
+    return (
+      <WorkspaceLoadError
+        title="Document workstation unavailable"
+        description="Aether could not load this source from the data plane. Retry shortly, or verify Settings readiness if the outage continues."
+        homeHref={`/app/matters/${matterId}`}
+      />
+    )
+  }
 
-  return <DocumentWorkstation data={data} />
+  if (missing || !data) notFound()
+
+  let canWrite = false
+  let canDelete = false
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (user) {
+      const access = await getMatterAccess(user.id, matterId)
+      if (access?.role) {
+        canWrite = roleHasPermission(access.role, "write")
+        canDelete = roleHasPermission(access.role, "delete")
+      }
+    }
+  } catch {
+    /* permission probe failed — keep actions hidden */
+  }
+
+  const boundReindex = reindexDocument.bind(null, matterId, documentId)
+  const boundDelete = deleteDocument.bind(null, matterId, documentId)
+
+  return (
+    <DocumentWorkstation
+      data={data}
+      reindexAction={boundReindex}
+      deleteAction={boundDelete}
+      canWrite={canWrite}
+      canDelete={canDelete}
+    />
+  )
 }
