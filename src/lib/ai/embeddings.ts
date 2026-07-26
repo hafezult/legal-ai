@@ -1,6 +1,6 @@
-// Embedding layer — provider-abstracted for OpenAI, Voyage AI, Cohere, local models
+// Embedding layer — OpenAI embeddings for pgvector retrieval
 
-export type EmbeddingProvider = "openai" | "voyage" | "cohere"
+export type EmbeddingProvider = "openai"
 
 export type EmbeddingConfig = {
   provider: EmbeddingProvider
@@ -20,11 +20,8 @@ async function openAIEmbed(
   texts: string[],
   model: string
 ): Promise<number[][]> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.")
-
-  const { OpenAI } = await import("openai")
-  const client = new OpenAI({ apiKey })
+  const { createOpenAIClient } = await import("@/lib/ai/openai-client")
+  const client = await createOpenAIClient()
 
   const response = await client.embeddings.create({
     model,
@@ -38,35 +35,50 @@ async function openAIEmbed(
     .map((d) => d.embedding)
 }
 
-// ── Voyage AI (stub — add API key + implement when contracted) ────────────
-
-async function voyageEmbed(
-  _texts: string[],
-  _model: string
-): Promise<number[][]> {
-  throw new Error("Voyage AI provider not yet implemented.")
-}
-
 // ── Public API ────────────────────────────────────────────────────────────
+
+/** True when a multi-batch embedding run has hit its wall-clock budget. */
+export function isEmbeddingDeadlineExceeded(
+  startedAtMs: number,
+  nowMs: number,
+  deadlineMs: number | undefined
+): boolean {
+  return (
+    typeof deadlineMs === "number" &&
+    deadlineMs > 0 &&
+    nowMs - startedAtMs >= deadlineMs
+  )
+}
 
 export async function generateEmbedding(
   text: string,
   config: Partial<EmbeddingConfig> = {}
 ): Promise<number[]> {
-  const cfg = { ...DEFAULT_CONFIG, ...config }
-  const [embedding] = await generateBatchEmbeddings([text], cfg)
+  const [embedding] = await generateBatchEmbeddings([text], config)
   return embedding
 }
 
 export async function generateBatchEmbeddings(
   texts: string[],
-  config: Partial<EmbeddingConfig> = {}
+  config: Partial<EmbeddingConfig> = {},
+  options: {
+    onBatchComplete?: () => void | Promise<void>
+    /** Wall-clock deadline so multi-batch embeds fail before serverless maxDuration. */
+    deadlineMs?: number
+  } = {}
 ): Promise<number[][]> {
   const cfg = { ...DEFAULT_CONFIG, ...config }
   const BATCH = 100 // OpenAI max batch size
   const results: number[][] = []
+  const startedAt = Date.now()
 
   for (let i = 0; i < texts.length; i += BATCH) {
+    if (isEmbeddingDeadlineExceeded(startedAt, Date.now(), options.deadlineMs)) {
+      throw new Error(
+        `Embedding deadline exceeded after ${i} of ${texts.length} texts.`
+      )
+    }
+
     const batch = texts.slice(i, i + BATCH)
     let batchResult: number[][]
 
@@ -74,14 +86,12 @@ export async function generateBatchEmbeddings(
       case "openai":
         batchResult = await openAIEmbed(batch, cfg.model)
         break
-      case "voyage":
-        batchResult = await voyageEmbed(batch, cfg.model)
-        break
-      default:
-        throw new Error(`Unknown embedding provider: ${cfg.provider}`)
     }
 
     results.push(...batchResult)
+    if (options.onBatchComplete) {
+      await options.onBatchComplete()
+    }
   }
 
   return results
