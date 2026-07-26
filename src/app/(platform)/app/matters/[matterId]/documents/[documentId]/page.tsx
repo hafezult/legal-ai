@@ -67,8 +67,11 @@ export default async function DocumentViewerPage({
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
-    if (!user) return null
-
+    if (!user) {
+      // Authenticated Clerk session without a provisioned app user is a
+      // sync/data-plane failure — not a blank workstation.
+      loadFailed = true
+    } else {
     const doc = await prisma.document.findFirst({
       where: {
         id: documentId,
@@ -254,6 +257,7 @@ export default async function DocumentViewerPage({
       embeddedCount: embeddedIds.size,
       signedUrl,
       parsedTextTruncated: isParsedTextTruncated(doc.parsedText),
+    }
     }
     }
   } catch {

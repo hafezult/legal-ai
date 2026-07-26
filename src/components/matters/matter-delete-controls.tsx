@@ -27,17 +27,25 @@ export function MatterDeleteControls({
   const runDelete = useCallback(() => {
     setMessage(null)
     startTransition(async () => {
-      const result = await deleteAction()
-      if (result.error) {
-        setMessage({ type: "error", text: result.error })
+      try {
+        const result = await deleteAction()
+        if (result.error) {
+          setMessage({ type: "error", text: result.error })
+          setConfirming(false)
+          return
+        }
+        if (result.warning) {
+          window.alert(result.warning)
+        }
+        router.push("/app/matters")
+        router.refresh()
+      } catch {
+        setMessage({
+          type: "error",
+          text: "Unable to delete matter. Please try again.",
+        })
         setConfirming(false)
-        return
       }
-      if (result.warning) {
-        window.alert(result.warning)
-      }
-      router.push("/app/matters")
-      router.refresh()
     })
   }, [deleteAction, router])
 

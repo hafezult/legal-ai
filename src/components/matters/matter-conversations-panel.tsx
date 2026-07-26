@@ -91,14 +91,21 @@ export function MatterConversationsPanel({
 
     setMessage(null)
     startTransition(async () => {
-      const result = await createAction(nextTitle)
-      if (result.error) {
-        setMessage({ type: "error", text: result.error })
-        return
+      try {
+        const result = await createAction(nextTitle)
+        if (result.error) {
+          setMessage({ type: "error", text: result.error })
+          return
+        }
+        setTitle("")
+        setMessage({ type: "success", text: "Conversation created." })
+        router.refresh()
+      } catch {
+        setMessage({
+          type: "error",
+          text: "Unable to create conversation. Please try again.",
+        })
       }
-      setTitle("")
-      setMessage({ type: "success", text: "Conversation created." })
-      router.refresh()
     })
   }, [createAction, router, title])
 
@@ -108,17 +115,25 @@ export function MatterConversationsPanel({
       setConfirmingDeleteId(null)
       setDeletingId(conversationId)
       startTransition(async () => {
-        const result = await deleteAction(conversationId)
-        setDeletingId(null)
-        if (result.error) {
-          setMessage({ type: "error", text: result.error })
-          return
+        try {
+          const result = await deleteAction(conversationId)
+          setDeletingId(null)
+          if (result.error) {
+            setMessage({ type: "error", text: result.error })
+            return
+          }
+          if (expandedId === conversationId) {
+            setExpandedId(null)
+          }
+          setMessage({ type: "success", text: "Conversation deleted." })
+          router.refresh()
+        } catch {
+          setDeletingId(null)
+          setMessage({
+            type: "error",
+            text: "Unable to delete conversation. Please try again.",
+          })
         }
-        if (expandedId === conversationId) {
-          setExpandedId(null)
-        }
-        setMessage({ type: "success", text: "Conversation deleted." })
-        router.refresh()
       })
     },
     [deleteAction, expandedId, router]
@@ -135,15 +150,23 @@ export function MatterConversationsPanel({
       setMessage(null)
       setPostingId(conversationId)
       startTransition(async () => {
-        const result = await createMessageAction(conversationId, content)
-        setPostingId(null)
-        if (result.error) {
-          setMessage({ type: "error", text: result.error })
-          return
+        try {
+          const result = await createMessageAction(conversationId, content)
+          setPostingId(null)
+          if (result.error) {
+            setMessage({ type: "error", text: result.error })
+            return
+          }
+          setDraftById((prev) => ({ ...prev, [conversationId]: "" }))
+          setMessage({ type: "success", text: "Message added." })
+          router.refresh()
+        } catch {
+          setPostingId(null)
+          setMessage({
+            type: "error",
+            text: "Unable to add message. Please try again.",
+          })
         }
-        setDraftById((prev) => ({ ...prev, [conversationId]: "" }))
-        setMessage({ type: "success", text: "Message added." })
-        router.refresh()
       })
     },
     [createMessageAction, draftById, router]

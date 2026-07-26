@@ -92,12 +92,16 @@ export function OrganizationSwitcher({
           if (nextId === active.id) return
           setError(null)
           startTransition(async () => {
-            const result = await switchActiveOrganization(nextId)
-            if (result.error) {
-              setError(result.error)
-              return
+            try {
+              const result = await switchActiveOrganization(nextId)
+              if (result.error) {
+                setError(result.error)
+                return
+              }
+              router.refresh()
+            } catch {
+              setError("Unable to switch workspace. Please try again.")
             }
-            router.refresh()
           })
         }}
         className={cn(

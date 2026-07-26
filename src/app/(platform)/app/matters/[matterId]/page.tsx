@@ -192,7 +192,11 @@ export default async function MatterDetailPage({
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
-    if (user) {
+    if (!user) {
+      // Authenticated Clerk session without a provisioned app user is a
+      // sync/data-plane failure — not a missing matter.
+      loadFailed = true
+    } else {
       const row = await prisma.matter.findFirst({
         where: { id: matterId, ...matterAccessWhere(user.id) },
         select: {

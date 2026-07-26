@@ -76,14 +76,21 @@ export function MatterEditControls({
       const formData = new FormData(event.currentTarget)
       setMessage(null)
       startTransition(async () => {
-        const result = await updateAction(formData)
-        if (result.error) {
-          setMessage({ type: "error", text: result.error })
-          return
+        try {
+          const result = await updateAction(formData)
+          if (result.error) {
+            setMessage({ type: "error", text: result.error })
+            return
+          }
+          setMessage({ type: "success", text: "Matter details updated." })
+          setOpen(false)
+          router.refresh()
+        } catch {
+          setMessage({
+            type: "error",
+            text: "Unable to update matter details. Please try again.",
+          })
         }
-        setMessage({ type: "success", text: "Matter details updated." })
-        setOpen(false)
-        router.refresh()
       })
     },
     [router, updateAction]

@@ -84,15 +84,21 @@ export function MatterResearchPanel({
       setStatus("Deleting research session…")
       setDeletingId(sessionId)
       startDelete(async () => {
-        const result = await deleteResearchSession(sessionId)
-        setDeletingId(null)
-        if (result.error) {
+        try {
+          const result = await deleteResearchSession(sessionId)
+          setDeletingId(null)
+          if (result.error) {
+            setStatus(null)
+            setError(result.error)
+            return
+          }
+          setStatus("Research session deleted.")
+          router.refresh()
+        } catch {
+          setDeletingId(null)
           setStatus(null)
-          setError(result.error)
-          return
+          setError("Unable to delete research session. Please try again.")
         }
-        setStatus("Research session deleted.")
-        router.refresh()
       })
     },
     [isDeleting, router]

@@ -34,13 +34,20 @@ export function MatterStatusControls({
       if (status === currentStatus) return
       setMessage(null)
       startTransition(async () => {
-        const result = await updateAction(status)
-        if (result.error) {
-          setMessage({ type: "error", text: result.error })
-          return
+        try {
+          const result = await updateAction(status)
+          if (result.error) {
+            setMessage({ type: "error", text: result.error })
+            return
+          }
+          setMessage({ type: "success", text: "Matter status updated." })
+          router.refresh()
+        } catch {
+          setMessage({
+            type: "error",
+            text: "Unable to update matter status. Please try again.",
+          })
         }
-        setMessage({ type: "success", text: "Matter status updated." })
-        router.refresh()
       })
     },
     [currentStatus, router, updateAction]
