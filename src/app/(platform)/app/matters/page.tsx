@@ -1,8 +1,8 @@
-import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
@@ -26,8 +26,18 @@ function practiceAreaLabel(value: string | null) {
 }
 
 export default async function MattersPage() {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return null
+  const session = await resolvePlatformClerkId()
+  if (session.status === "unauthenticated") return null
+  if (session.status === "unavailable") {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description={session.error}
+        homeHref="/app"
+      />
+    )
+  }
+  const { clerkId } = session
 
   type MatterRow = {
     id: string

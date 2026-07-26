@@ -1,10 +1,10 @@
-import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 import type { Prisma } from "@prisma/client"
 
 import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   canWriteListedMatter,
   getActiveOrganization,
@@ -66,8 +66,19 @@ function fmtShortDate(d: Date) {
 }
 
 export default async function WorkflowsPage() {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return null
+  const session = await resolvePlatformClerkId()
+  if (session.status === "unauthenticated") return null
+  if (session.status === "unavailable") {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description={session.error}
+        homeHref="/app"
+      />
+    )
+  }
+  const { clerkId } = session
+
 
   let documents: WorkflowDocument[] = []
   let canWrite = false

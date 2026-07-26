@@ -1,7 +1,7 @@
-import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   getActiveOrganization,
   isOrgRole,
@@ -41,10 +41,18 @@ function fmtShortDate(d: Date) {
 }
 
 export default async function DashboardPage() {
-  const { userId } = await auth()
-  if (!userId) {
-    return null
+  const session = await resolvePlatformClerkId()
+  if (session.status === "unauthenticated") return null
+  if (session.status === "unavailable") {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description={session.error}
+        homeHref="/app"
+      />
+    )
   }
+  const { clerkId: userId } = session
 
   let matterCount = 0
   let researchSessionCount = 0

@@ -1,7 +1,7 @@
-import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   getActiveOrganization,
   isOrgRole,
@@ -70,8 +70,19 @@ function actionLabel(action: string) {
 }
 
 export default async function SettingsPage() {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return null
+  const session = await resolvePlatformClerkId()
+  if (session.status === "unauthenticated") return null
+  if (session.status === "unavailable") {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description={session.error}
+        homeHref="/app"
+      />
+    )
+  }
+  const { clerkId } = session
+
 
   const readiness: ReadinessItem[] = [
     {

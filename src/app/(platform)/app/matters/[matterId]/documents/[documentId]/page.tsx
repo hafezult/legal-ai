@@ -1,8 +1,8 @@
-import { auth } from "@clerk/nextjs/server"
 import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import { matterAccessWhere, getMatterAccess, roleHasPermission } from "@/lib/auth/rbac"
 import { isParsedTextTruncated } from "@/lib/documents/parsed-text"
 import { extractAuthorities } from "@/lib/legal/authorities"
@@ -26,8 +26,9 @@ export async function generateMetadata({
 }: {
   params: Promise<{ matterId: string; documentId: string }>
 }): Promise<Metadata> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { title: "Document workstation" }
+  const session = await resolvePlatformClerkId()
+  if (session.status !== "ok") return { title: "Document workstation" }
+  const { clerkId } = session
 
   const { matterId, documentId } = await params
   try {
@@ -57,8 +58,18 @@ export default async function DocumentViewerPage({
 }: {
   params: Promise<{ matterId: string; documentId: string }>
 }) {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return null
+  const session = await resolvePlatformClerkId()
+  if (session.status === "unauthenticated") return null
+  if (session.status === "unavailable") {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description={session.error}
+        homeHref="/app/matters"
+      />
+    )
+  }
+  const { clerkId } = session
   const { matterId, documentId } = await params
 
   let data: WorkstationData | null = null

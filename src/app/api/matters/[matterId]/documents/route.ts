@@ -1,6 +1,9 @@
-import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 
+import {
+  AUTH_REQUIRED_ERROR,
+  requireClerkId,
+} from "@/lib/auth/require-actor"
 import { requireMatterPermission } from "@/lib/auth/rbac"
 import { isDocumentIdShape } from "@/lib/documents/ids"
 import {
@@ -37,10 +40,12 @@ export async function POST(
     )
   }
 
-  const { userId: clerkId } = await auth()
-  if (!clerkId) {
-    return jsonResult({ error: "Authentication required." }, 401)
+  const clerk = await requireClerkId()
+  if (!clerk.ok) {
+    const status = clerk.error === AUTH_REQUIRED_ERROR ? 401 : 503
+    return jsonResult({ error: clerk.error }, status)
   }
+  const { clerkId } = clerk
 
   const { matterId } = await params
   if (!matterId || !isDocumentIdShape(matterId)) {

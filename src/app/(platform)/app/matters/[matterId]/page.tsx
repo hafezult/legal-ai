@@ -1,4 +1,3 @@
-import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 
@@ -6,6 +5,7 @@ import { DocumentRetryButton } from "@/components/documents/document-retry-butto
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { DocumentUploadZone } from "@/components/documents/document-upload-zone"
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import { MatterConversationsPanel } from "@/components/matters/matter-conversations-panel"
 import { MatterDeleteControls } from "@/components/matters/matter-delete-controls"
 import { MatterDraftsPanel } from "@/components/matters/matter-drafts-panel"
@@ -112,8 +112,19 @@ export default async function MatterDetailPage({
 }: {
   params: Promise<{ matterId: string }>
 }) {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return null
+  const session = await resolvePlatformClerkId()
+  if (session.status === "unauthenticated") return null
+  if (session.status === "unavailable") {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description={session.error}
+        homeHref="/app/matters"
+      />
+    )
+  }
+  const { clerkId } = session
+
   const { matterId } = await params
 
   type Doc = {

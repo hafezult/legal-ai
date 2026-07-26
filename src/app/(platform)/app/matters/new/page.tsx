@@ -1,7 +1,7 @@
-import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   getActiveOrganization,
   roleHasPermission,
@@ -12,8 +12,18 @@ import { NewMatterForm } from "./_new-matter-form"
 export const dynamic = "force-dynamic"
 
 export default async function NewMatterPage() {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return null
+  const session = await resolvePlatformClerkId()
+  if (session.status === "unauthenticated") return null
+  if (session.status === "unavailable") {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description={session.error}
+        homeHref="/app/matters"
+      />
+    )
+  }
+  const { clerkId } = session
 
   let canWrite = false
   let loadFailed = false

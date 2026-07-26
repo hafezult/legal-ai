@@ -1,9 +1,9 @@
-import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   canWriteListedMatter,
   getActiveOrganization,
@@ -65,8 +65,19 @@ type DocumentRow = {
 }
 
 export default async function DocumentsPage() {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return null
+  const session = await resolvePlatformClerkId()
+  if (session.status === "unauthenticated") return null
+  if (session.status === "unavailable") {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description={session.error}
+        homeHref="/app"
+      />
+    )
+  }
+  const { clerkId } = session
+
 
   let documents: DocumentRow[] = []
   let canWrite = false
