@@ -167,6 +167,7 @@ export function DraftingClient({
     initialResults?.error ?? null
   )
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null)
+  const [exportNotice, setExportNotice] = useState<string | null>(null)
 
   const selectedMatterCanWrite =
     matters.find((matter) => matter.id === selectedMatter)?.canWrite ?? canWrite
@@ -181,6 +182,7 @@ export function DraftingClient({
       `draft-${output.draftType}-${output.matterTitle.slice(0, 32)}-${stamp}.md`,
       draftMarkdown(output)
     )
+    setExportNotice("Draft export downloaded.")
   }, [])
 
   const restoreSavedDraft = useCallback((draft: RecentDraft) => {
@@ -191,6 +193,7 @@ export function DraftingClient({
     setInstruction(draft.instruction)
     setDraftType(typed)
     setLocalError(null)
+    setExportNotice(null)
     setResults({
       draftId: draft.id,
       matterId: draft.matterId,
@@ -218,6 +221,7 @@ export function DraftingClient({
   const exportSavedDraft = useCallback(
     (draft: RecentDraft) => {
       setLocalError(null)
+      setExportNotice(null)
       startRestoreTransition(async () => {
         const output = await restoreDraft(draft.id)
         if (output.error) {
@@ -536,9 +540,11 @@ export function DraftingClient({
                 ? "Restoring draft…"
                 : isDeleting
                   ? "Deleting draft…"
-                  : results
-                    ? "Draft results ready."
-                    : ""}
+                  : exportNotice
+                    ? exportNotice
+                    : results
+                      ? "Draft results ready."
+                      : ""}
           </p>
           {isPending && (
             <div

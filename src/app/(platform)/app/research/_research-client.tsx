@@ -195,6 +195,7 @@ export function ResearchClient({
     initialResults?.error ?? null
   )
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
+  const [exportNotice, setExportNotice] = useState<string | null>(null)
 
   const selectedMatterCanWrite =
     matters.find((matter) => matter.id === selectedMatter)?.canWrite ?? canWrite
@@ -209,6 +210,7 @@ export function ResearchClient({
       `research-${output.matterTitle.slice(0, 40)}-${stamp}.md`,
       researchMarkdown(output)
     )
+    setExportNotice("Research export downloaded.")
   }, [])
 
   const restoreSession = useCallback(
@@ -216,6 +218,7 @@ export function ResearchClient({
       setSelectedMatter(session.matterId)
       setQuery(session.query)
       setLocalError(null)
+      setExportNotice(null)
       setResults({
         query: session.query,
         matterId: session.matterId,
@@ -244,6 +247,7 @@ export function ResearchClient({
   const exportSession = useCallback(
     (session: RecentSession) => {
       setLocalError(null)
+      setExportNotice(null)
       startRestoreTransition(async () => {
         const output = await restoreResearchSession(session.id)
         if (output.error) {
@@ -547,9 +551,11 @@ export function ResearchClient({
                 ? "Restoring research session…"
                 : isDeleting
                   ? "Deleting research session…"
-                  : results
-                    ? "Research results ready."
-                    : ""}
+                  : exportNotice
+                    ? exportNotice
+                    : results
+                      ? "Research results ready."
+                      : ""}
           </p>
           {isPending && (
             <div

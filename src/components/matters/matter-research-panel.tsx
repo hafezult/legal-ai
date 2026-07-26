@@ -58,6 +58,7 @@ export function MatterResearchPanel({
   const [isDeleting, startDelete] = useTransition()
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [status, setStatus] = useState<string | null>(null)
 
   const handleExport = useCallback(
     (session: MatterResearchSession) => {
@@ -66,6 +67,8 @@ export function MatterResearchPanel({
         `research-${matterTitle.slice(0, 40)}-${stamp}.md`,
         sessionMarkdown(session, matterTitle)
       )
+      setError(null)
+      setStatus("Research export downloaded.")
     },
     [matterTitle]
   )
@@ -78,14 +81,17 @@ export function MatterResearchPanel({
       )
       if (!confirmed) return
       setError(null)
+      setStatus("Deleting research session…")
       setDeletingId(sessionId)
       startDelete(async () => {
         const result = await deleteResearchSession(sessionId)
         setDeletingId(null)
         if (result.error) {
+          setStatus(null)
           setError(result.error)
           return
         }
+        setStatus("Research session deleted.")
         router.refresh()
       })
     },
@@ -115,6 +121,11 @@ export function MatterResearchPanel({
           : "Citation-grade outputs initialize here after research queries are submitted within this matter context."}
       </p>
 
+      {status && !error ? (
+        <p role="status" aria-live="polite" className="mt-3 text-xs text-white/45">
+          {status}
+        </p>
+      ) : null}
       {error ? (
         <p role="alert" aria-live="polite" className="mt-3 text-xs text-red-300/65">
           {error}

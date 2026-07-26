@@ -50,7 +50,20 @@ export default async function InviteAcceptPage({
   if (!token || !isInviteTokenShape(token)) notFound()
 
   // Skip email auto-accept so Accept/Decline controls remain reachable.
-  const user = await ensureAppUser({ acceptPendingInvites: false })
+  // Clerk/DB outages during sync must surface as service unavailable — not a
+  // generic app error or an “invalid invite” / account-mismatch UX.
+  let user: Awaited<ReturnType<typeof ensureAppUser>> = null
+  try {
+    user = await ensureAppUser({ acceptPendingInvites: false })
+  } catch {
+    return (
+      <WorkspaceLoadError
+        title="Invitation service unavailable"
+        description="Aether could not reach identity or invitation services. Retry in a moment — do not assume this invite was revoked."
+        homeHref="/app/settings"
+      />
+    )
+  }
   if (!user) return null
 
   let invite: {
@@ -117,6 +130,7 @@ export default async function InviteAcceptPage({
   // address on the account may match the invite target.
   let signedInEmails: string[] = []
   let signedInEmail: string | null = null
+  let identityLoadFailed = false
   try {
     const clerkUser = await currentUser()
     if (clerkUser) {
@@ -132,8 +146,17 @@ export default async function InviteAcceptPage({
       )
     }
   } catch {
-    signedInEmails = []
-    signedInEmail = null
+    identityLoadFailed = true
+  }
+
+  if (identityLoadFailed) {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description="Aether could not verify the signed-in account against this invite. Retry in a moment — do not switch accounts yet."
+        homeHref="/app/settings"
+      />
+    )
   }
 
   const emailMatches = verifiedClerkEmailMatches(signedInEmails, invite.email)

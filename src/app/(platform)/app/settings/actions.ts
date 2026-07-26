@@ -87,20 +87,29 @@ async function requireActor() {
  * Invite accept/decline authorize against currently verified Clerk emails.
  * Persisted DB email is never an authorize source (stale after revoke / placeholders).
  * All verified addresses on the Clerk account may match the invite target.
+ * Clerk outages must not be reported as “verify your email” mismatches.
  */
-async function resolveInviteActorEmails(): Promise<string[]> {
+async function resolveInviteActorEmails(): Promise<
+  { ok: true; emails: string[] } | { ok: false; error: string }
+> {
   try {
     const clerkUser = await currentUser()
-    if (!clerkUser) return []
-    return selectVerifiedClerkEmails(
-      clerkUser.emailAddresses.map((entry) => ({
-        id: entry.id,
-        emailAddress: entry.emailAddress,
-        verificationStatus: entry.verification?.status ?? null,
-      }))
-    )
+    if (!clerkUser) return { ok: true, emails: [] }
+    return {
+      ok: true,
+      emails: selectVerifiedClerkEmails(
+        clerkUser.emailAddresses.map((entry) => ({
+          id: entry.id,
+          emailAddress: entry.emailAddress,
+          verificationStatus: entry.verification?.status ?? null,
+        }))
+      ),
+    }
   } catch {
-    return []
+    return {
+      ok: false,
+      error: "Identity service unavailable. Retry in a moment.",
+    }
   }
 }
 
@@ -245,14 +254,15 @@ export async function acceptInviteByToken(
 
   try {
     const inviteEmails = await resolveInviteActorEmails()
-    if (inviteEmails.length === 0) {
+    if (!inviteEmails.ok) return { error: inviteEmails.error }
+    if (inviteEmails.emails.length === 0) {
       return {
         error:
           "Verify the email address on your account before accepting an invite.",
       }
     }
     const result = await acceptOrganizationInviteByToken(
-      { id: actor.user.id, email: inviteEmails },
+      { id: actor.user.id, email: inviteEmails.emails },
       trimmed
     )
     if (!result.ok) return { error: result.error }
@@ -298,14 +308,15 @@ export async function rejectInviteByToken(
 
   try {
     const inviteEmails = await resolveInviteActorEmails()
-    if (inviteEmails.length === 0) {
+    if (!inviteEmails.ok) return { error: inviteEmails.error }
+    if (inviteEmails.emails.length === 0) {
       return {
         error:
           "Verify the email address on your account before declining an invite.",
       }
     }
     const result = await rejectOrganizationInviteByToken(
-      { id: actor.user.id, email: inviteEmails },
+      { id: actor.user.id, email: inviteEmails.emails },
       trimmed
     )
     if (!result.ok) return { error: result.error }

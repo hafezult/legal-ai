@@ -403,6 +403,15 @@ export function OrganizationAccessPanel({
         </div>
       ) : null}
 
+      {isPending && !message ? (
+        <p
+          role="status"
+          aria-live="polite"
+          className="mt-4 text-xs text-white/45"
+        >
+          Working…
+        </p>
+      ) : null}
       {message ? (
         <p
           role={message.type === "error" ? "alert" : "status"}

@@ -93,6 +93,9 @@ export function NewMatterForm() {
     })
   }
 
+  const titleFieldError =
+    state?.error && /matter title/i.test(state.error) ? state.error : null
+
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       {/* Header */}
@@ -114,6 +117,7 @@ export function NewMatterForm() {
         <form onSubmit={handleSubmit} className="space-y-6">
           {state?.error && (
             <div
+              id={titleFieldError ? "new-matter-title-error" : undefined}
               role="alert"
               aria-live="polite"
               className="rounded-lg border border-red-400/[0.18] bg-red-400/[0.05] px-4 py-3"
@@ -128,9 +132,14 @@ export function NewMatterForm() {
               id="new-matter-title"
               type="text"
               name="title"
+              required
               maxLength={MAX_MATTER_TITLE_CHARS}
               placeholder="e.g. Henderson Trust — Estate Administration"
               autoComplete="off"
+              aria-invalid={titleFieldError ? true : undefined}
+              aria-describedby={
+                titleFieldError ? "new-matter-title-error" : undefined
+              }
               className={inputCls}
             />
           </Field>

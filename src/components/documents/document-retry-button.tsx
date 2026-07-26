@@ -16,6 +16,7 @@ export function DocumentRetryButton({
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
 
   const onRetry = useCallback(
     (event: React.MouseEvent) => {
@@ -24,6 +25,7 @@ export function DocumentRetryButton({
       if (isPending) return
       setError(null)
       setWarning(null)
+      setSuccess(null)
 
       startTransition(async () => {
         const result = await reindexDocument(matterId, documentId)
@@ -33,6 +35,8 @@ export function DocumentRetryButton({
         }
         if (result.warning) {
           setWarning(result.warning)
+        } else {
+          setSuccess("Retry queued.")
         }
         router.refresh()
       })
@@ -50,6 +54,15 @@ export function DocumentRetryButton({
       >
         {isPending ? "Retrying…" : "Retry"}
       </button>
+      {isPending ? (
+        <p
+          role="status"
+          aria-live="polite"
+          className="max-w-[9rem] text-right text-[10px] leading-snug text-white/40"
+        >
+          Retrying indexing…
+        </p>
+      ) : null}
       {error ? (
         <p
           role="alert"
@@ -66,6 +79,15 @@ export function DocumentRetryButton({
           className="max-w-[9rem] text-right text-[10px] leading-snug text-amber-200/55"
         >
           {warning}
+        </p>
+      ) : null}
+      {!error && !warning && success ? (
+        <p
+          role="status"
+          aria-live="polite"
+          className="max-w-[9rem] text-right text-[10px] leading-snug text-emerald-200/55"
+        >
+          {success}
         </p>
       ) : null}
     </div>
