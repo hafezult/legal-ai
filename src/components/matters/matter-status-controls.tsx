@@ -56,6 +56,7 @@ export function MatterStatusControls({
               key={option.value}
               type="button"
               disabled={isPending || selected}
+              aria-pressed={selected}
               onClick={() => runUpdate(option.value)}
               className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] transition-colors disabled:pointer-events-none ${
                 selected
@@ -69,9 +70,13 @@ export function MatterStatusControls({
         })}
       </div>
       {isPending ? (
-        <p className="text-[10px] text-white/36">Updating...</p>
+        <p role="status" aria-live="polite" className="text-[10px] text-white/36">
+          Updating...
+        </p>
       ) : message ? (
         <p
+          role={message.type === "error" ? "alert" : "status"}
+          aria-live="polite"
           className={`text-[10px] ${
             message.type === "error" ? "text-red-300/60" : "text-white/36"
           }`}

@@ -231,6 +231,8 @@ export function MatterEditControls({
       <div className="flex items-center justify-between gap-3 border-t border-white/[0.06] pt-3">
         {message ? (
           <p
+            role={message.type === "error" ? "alert" : "status"}
+            aria-live="polite"
             className={`text-[10px] ${
               message.type === "error" ? "text-red-300/60" : "text-white/36"
             }`}

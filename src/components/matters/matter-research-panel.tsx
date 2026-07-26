@@ -116,7 +116,9 @@ export function MatterResearchPanel({
       </p>
 
       {error ? (
-        <p className="mt-3 text-xs text-red-300/65">{error}</p>
+        <p role="alert" aria-live="polite" className="mt-3 text-xs text-red-300/65">
+          {error}
+        </p>
       ) : null}
 
       <div className="mt-5 space-y-2">

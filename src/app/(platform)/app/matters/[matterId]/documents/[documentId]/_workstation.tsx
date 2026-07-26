@@ -1103,13 +1103,19 @@ export function DocumentWorkstation({
       className="-mx-4 -my-6 flex flex-col overflow-hidden sm:-mx-6 sm:-my-8"
       style={{ height: "calc(100vh - 3.25rem)" }}
     >
+      <h1 className="sr-only">{doc.fileName} · document workstation</h1>
       {/* Mobile panel toggle */}
-      <div className="flex shrink-0 border-b border-white/[0.06] bg-black/40 lg:hidden">
+      <div
+        className="flex shrink-0 border-b border-white/[0.06] bg-black/40 lg:hidden"
+        role="group"
+        aria-label="Workstation panel"
+      >
         {(["document", "intelligence"] as const).map((p) => (
           <button
             key={p}
             type="button"
             onClick={() => setMobilePanel(p)}
+            aria-pressed={mobilePanel === p}
             className={`flex-1 py-2 text-[11px] uppercase tracking-[0.14em] transition-colors ${
               mobilePanel === p
                 ? "text-white/75"
@@ -1204,26 +1210,57 @@ export function DocumentWorkstation({
                 {deleteMessage ?? reindexMessage?.text}
               </p>
             )}
-            <div className="flex gap-0 overflow-x-auto px-3 pt-2">
-              {TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`shrink-0 border-b-2 px-3 pb-2.5 pt-1.5 text-[10px] uppercase tracking-[0.12em] transition-colors ${
-                    activeTab === tab.id
-                      ? "border-white/40 text-white/75"
-                      : "border-transparent text-white/28 hover:text-white/52"
-                  }`}
-                >
-                  {tabLabel(tab)}
-                </button>
-              ))}
+            <div
+              className="flex gap-0 overflow-x-auto px-3 pt-2"
+              role="tablist"
+              aria-label="Document intelligence"
+            >
+              {TABS.map((tab) => {
+                const selected = activeTab === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    id={`ws-tab-${tab.id}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    aria-controls={`ws-tabpanel-${tab.id}`}
+                    tabIndex={selected ? 0 : -1}
+                    onClick={() => setActiveTab(tab.id)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") {
+                        return
+                      }
+                      event.preventDefault()
+                      const index = TABS.findIndex((entry) => entry.id === activeTab)
+                      if (index < 0) return
+                      const delta = event.key === "ArrowRight" ? 1 : -1
+                      const next = TABS[(index + delta + TABS.length) % TABS.length]
+                      setActiveTab(next.id)
+                      window.requestAnimationFrame(() => {
+                        document.getElementById(`ws-tab-${next.id}`)?.focus()
+                      })
+                    }}
+                    className={`shrink-0 border-b-2 px-3 pb-2.5 pt-1.5 text-[10px] uppercase tracking-[0.12em] transition-colors ${
+                      selected
+                        ? "border-white/40 text-white/75"
+                        : "border-transparent text-white/28 hover:text-white/52"
+                    }`}
+                  >
+                    {tabLabel(tab)}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
           {/* Tab content */}
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div
+            id={`ws-tabpanel-${activeTab}`}
+            role="tabpanel"
+            aria-labelledby={`ws-tab-${activeTab}`}
+            className="min-h-0 flex-1 overflow-hidden"
+          >
             {tabContent}
           </div>
         </div>

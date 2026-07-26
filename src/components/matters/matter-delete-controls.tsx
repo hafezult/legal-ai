@@ -83,6 +83,8 @@ export function MatterDeleteControls({
       )}
       {message ? (
         <p
+          role={message.type === "error" ? "alert" : "status"}
+          aria-live="polite"
           className={`text-[10px] ${
             message.type === "error" ? "text-red-300/60" : "text-white/36"
           }`}

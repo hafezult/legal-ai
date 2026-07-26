@@ -113,7 +113,11 @@ export function NewMatterForm() {
       <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.08] bg-white/[0.015] p-6 sm:p-8">
         <form onSubmit={handleSubmit} className="space-y-6">
           {state?.error && (
-            <div className="rounded-lg border border-red-400/[0.18] bg-red-400/[0.05] px-4 py-3">
+            <div
+              role="alert"
+              aria-live="polite"
+              className="rounded-lg border border-red-400/[0.18] bg-red-400/[0.05] px-4 py-3"
+            >
               <p className="text-sm text-red-400/75">{state.error}</p>
             </div>
           )}

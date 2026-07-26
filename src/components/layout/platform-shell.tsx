@@ -78,11 +78,85 @@ export function PlatformShell({
 
   useEffect(() => {
     if (!mobileOpen) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeMobile()
+
+    const desktopQuery = window.matchMedia("(min-width: 1024px)")
+    if (desktopQuery.matches) {
+      closeMobile()
+      return
     }
+
+    const onViewportChange = () => {
+      if (desktopQuery.matches) closeMobile()
+    }
+    desktopQuery.addEventListener("change", onViewportChange)
+
+    const sidebar = document.getElementById("app-sidebar-nav")
+    const main = document.getElementById("app-main")
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+
+    if (main) main.inert = true
+
+    const focusableSelector = [
+      "a[href]",
+      "button:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",")
+
+    const focusables = () =>
+      sidebar
+        ? Array.from(sidebar.querySelectorAll<HTMLElement>(focusableSelector)).filter(
+            (el) => !el.hasAttribute("disabled") && el.tabIndex !== -1
+          )
+        : []
+
+    const initial = focusables()[0]
+    initial?.focus()
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        closeMobile()
+        return
+      }
+      if (event.key !== "Tab" || !sidebar) return
+
+      const items = focusables()
+      if (items.length === 0) {
+        event.preventDefault()
+        return
+      }
+
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement
+
+      if (event.shiftKey) {
+        if (active === first || !sidebar.contains(active)) {
+          event.preventDefault()
+          last.focus()
+        }
+        return
+      }
+
+      if (active === last || !sidebar.contains(active)) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
     window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
+    return () => {
+      desktopQuery.removeEventListener("change", onViewportChange)
+      window.removeEventListener("keydown", onKeyDown)
+      if (main) main.inert = false
+      previouslyFocused?.focus()
+    }
   }, [mobileOpen, closeMobile])
 
   const meta = resolveMeta(pathname)
@@ -119,6 +193,7 @@ export function PlatformShell({
           onOpenSidebar={() => setMobileOpen((open) => !open)}
         />
         <main
+          id="app-main"
           className={cn(
             "flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-8",
             "bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(255,255,255,0.04),transparent)]"

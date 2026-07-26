@@ -128,7 +128,11 @@ export function DocumentUploadZone({ uploadAction }: Props) {
 
   if (phase === "success") {
     return (
-      <div className="rounded-lg border border-white/[0.1] bg-white/[0.025] px-5 py-4">
+      <div
+        role="status"
+        aria-live="polite"
+        className="rounded-lg border border-white/[0.1] bg-white/[0.025] px-5 py-4"
+      >
         <p className="text-[10px] uppercase tracking-[0.16em] text-white/38">
           Ingestion status
         </p>
@@ -166,7 +170,7 @@ export function DocumentUploadZone({ uploadAction }: Props) {
             ? "cursor-default border-white/[0.12] bg-white/[0.025]"
             : dragging
             ? "cursor-copy border-white/[0.2] bg-white/[0.04]"
-            : "border-white/[0.07] bg-white/[0.01] hover:border-white/[0.12] hover:bg-white/[0.02]"
+            : "border-white/[0.07] bg-white/[0.01] hover:border-white/[0.12] hover:bg-white/[0.02] focus-within:border-white/25 focus-within:ring-2 focus-within:ring-white/30 focus-within:ring-offset-2 focus-within:ring-offset-zinc-950"
         )}
       >
         <input
@@ -209,7 +213,7 @@ export function DocumentUploadZone({ uploadAction }: Props) {
         ) : (
           <label
             htmlFor="matter-document-upload"
-            className="flex cursor-pointer flex-col items-center px-6 py-10 text-center focus-within:outline-none"
+            className="flex cursor-pointer flex-col items-center px-6 py-10 text-center"
           >
             <div className="mb-3 rounded-full border border-white/[0.08] bg-white/[0.02] p-3">
               <ArrowUpIcon />

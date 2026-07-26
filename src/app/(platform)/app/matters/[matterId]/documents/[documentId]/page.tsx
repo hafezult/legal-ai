@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
+import type { Metadata } from "next"
 import { notFound } from "next/navigation"
 
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
@@ -19,6 +20,37 @@ import type { WorkstationData } from "./_workstation"
 export const dynamic = "force-dynamic"
 /** Reindex runs the indexing pipeline in-process on this segment. */
 export const maxDuration = 300
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ matterId: string; documentId: string }>
+}): Promise<Metadata> {
+  const { userId: clerkId } = await auth()
+  if (!clerkId) return { title: "Document workstation" }
+
+  const { matterId, documentId } = await params
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { title: "Document workstation" }
+
+    const doc = await prisma.document.findFirst({
+      where: {
+        id: documentId,
+        matterId,
+        matter: matterAccessWhere(user.id),
+      },
+      select: { fileName: true },
+    })
+    if (!doc) return { title: "Document workstation" }
+    return { title: `${doc.fileName} · workstation` }
+  } catch {
+    return { title: "Document workstation" }
+  }
+}
 
 export default async function DocumentViewerPage({
   params,
