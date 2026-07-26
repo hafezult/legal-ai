@@ -1,7 +1,3 @@
-import { auth } from "@clerk/nextjs/server"
-
-import { prisma } from "@/lib/prisma"
-
 export const AUTH_REQUIRED_ERROR = "Authentication required."
 export const IDENTITY_UNAVAILABLE_ERROR =
   "Identity service unavailable. Retry in a moment."
@@ -36,7 +32,9 @@ export type RequireActorDeps = RequireClerkIdDeps & {
 
 function defaultClerkIdDeps(): RequireClerkIdDeps {
   return {
+    // Lazy imports keep unit tests from loading Clerk/Prisma under node:test.
     auth: async () => {
+      const { auth } = await import("@clerk/nextjs/server")
       const session = await auth()
       return { userId: session.userId ?? null }
     },
@@ -45,12 +43,14 @@ function defaultClerkIdDeps(): RequireClerkIdDeps {
 
 function defaultActorDeps(): RequireActorDeps {
   return {
-    auth,
-    findUserByClerkId: (clerkId) =>
-      prisma.user.findUnique({
+    ...defaultClerkIdDeps(),
+    findUserByClerkId: async (clerkId) => {
+      const { prisma } = await import("@/lib/prisma")
+      return prisma.user.findUnique({
         where: { clerkId },
         select: { id: true, email: true, name: true },
-      }),
+      })
+    },
   }
 }
 
