@@ -10,6 +10,7 @@ export default async function AppLayout({
 }) {
   let organizations: { id: string; name: string; role: string }[] = []
   let activeOrganizationId: string | null = null
+  let shellLoadFailed = false
 
   try {
     // Membership requires explicit Accept on /app/invites/[token] — never
@@ -28,13 +29,14 @@ export default async function AppLayout({
           : organizations[0]?.id ?? null
     }
   } catch {
-    /* Prisma unavailable — layout still renders; sync retries on navigation */
+    shellLoadFailed = true
   }
 
   return (
     <PlatformShell
       organizations={organizations}
       activeOrganizationId={activeOrganizationId}
+      shellLoadFailed={shellLoadFailed}
     >
       {children}
     </PlatformShell>

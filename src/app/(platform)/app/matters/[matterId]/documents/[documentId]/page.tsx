@@ -124,6 +124,7 @@ export default async function DocumentViewerPage({
 
     // Determine which chunks have embeddings (requires raw SQL — vector type)
     let embeddedIds: Set<string> = new Set()
+    let embeddingsLoadFailed = false
     if (rawChunks.length > 0) {
       const ids = rawChunks.map((c) => c.id)
       try {
@@ -134,7 +135,7 @@ export default async function DocumentViewerPage({
         `
         embeddedIds = new Set(rows.map((r) => r.id))
       } catch {
-        /* pgvector unavailable */
+        embeddingsLoadFailed = true
       }
     }
 
@@ -244,6 +245,7 @@ export default async function DocumentViewerPage({
         })),
       })),
       sessionsLoadFailed,
+      embeddingsLoadFailed,
       authorities: authorities.map((a) => ({
         citation: a.citation,
         type: a.type,
@@ -272,6 +274,7 @@ export default async function DocumentViewerPage({
 
   let canWrite = false
   let canDelete = false
+  let permissionLoadFailed = false
   try {
     const user = await prisma.user.findUnique({
       where: { clerkId },
@@ -285,7 +288,17 @@ export default async function DocumentViewerPage({
       }
     }
   } catch {
-    /* permission probe failed — keep actions hidden */
+    permissionLoadFailed = true
+  }
+
+  if (permissionLoadFailed) {
+    return (
+      <WorkspaceLoadError
+        title="Document permissions unavailable"
+        description="Aether could not verify write access for this source. Retry shortly, or verify Settings readiness if the outage continues."
+        homeHref={`/app/matters/${matterId}`}
+      />
+    )
   }
 
   const boundReindex = reindexDocument.bind(null, matterId, documentId)

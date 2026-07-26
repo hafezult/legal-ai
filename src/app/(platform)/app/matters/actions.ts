@@ -1,10 +1,10 @@
 "use server"
 
-import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 
 import { recordAuditEvent } from "@/lib/audit"
+import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   getActiveOrganization,
   matterAccessWhere,
@@ -145,8 +145,12 @@ export async function createMatter(
   _prev: MatterFormState,
   formData: FormData
 ): Promise<MatterFormState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) redirect("/sign-in")
+  const clerk = await requireClerkId()
+  if (!clerk.ok) {
+    if (clerk.error === "Authentication required.") redirect("/sign-in")
+    return { error: clerk.error }
+  }
+  const { clerkId } = clerk
 
   const fields = parseMatterFields(formData)
   if ("error" in fields) return { error: fields.error }
@@ -230,8 +234,9 @@ export async function updateMatterStatus(
   matterId: string,
   status: string
 ): Promise<MatterStatusState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
 
   if (!STATUSES.has(status)) {
     return { error: "Unsupported matter status." }
@@ -297,8 +302,9 @@ export async function updateMatter(
   matterId: string,
   formData: FormData
 ): Promise<MatterUpdateState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
   if (!matterId) return { error: "Matter id is required." }
 
   const fields = parseMatterFields(formData, "Matter title is required.")
@@ -379,8 +385,9 @@ export type MatterDeleteState = {
 }
 
 export async function deleteMatter(matterId: string): Promise<MatterDeleteState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
   if (!matterId) return { error: "Matter id is required." }
 
   let storagePaths: string[] = []
@@ -482,8 +489,9 @@ export async function createConversation(
   matterId: string,
   title: string
 ): Promise<ConversationFormState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
   if (!matterId) return { error: "Matter id is required." }
 
   const normalizedTitle = conversationTitle(title)
@@ -542,8 +550,9 @@ export async function createConversation(
 export async function deleteConversation(
   conversationId: string
 ): Promise<ConversationFormState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
   if (!conversationId) return { error: "Conversation id is required." }
 
   let matterId: string | null = null
@@ -617,8 +626,9 @@ export async function createConversationMessage(
   conversationId: string,
   content: string
 ): Promise<ConversationFormState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
   if (!conversationId) return { error: "Conversation id is required." }
 
   const normalizedContent = normalizeMessageContent(content)

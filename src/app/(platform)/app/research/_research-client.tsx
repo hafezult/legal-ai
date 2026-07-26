@@ -233,12 +233,16 @@ export function ResearchClient({
       })
 
       startRestoreTransition(async () => {
-        const output = await restoreResearchSession(session.id)
-        if (output.error) {
-          setLocalError(output.error)
-          return
+        try {
+          const output = await restoreResearchSession(session.id)
+          if (output.error) {
+            setLocalError(output.error)
+            return
+          }
+          setResults(output)
+        } catch {
+          setLocalError("Unable to restore research session. Please try again.")
         }
-        setResults(output)
       })
     },
     []
@@ -249,12 +253,16 @@ export function ResearchClient({
       setLocalError(null)
       setExportNotice(null)
       startRestoreTransition(async () => {
-        const output = await restoreResearchSession(session.id)
-        if (output.error) {
-          setLocalError(output.error)
-          return
+        try {
+          const output = await restoreResearchSession(session.id)
+          if (output.error) {
+            setLocalError(output.error)
+            return
+          }
+          exportResults(output)
+        } catch {
+          setLocalError("Unable to export research session. Please try again.")
         }
-        exportResults(output)
       })
     },
     [exportResults]
@@ -268,12 +276,16 @@ export function ResearchClient({
       setResults(null)
 
       startTransition(async () => {
-        const output = await runResearch(selectedMatter, query)
-        const hasPartial =
-          Boolean(output.answer) || output.chunks.length > 0
-        setResults(output.error && !hasPartial ? null : output)
-        setLocalError(output.error ?? null)
-        router.refresh()
+        try {
+          const output = await runResearch(selectedMatter, query)
+          const hasPartial =
+            Boolean(output.answer) || output.chunks.length > 0
+          setResults(output.error && !hasPartial ? null : output)
+          setLocalError(output.error ?? null)
+          router.refresh()
+        } catch {
+          setLocalError("Unable to run research. Please try again.")
+        }
       })
     },
     [selectedMatterCanWrite, query, selectedMatter, isPending, router]
@@ -292,22 +304,27 @@ export function ResearchClient({
       setDeletingSessionId(sessionId)
 
       startDeleteTransition(async () => {
-        const result = await deleteResearchSession(sessionId)
-        if (result.error) {
-          setLocalError(result.error)
+        try {
+          const result = await deleteResearchSession(sessionId)
+          if (result.error) {
+            setLocalError(result.error)
+            setDeletingSessionId(null)
+            return
+          }
+
+          if (results?.sessionId === sessionId) {
+            setResults(null)
+          }
+
           setDeletingSessionId(null)
-          return
+          router.refresh()
+        } catch {
+          setLocalError("Unable to delete research session. Please try again.")
+          setDeletingSessionId(null)
         }
-
-        if (results?.sessionId === sessionId) {
-          setResults(null)
-        }
-
-        setDeletingSessionId(null)
-        router.refresh()
       })
     },
-    [matters, canWrite, isDeleting, results?.sessionId, router]
+    [matters, canWrite, isDeleting, results, router]
   )
 
   const hasAuthorities = results

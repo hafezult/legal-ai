@@ -28,17 +28,21 @@ export function DocumentRetryButton({
       setSuccess(null)
 
       startTransition(async () => {
-        const result = await reindexDocument(matterId, documentId)
-        if (result.error) {
-          setError(result.error)
-          return
+        try {
+          const result = await reindexDocument(matterId, documentId)
+          if (result.error) {
+            setError(result.error)
+            return
+          }
+          if (result.warning) {
+            setWarning(result.warning)
+          } else {
+            setSuccess("Retry queued.")
+          }
+          router.refresh()
+        } catch {
+          setError("Unable to retry indexing. Please try again.")
         }
-        if (result.warning) {
-          setWarning(result.warning)
-        } else {
-          setSuccess("Retry queued.")
-        }
-        router.refresh()
       })
     },
     [documentId, isPending, matterId, router]

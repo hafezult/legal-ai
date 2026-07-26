@@ -40,10 +40,13 @@ export function PlatformShell({
   children,
   organizations = [],
   activeOrganizationId = null,
+  shellLoadFailed = false,
 }: {
   children: React.ReactNode
   organizations?: ShellOrganization[]
   activeOrganizationId?: string | null
+  /** True when ensureAppUser / org sync failed — do not treat as empty workspace. */
+  shellLoadFailed?: boolean
 }) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
@@ -205,7 +208,19 @@ export function PlatformShell({
             "bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(255,255,255,0.04),transparent)]"
           )}
         >
-          <div className="mx-auto max-w-6xl">{children}</div>
+          <div className="mx-auto max-w-6xl space-y-4">
+            {shellLoadFailed ? (
+              <p
+                role="alert"
+                aria-live="assertive"
+                className="rounded-lg border border-amber-400/25 bg-amber-400/[0.06] px-4 py-3 text-sm text-amber-100/80"
+              >
+                Workspace sync is temporarily unavailable. Organization data may
+                be incomplete — retry shortly or check Settings readiness probes.
+              </p>
+            ) : null}
+            {children}
+          </div>
         </main>
       </div>
     </div>

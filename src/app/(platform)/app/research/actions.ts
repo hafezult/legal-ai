@@ -1,9 +1,9 @@
 "use server"
 
-import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
+import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   matterAccessWhere,
   requireMatterPermission,
@@ -122,8 +122,6 @@ export async function runResearch(
   matterId: string,
   query: string
 ): Promise<ResearchOutput> {
-  const { userId: clerkId } = await auth()
-
   const emptyResult = (error: string): ResearchOutput => ({
     query,
     matterId,
@@ -138,7 +136,10 @@ export async function runResearch(
     error,
   })
 
-  if (!clerkId) return emptyResult("Authentication required.")
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return emptyResult(clerk.error)
+  const { clerkId } = clerk
+
   if (!query.trim()) return emptyResult("Research query cannot be empty.")
   if (query.length > MAX_RESEARCH_QUERY_CHARS) {
     return emptyResult(
@@ -352,8 +353,6 @@ export async function runResearch(
 export async function restoreResearchSession(
   sessionId: string
 ): Promise<ResearchOutput> {
-  const { userId: clerkId } = await auth()
-
   const emptyResult = (error: string): ResearchOutput => ({
     query: "",
     matterId: null,
@@ -368,7 +367,10 @@ export async function restoreResearchSession(
     error,
   })
 
-  if (!clerkId) return emptyResult("Authentication required.")
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return emptyResult(clerk.error)
+  const { clerkId } = clerk
+
   if (!sessionId) return emptyResult("Session id is required.")
 
   try {
@@ -449,8 +451,9 @@ export type ResearchSessionDeleteState = {
 export async function deleteResearchSession(
   sessionId: string
 ): Promise<ResearchSessionDeleteState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
   if (!sessionId) return { error: "Session id is required." }
 
   let matterId: string | null = null

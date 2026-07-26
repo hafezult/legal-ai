@@ -77,6 +77,8 @@ export type WorkstationData = {
   sessions: WorkstationSession[]
   /** True when research-session lookup failed (do not treat as empty). */
   sessionsLoadFailed?: boolean
+  /** True when embedding presence lookup failed (do not treat as zero). */
+  embeddingsLoadFailed?: boolean
   authorities: WorkstationAuthority[]
   embeddedCount: number
   signedUrl: string | null
@@ -224,12 +226,14 @@ function TabOverview({
   sessionCount,
   authorityCount,
   sessionsLoadFailed = false,
+  embeddingsLoadFailed = false,
 }: {
   doc: WorkstationDoc
   embeddedCount: number
   sessionCount: number
   authorityCount: number
   sessionsLoadFailed?: boolean
+  embeddingsLoadFailed?: boolean
 }) {
   const retrievalReady = isDocumentRetrievalReady(doc)
   const pipeline = [
@@ -255,18 +259,21 @@ function TabOverview({
     },
     {
       label: "Embedding",
-      note:
-        embeddedCount > 0
+      note: embeddingsLoadFailed
+        ? "Status unavailable"
+        : embeddedCount > 0
           ? `${embeddedCount} / ${doc.chunkCount}`
           : doc.indexingStatus === "failed" && retrievalReady
             ? "Published index retained"
             : doc.indexingStatus,
       // Published embeddings stay usable mid-reindex / after a failed reindex.
       done:
-        doc.indexingStatus === "retrieval-ready" ||
-        (retrievalReady && embeddedCount > 0),
-      detail:
-        embeddedCount > 0
+        !embeddingsLoadFailed &&
+        (doc.indexingStatus === "retrieval-ready" ||
+          (retrievalReady && embeddedCount > 0)),
+      detail: embeddingsLoadFailed
+        ? "Embedding presence could not be verified"
+        : embeddedCount > 0
           ? doc.indexingStatus !== "retrieval-ready" && retrievalReady
             ? "Prior published vectors still live"
             : "Vector representations stored"
@@ -282,7 +289,12 @@ function TabOverview({
 
   const metrics = [
     { label: "Chunks",       value: String(doc.chunkCount) },
-    { label: "Embedded",     value: `${embeddedCount} / ${doc.chunkCount}` },
+    {
+      label: "Embedded",
+      value: embeddingsLoadFailed
+        ? "Unavailable"
+        : `${embeddedCount} / ${doc.chunkCount}`,
+    },
     { label: "Authorities",  value: String(authorityCount) },
     {
       label: "Research uses",
@@ -377,7 +389,13 @@ function TabOverview({
 
 // ── Tab: Chunks ────────────────────────────────────────────────────────────
 
-function TabChunks({ chunks }: { chunks: WorkstationChunk[] }) {
+function TabChunks({
+  chunks,
+  embeddingsLoadFailed = false,
+}: {
+  chunks: WorkstationChunk[]
+  embeddingsLoadFailed?: boolean
+}) {
   const [search, setSearch] = useState("")
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
@@ -410,7 +428,9 @@ function TabChunks({ chunks }: { chunks: WorkstationChunk[] }) {
             Chunk explorer
           </p>
           <span className="text-[10px] text-white/28">
-            {embeddedCount}/{chunks.length} embedded
+            {embeddingsLoadFailed
+              ? "Embedding status unavailable"
+              : `${embeddedCount}/${chunks.length} embedded`}
           </span>
         </div>
         <input
@@ -469,12 +489,18 @@ function TabChunks({ chunks }: { chunks: WorkstationChunk[] }) {
                       {/* Embedding badge */}
                       <span
                         className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[9px] uppercase tracking-[0.1em] ${
-                          chunk.hasEmbedding
-                            ? "border border-white/[0.12] text-white/48"
-                            : "border border-white/[0.05] text-white/20"
+                          embeddingsLoadFailed
+                            ? "border border-amber-400/20 text-amber-200/45"
+                            : chunk.hasEmbedding
+                              ? "border border-white/[0.12] text-white/48"
+                              : "border border-white/[0.05] text-white/20"
                         }`}
                       >
-                        {chunk.hasEmbedding ? "Embedded" : "No vector"}
+                        {embeddingsLoadFailed
+                          ? "Unknown"
+                          : chunk.hasEmbedding
+                            ? "Embedded"
+                            : "No vector"}
                       </span>
                     </div>
 
@@ -923,6 +949,7 @@ export function DocumentWorkstation({
     chunks,
     sessions,
     sessionsLoadFailed = false,
+    embeddingsLoadFailed = false,
     authorities,
     embeddedCount,
     signedUrl,
@@ -951,19 +978,27 @@ export function DocumentWorkstation({
 
   const runReindex = useCallback(() => {
     setReindexMessage(null)
+    setDeleteMessage(null)
     startReindexTransition(async () => {
-      const result = await reindexAction()
-      if (result.error) {
-        setReindexMessage({ type: "error", text: result.error })
-        router.refresh()
-        return
-      }
+      try {
+        const result = await reindexAction()
+        if (result.error) {
+          setReindexMessage({ type: "error", text: result.error })
+          router.refresh()
+          return
+        }
 
-      setReindexMessage({
-        type: "success",
-        text: result.warning ?? "Indexing completed.",
-      })
-      router.refresh()
+        setReindexMessage({
+          type: "success",
+          text: result.warning ?? "Indexing completed.",
+        })
+        router.refresh()
+      } catch {
+        setReindexMessage({
+          type: "error",
+          text: "Unable to reindex this source. Please try again.",
+        })
+      }
     })
   }, [reindexAction, router])
 
@@ -974,17 +1009,22 @@ export function DocumentWorkstation({
     if (!confirmed) return
 
     setDeleteMessage(null)
+    setReindexMessage(null)
     startDeleteTransition(async () => {
-      const result = await deleteAction()
-      if (result.error) {
-        setDeleteMessage(result.error)
-        return
+      try {
+        const result = await deleteAction()
+        if (result.error) {
+          setDeleteMessage(result.error)
+          return
+        }
+        if (result.warning) {
+          window.alert(result.warning)
+        }
+        router.push(`/app/matters/${doc.matterId}`)
+        router.refresh()
+      } catch {
+        setDeleteMessage("Unable to remove this source. Please try again.")
       }
-      if (result.warning) {
-        window.alert(result.warning)
-      }
-      router.push(`/app/matters/${doc.matterId}`)
-      router.refresh()
     })
   }, [deleteAction, doc.fileName, doc.matterId, router])
 
@@ -1088,10 +1128,16 @@ export function DocumentWorkstation({
             sessionCount={sessions.length}
             authorityCount={authorities.length}
             sessionsLoadFailed={sessionsLoadFailed}
+            embeddingsLoadFailed={embeddingsLoadFailed}
           />
         )
       case "chunks":
-        return <TabChunks chunks={chunks} />
+        return (
+          <TabChunks
+            chunks={chunks}
+            embeddingsLoadFailed={embeddingsLoadFailed}
+          />
+        )
       case "authorities":
         return <TabAuthorities authorities={authorities} />
       case "parsed":
@@ -1114,6 +1160,7 @@ export function DocumentWorkstation({
     chunks,
     sessions,
     sessionsLoadFailed,
+    embeddingsLoadFailed,
     authorities,
     embeddedCount,
     parsedTextTruncated,
@@ -1228,7 +1275,10 @@ export function DocumentWorkstation({
                 ) : null}
               </div>
             </div>
-            {(reindexMessage || deleteMessage) && (
+            {(isReindexing ||
+              isDeleting ||
+              reindexMessage ||
+              deleteMessage) && (
               <p
                 role="status"
                 aria-live="polite"
@@ -1238,7 +1288,11 @@ export function DocumentWorkstation({
                     : "text-white/40"
                 }`}
               >
-                {deleteMessage ?? reindexMessage?.text}
+                {isDeleting
+                  ? "Removing source…"
+                  : isReindexing
+                    ? "Indexing…"
+                    : (deleteMessage ?? reindexMessage?.text)}
               </p>
             )}
             <div

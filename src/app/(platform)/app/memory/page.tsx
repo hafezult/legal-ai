@@ -54,7 +54,9 @@ export default async function MemoryPage() {
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
-    if (user) {
+    if (!user) {
+      loadFailed = true
+    } else {
       const activeOrg = await getActiveOrganization(user.id)
       canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)

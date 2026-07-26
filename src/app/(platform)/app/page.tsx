@@ -74,7 +74,10 @@ export default async function DashboardPage() {
       where: { clerkId: userId },
     })
 
-    if (user) {
+    if (!user) {
+      // Authenticated Clerk session without an app user row — provisioning/sync gap.
+      loadFailed = true
+    } else {
       dataAvailable = true
       const activeOrg = await getActiveOrganization(user.id)
       const activeRole =

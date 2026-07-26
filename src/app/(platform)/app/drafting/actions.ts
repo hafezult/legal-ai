@@ -1,10 +1,10 @@
 "use server"
 
-import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
+import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   matterAccessWhere,
   requireMatterPermission,
@@ -146,8 +146,6 @@ export async function generateDraft(
   draftTypeInput: string,
   instruction: string
 ): Promise<DraftOutput> {
-  const { userId: clerkId } = await auth()
-
   const emptyResult = (error: string): DraftOutput => ({
     draftId: "",
     matterId,
@@ -163,7 +161,10 @@ export async function generateDraft(
     error,
   })
 
-  if (!clerkId) return emptyResult("Authentication required.")
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return emptyResult(clerk.error)
+  const { clerkId } = clerk
+
   if (!matterId) return emptyResult("No matter selected.")
   if (!instruction.trim()) return emptyResult("Draft instruction cannot be empty.")
   if (instruction.length > MAX_DRAFT_INSTRUCTION_CHARS) {
@@ -342,8 +343,6 @@ export async function generateDraft(
 
 /** Restore a saved draft with stored provenance source excerpts. */
 export async function restoreDraft(draftId: string): Promise<DraftOutput> {
-  const { userId: clerkId } = await auth()
-
   const emptyResult = (error: string): DraftOutput => ({
     draftId: "",
     matterId: null,
@@ -359,7 +358,10 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
     error,
   })
 
-  if (!clerkId) return emptyResult("Authentication required.")
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return emptyResult(clerk.error)
+  const { clerkId } = clerk
+
   if (!draftId) return emptyResult("Draft id is required.")
 
   try {
@@ -431,8 +433,9 @@ export type DraftDeleteState = {
 }
 
 export async function deleteDraft(draftId: string): Promise<DraftDeleteState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
   if (!draftId) return { error: "Draft id is required." }
 
   let matterId: string | null = null

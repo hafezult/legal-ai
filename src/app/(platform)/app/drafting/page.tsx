@@ -55,7 +55,9 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
-    if (user) {
+    if (!user) {
+      loadFailed = true
+    } else {
       const activeOrg = await getActiveOrganization(user.id)
       const orgCanWrite = activeOrg
         ? roleHasPermission(activeOrg.role, "write")

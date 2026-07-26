@@ -209,12 +209,16 @@ export function DraftingClient({
     })
 
     startRestoreTransition(async () => {
-      const output = await restoreDraft(draft.id)
-      if (output.error) {
-        setLocalError(output.error)
-        return
+      try {
+        const output = await restoreDraft(draft.id)
+        if (output.error) {
+          setLocalError(output.error)
+          return
+        }
+        setResults(output)
+      } catch {
+        setLocalError("Unable to restore draft. Please try again.")
       }
-      setResults(output)
     })
   }, [])
 
@@ -223,12 +227,16 @@ export function DraftingClient({
       setLocalError(null)
       setExportNotice(null)
       startRestoreTransition(async () => {
-        const output = await restoreDraft(draft.id)
-        if (output.error) {
-          setLocalError(output.error)
-          return
+        try {
+          const output = await restoreDraft(draft.id)
+          if (output.error) {
+            setLocalError(output.error)
+            return
+          }
+          exportDraft(output)
+        } catch {
+          setLocalError("Unable to export draft. Please try again.")
         }
-        exportDraft(output)
       })
     },
     [exportDraft]
@@ -243,12 +251,16 @@ export function DraftingClient({
       setResults(null)
 
       startTransition(async () => {
-        const output = await generateDraft(selectedMatter, draftType, instruction)
-        const hasPartial =
-          Boolean(output.content) || output.chunks.length > 0
-        setResults(output.error && !hasPartial ? null : output)
-        setLocalError(output.error ?? null)
-        router.refresh()
+        try {
+          const output = await generateDraft(selectedMatter, draftType, instruction)
+          const hasPartial =
+            Boolean(output.content) || output.chunks.length > 0
+          setResults(output.error && !hasPartial ? null : output)
+          setLocalError(output.error ?? null)
+          router.refresh()
+        } catch {
+          setLocalError("Unable to generate draft. Please try again.")
+        }
       })
     },
     [selectedMatterCanWrite, instruction, selectedMatter, draftType, isPending, router]
@@ -267,22 +279,27 @@ export function DraftingClient({
       setDeletingDraftId(draftId)
 
       startDeleteTransition(async () => {
-        const result = await deleteDraft(draftId)
-        if (result.error) {
-          setLocalError(result.error)
+        try {
+          const result = await deleteDraft(draftId)
+          if (result.error) {
+            setLocalError(result.error)
+            setDeletingDraftId(null)
+            return
+          }
+
+          if (results?.draftId === draftId) {
+            setResults(null)
+          }
+
           setDeletingDraftId(null)
-          return
+          router.refresh()
+        } catch {
+          setLocalError("Unable to delete draft. Please try again.")
+          setDeletingDraftId(null)
         }
-
-        if (results?.draftId === draftId) {
-          setResults(null)
-        }
-
-        setDeletingDraftId(null)
-        router.refresh()
       })
     },
-    [matters, canWrite, isDeleting, results?.draftId, router]
+    [matters, canWrite, isDeleting, results, router]
   )
 
   return (

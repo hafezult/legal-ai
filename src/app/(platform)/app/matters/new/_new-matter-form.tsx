@@ -88,8 +88,14 @@ export function NewMatterForm() {
     setState({})
 
     startTransition(async () => {
-      const nextState = await createMatter({}, formData)
-      if (nextState?.error) setState(nextState)
+      try {
+        const nextState = await createMatter({}, formData)
+        if (nextState?.error) setState(nextState)
+      } catch {
+        setState({
+          error: "Unable to initialize matter. Please try again.",
+        })
+      }
     })
   }
 

@@ -106,7 +106,8 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 ## Security notes
 
 - Platform routes are protected by Clerk via `src/proxy.ts`.
-- Data access is scoped through the authenticated user's persisted app row and organization membership.
+- Data access is scoped through the authenticated user's persisted app row and organization membership. Server Actions resolve identity through a non-throwing actor helper so Clerk outages return structured errors instead of uncaught action failures. Platform list surfaces treat an authenticated session without a provisioned app user as a load failure (not an empty workspace), and the shell announces workspace sync outages.
+- Document workstation embedding presence and permission probes surface unavailable/error states instead of silently reading as zero embeddings or read-only.
 - Each signed-in user receives a personal organization (owner role). Additional organizations can be created from Settings; matter creation uses the active organization.
 - Users who belong to multiple organizations can switch the active workspace from the sidebar or Settings (rate-limited per user).
 - List surfaces (dashboard, matters, documents, research, drafting, memory, workflows) scope to the active organization, plus legacy creator-owned matters with no organization attachment.

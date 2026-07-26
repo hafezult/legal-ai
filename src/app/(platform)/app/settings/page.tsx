@@ -159,7 +159,9 @@ export default async function SettingsPage() {
       where: { clerkId },
       select: { id: true },
     })
-    if (user) {
+    if (!user) {
+      loadFailed = true
+    } else {
       organizations = await listUserOrganizations(user.id)
       const active = await getActiveOrganization(user.id)
       const activeRole =

@@ -1,9 +1,9 @@
 "use server"
 
-import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
+import { requireClerkId } from "@/lib/auth/require-actor"
 import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
@@ -104,8 +104,9 @@ export async function reindexDocument(
   matterId: string,
   documentId: string
 ): Promise<DocumentIndexState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
 
   let ownerUserId: string
   let fileName: string
@@ -177,8 +178,9 @@ export async function deleteDocument(
   matterId: string,
   documentId: string
 ): Promise<DocumentDeleteState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
 
   let storagePath: string | null = null
 

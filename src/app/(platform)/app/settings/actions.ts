@@ -1,10 +1,11 @@
 "use server"
 
-import { auth, currentUser } from "@clerk/nextjs/server"
+import { currentUser } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import { selectVerifiedClerkEmails } from "@/lib/auth/clerk-email"
+import { requireActor } from "@/lib/auth/require-actor"
 import {
   generateInviteToken,
   hashInviteToken,
@@ -71,30 +72,10 @@ export type OrganizationActionState = {
   organizationId?: string
 }
 
-async function requireActor() {
-  let clerkId: string | null
-  try {
-    const authState = await auth()
-    clerkId = authState.userId
-  } catch {
-    return {
-      error: "Identity service unavailable. Retry in a moment." as const,
-    }
-  }
-  if (!clerkId) return { error: "Authentication required." as const }
-
-  try {
-    const user = await prisma.user.findUnique({
-      where: { clerkId },
-      select: { id: true, email: true, name: true },
-    })
-    if (!user) {
-      return { error: "Session not found. Please sign in again." as const }
-    }
-    return { user }
-  } catch {
-    return { error: "Data layer unreachable. Please try again." as const }
-  }
+async function requireSettingsActor() {
+  const actor = await requireActor()
+  if (!actor.ok) return { error: actor.error }
+  return { user: actor.user }
 }
 
 /**
@@ -146,7 +127,7 @@ async function requireOrgAdmin(userId: string, organizationId: string) {
 export async function createOrganization(
   name: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
@@ -184,7 +165,7 @@ export async function createOrganization(
 export async function leaveOrganization(
   organizationId: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
@@ -249,7 +230,7 @@ export async function leaveOrganization(
 export async function acceptInviteByToken(
   token: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const trimmed = token.trim()
@@ -303,7 +284,7 @@ export async function acceptInviteByToken(
 export async function rejectInviteByToken(
   token: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const trimmed = token.trim()
@@ -355,7 +336,7 @@ export async function rejectInviteByToken(
 export async function switchActiveOrganization(
   organizationId: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
@@ -394,7 +375,7 @@ export async function renameOrganization(
   organizationId: string,
   name: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const trimmed = name.replace(/\s+/g, " ").trim()
@@ -444,7 +425,7 @@ export async function addOrganizationMember(
   email: string,
   roleInput: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const emailNormalized = email.trim().toLowerCase()
@@ -597,7 +578,7 @@ export async function transferOwnership(
   organizationId: string,
   targetMemberId: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
@@ -642,7 +623,7 @@ export async function deleteOrganization(
   organizationId: string,
   confirmationName: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
@@ -692,7 +673,7 @@ export async function refreshOrganizationInviteLink(
   organizationId: string,
   inviteId: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
@@ -762,7 +743,7 @@ export async function revokeOrganizationInvite(
   organizationId: string,
   inviteId: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
@@ -819,7 +800,7 @@ export async function updateOrganizationMemberRole(
   memberId: string,
   roleInput: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   if (!isOrgRole(roleInput) || roleInput === "owner") {
@@ -888,7 +869,7 @@ export async function removeOrganizationMember(
   organizationId: string,
   memberId: string
 ): Promise<OrganizationActionState> {
-  const actor = await requireActor()
+  const actor = await requireSettingsActor()
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
