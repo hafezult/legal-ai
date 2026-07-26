@@ -5,41 +5,22 @@ import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
-import {
-  ALLOWED_DOCUMENT_MIME,
-  detectAllowedDocument,
-  hasExpectedSignature,
-  MAX_DOCUMENT_BYTES,
-  sanitizeUploadName,
-} from "@/lib/documents/upload"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import { destructiveMutationKey } from "@/lib/rate-limit-policy"
-import {
-  cleanupStoragePaths,
-  ensureBucket,
-  uploadToStorage,
-} from "@/lib/storage/documents"
-import { buildDocumentStoragePath } from "@/lib/storage/paths"
+import { cleanupStoragePaths } from "@/lib/storage/documents"
 import {
   isIndexingInProgressError,
   isIndexingRunSupersededError,
   runIndexingPipeline,
 } from "@/lib/workflows/indexing"
 
-const UPLOAD_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const REINDEX_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const DOCUMENT_DELETE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 
 function rateLimitMessage(action: string, retryAfterMs: number): string {
   const seconds = Math.ceil(retryAfterMs / 1000)
   return `${action} rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`
-}
-
-export type DocumentUploadState = {
-  error?: string
-  success?: boolean
-  warning?: string
 }
 
 export type DocumentIndexState = {
@@ -116,133 +97,6 @@ async function triggerIndexing(documentId: string): Promise<DocumentIndexState> 
     }
 
     return { error: "Indexing failed. Retry from the document workflow queue." }
-  }
-}
-
-export async function uploadDocument(
-  matterId: string,
-  _prev: DocumentUploadState,
-  formData: FormData
-): Promise<DocumentUploadState> {
-  const { userId: clerkId } = await auth()
-  if (!clerkId) return { error: "Authentication required." }
-
-  // Validate matter write access before buffering the upload body.
-  let ownerUserId: string
-  try {
-    const user = await prisma.user.findUnique({ where: { clerkId } })
-    if (!user) return { error: "Session not found. Please sign in again." }
-    ownerUserId = user.id
-
-    const throttle = await consumeRateLimit(`upload:${user.id}`, UPLOAD_RATE_LIMIT)
-    if (!throttle.ok) {
-      const seconds = Math.ceil(throttle.retryAfterMs / 1000)
-      return {
-        error: `Upload rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`,
-      }
-    }
-
-    const permission = await requireMatterPermission(user.id, matterId, "write")
-    if (!permission.ok) return { error: permission.error }
-  } catch {
-    return { error: "Data layer unreachable. Please try again." }
-  }
-
-  const file = formData.get("file") as File | null
-  if (!file || file.size === 0) return { error: "No file provided." }
-
-  const documentType = detectAllowedDocument(file)
-  if (!documentType || !ALLOWED_DOCUMENT_MIME[documentType.mimeType]) {
-    return { error: "Unsupported format. Accepted: PDF, DOCX, TXT." }
-  }
-  if (file.size > MAX_DOCUMENT_BYTES) {
-    return { error: "File exceeds the 50 MB ingestion limit." }
-  }
-
-  const buffer = Buffer.from(await file.arrayBuffer())
-  if (!hasExpectedSignature(documentType.type, buffer)) {
-    return { error: "File contents do not match the selected document format." }
-  }
-
-  // Ensure storage bucket exists
-  try {
-    await ensureBucket()
-  } catch (e) {
-    if (e instanceof Error) {
-      console.error("[uploadDocument] ensureBucket", e.message.slice(0, 240))
-    }
-    return { error: "Document storage is unavailable. Check Supabase configuration." }
-  }
-
-  const safeFileName = sanitizeUploadName(file.name).slice(0, 180) || "document"
-  const storagePath = buildDocumentStoragePath({
-    clerkId,
-    matterId,
-    fileName: safeFileName,
-  })
-
-  const { error: storageErr } = await uploadToStorage(
-    storagePath,
-    buffer,
-    documentType.mimeType
-  )
-  if (storageErr) {
-    console.error("[uploadDocument] storage", storageErr.message.slice(0, 240))
-    return { error: "Ingestion failed. Document storage rejected the upload." }
-  }
-
-  let documentId: string
-  try {
-    const created = await prisma.document.create({
-      data: {
-        matterId,
-        fileName: safeFileName,
-        storagePath,
-        mimeType: documentType.mimeType,
-        fileSize: file.size,
-        uploadStatus: "uploaded",
-        indexingStatus: "pending",
-        retrievalStatus: "pending",
-      },
-    })
-    documentId = created.id
-  } catch {
-    const cleanup = await cleanupStoragePaths([storagePath])
-    if (!cleanup.ok) {
-      return {
-        error:
-          "Document registration failed, and storage cleanup also failed. Contact an admin to remove the orphaned upload.",
-      }
-    }
-    return { error: "Document registration failed. Storage entry removed." }
-  }
-
-  // Await indexing trigger so uploaders see immediate failure/retry state.
-  const indexing = await triggerIndexing(documentId)
-
-  await recordAuditEvent({
-    userId: ownerUserId,
-    action: "document.upload",
-    entityType: "document",
-    entityId: documentId,
-    matterId,
-    summary: `Uploaded document “${safeFileName}”`,
-    metadata: {
-      mimeType: documentType.mimeType,
-      fileSize: file.size,
-      indexingTriggered: !indexing.error,
-    },
-  })
-
-  revalidatePath(`/app/matters/${matterId}`)
-  revalidatePath("/app/documents")
-  revalidatePath("/app/workflows")
-  revalidatePath("/app/settings")
-  return {
-    success: true,
-    warning: indexing.error
-      ? `${indexing.error} The document was saved — use Retry indexing when ready.`
-      : indexing.warning,
   }
 }
 

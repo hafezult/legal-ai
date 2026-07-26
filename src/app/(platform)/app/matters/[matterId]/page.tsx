@@ -33,7 +33,6 @@ import {
   updateMatter,
   updateMatterStatus,
 } from "../actions"
-import { uploadDocument } from "./actions"
 
 export const dynamic = "force-dynamic"
 /** Upload/reindex run the indexing pipeline in-process on this segment. */
@@ -340,8 +339,6 @@ export default async function MatterDetailPage({
 
   if (!matter) notFound()
 
-  // Bind server action — safe to pass to client component
-  const boundUpload = uploadDocument.bind(null, matter.id)
   const boundStatusUpdate = updateMatterStatus.bind(null, matter.id)
   const boundMatterUpdate = updateMatter.bind(null, matter.id)
   const boundDeleteMatter = deleteMatter.bind(null, matter.id)
@@ -474,7 +471,7 @@ export default async function MatterDetailPage({
         </div>
 
         {/* Upload zone — client component; action bound server-side */}
-        {canWrite ? <DocumentUploadZone uploadAction={boundUpload} /> : null}
+        {canWrite ? <DocumentUploadZone matterId={matter.id} /> : null}
 
         {/* Document registry */}
         {hasDocuments ? (

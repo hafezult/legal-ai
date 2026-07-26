@@ -1,11 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   serverExternalPackages: ["@prisma/client", "pdf-parse", "mammoth"],
-  experimental: {
-    serverActions: {
-      bodySizeLimit: "52mb",
-    },
-  },
+  // Large document uploads go through /api/matters/[matterId]/documents so
+  // ordinary Server Actions keep the default small body limit.
   async headers() {
     return [
       {

@@ -3,16 +3,11 @@
 import { useCallback, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
+import type { IngestUploadResult } from "@/lib/documents/ingest-upload"
 import { cn } from "@/lib/utils"
-import type { DocumentUploadState } from "@/app/(platform)/app/matters/[matterId]/actions"
-
-type UploadFn = (
-  prev: DocumentUploadState,
-  formData: FormData
-) => Promise<DocumentUploadState>
 
 type Props = {
-  uploadAction: UploadFn
+  matterId: string
 }
 
 const DOCUMENT_TYPES = [
@@ -46,7 +41,7 @@ function isAcceptedDocumentFile(file: File) {
 
 type Phase = "idle" | "selected" | "uploading" | "success" | "error"
 
-export function DocumentUploadZone({ uploadAction }: Props) {
+export function DocumentUploadZone({ matterId }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [phase, setPhase] = useState<Phase>("idle")
@@ -108,7 +103,21 @@ export function DocumentUploadZone({ uploadAction }: Props) {
     setWarning(null)
 
     startTransition(async () => {
-      const result = await uploadAction({}, fd)
+      let result: IngestUploadResult
+      try {
+        const response = await fetch(`/api/matters/${matterId}/documents`, {
+          method: "POST",
+          body: fd,
+          credentials: "same-origin",
+        })
+        result = (await response.json()) as IngestUploadResult
+        if (!response.ok && !result.error) {
+          result = { error: "Upload failed. Please try again." }
+        }
+      } catch {
+        result = { error: "Upload failed. Please try again." }
+      }
+
       if (result.error) {
         setError(result.error)
         setPhase("error")
@@ -124,7 +133,7 @@ export function DocumentUploadZone({ uploadAction }: Props) {
         }, 5000)
       }
     })
-  }, [file, uploadAction, router])
+  }, [file, matterId, router])
 
   if (phase === "success") {
     return (

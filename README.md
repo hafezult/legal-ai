@@ -112,7 +112,7 @@ The Prisma schema requires PostgreSQL with the `vector` extension. The initial m
 - List surfaces (dashboard, matters, documents, research, drafting, memory, workflows) scope to the active organization, plus legacy creator-owned matters with no organization attachment.
 - Non-owners can leave an organization; owners can transfer ownership to another member (becoming admin) or delete the organization after name confirmation when they own more than one workspace.
 - Organization roles (`owner`, `admin`, `member`, `viewer`) gate read, write, delete, and membership management. Organization matters require current membership; creator ownership only applies to legacy personal matters without an organization.
-- Document upload validates matter write access server-side.
+- Document upload posts to `/api/matters/[matterId]/documents`, which authenticates, rate-limits, and checks matter write access before parsing multipart bodies (Content-Length rejected above ~51 MB).
 - Document deletion removes storage objects and cascaded chunks after delete-permission checks. Storage cleanup failures are logged and surfaced as warnings so orphaned objects are not silently retained.
 - Matter status updates (active / on hold / closed / archived) require write permission.
 - Matter metadata (title, client, practice area, jurisdiction, risk, billing, description) can be edited after creation with write permission.
