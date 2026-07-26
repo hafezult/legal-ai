@@ -15,6 +15,10 @@ import {
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
+import {
+  OrganizationSwitcher,
+  type ShellOrganization,
+} from "@/components/layout/organization-switcher"
 import { cn } from "@/lib/utils"
 
 const items = [
@@ -33,6 +37,8 @@ type AppSidebarProps = {
   onToggleCollapse: () => void
   mobileOpen: boolean
   onNavigate?: () => void
+  organizations?: ShellOrganization[]
+  activeOrganizationId?: string | null
 }
 
 export function AppSidebar({
@@ -40,6 +46,8 @@ export function AppSidebar({
   onToggleCollapse,
   mobileOpen,
   onNavigate,
+  organizations = [],
+  activeOrganizationId = null,
 }: AppSidebarProps) {
   const pathname = usePathname()
 
@@ -61,7 +69,8 @@ export function AppSidebar({
           className="font-serif text-lg tracking-tight text-white/90 transition-opacity hover:text-white"
           onClick={onNavigate}
         >
-          <span className={cn(collapsed && "lg:hidden")}>Aether</span>
+          {/* sr-only when collapsed so the brand name stays the accessible name */}
+          <span className={cn(collapsed && "lg:sr-only")}>Aether</span>
           <span
             className={cn(
               "hidden font-serif text-lg text-white/85 lg:inline",
@@ -107,25 +116,20 @@ export function AppSidebar({
               )}
               title={collapsed ? label : undefined}
             >
-              <Icon className="size-4 shrink-0 opacity-80" strokeWidth={1.5} />
-              <span className={cn("truncate", collapsed && "lg:hidden")}>{label}</span>
+              <Icon className="size-4 shrink-0 opacity-80" strokeWidth={1.5} aria-hidden />
+              {/* Keep label in the a11y tree when collapsed (icon-only chrome). */}
+              <span className={cn("truncate", collapsed && "lg:sr-only")}>{label}</span>
             </Link>
           )
         })}
       </nav>
 
       <div className="border-t border-white/[0.06] p-3">
-        <p
-          className={cn(
-            "text-[10px] uppercase tracking-[0.18em] text-white/35",
-            collapsed && "lg:hidden"
-          )}
-        >
-          Platform
-        </p>
-        <p className={cn("mt-1 text-[11px] leading-relaxed text-white/40", collapsed && "lg:hidden")}>
-          Phase 1 · operational shell
-        </p>
+        <OrganizationSwitcher
+          organizations={organizations}
+          activeOrganizationId={activeOrganizationId}
+          collapsed={collapsed}
+        />
       </div>
     </aside>
   )
