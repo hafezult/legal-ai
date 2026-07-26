@@ -13,6 +13,7 @@ import {
   ingestUploadedDocument,
   type IngestUploadResult,
 } from "@/lib/documents/ingest-upload"
+import { ingestUploadHttpStatus } from "@/lib/documents/ingest-upload-status"
 import { validateUploadContentLength } from "@/lib/documents/upload"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
@@ -115,7 +116,7 @@ export async function POST(
   })
 
   if (result.error && !result.success) {
-    return jsonResult(result, 400)
+    return jsonResult(result, ingestUploadHttpStatus(result))
   }
   return jsonResult(result, 200)
 }

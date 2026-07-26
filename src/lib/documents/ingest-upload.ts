@@ -26,9 +26,12 @@ export type IngestUploadResult = {
   error?: string
   success?: boolean
   warning?: string
+  /** True when storage/DB infrastructure failed — callers should surface HTTP 503. */
+  unavailable?: boolean
 }
 
 export { MAX_UPLOAD_REQUEST_BYTES }
+export { ingestUploadHttpStatus } from "@/lib/documents/ingest-upload-status"
 
 async function markIndexingTriggerFailed(documentId: string) {
   await prisma.document.updateMany({
@@ -118,7 +121,10 @@ export async function ingestUploadedDocument(args: {
     if (e instanceof Error) {
       console.error("[ingestUploadedDocument] ensureBucket", e.message.slice(0, 240))
     }
-    return { error: "Document storage is unavailable. Check Supabase configuration." }
+    return {
+      error: "Document storage is unavailable. Check Supabase configuration.",
+      unavailable: true,
+    }
   }
 
   const safeFileName = sanitizeUploadName(file.name).slice(0, 180) || "document"
@@ -135,7 +141,10 @@ export async function ingestUploadedDocument(args: {
   )
   if (storageErr) {
     console.error("[ingestUploadedDocument] storage", storageErr.message.slice(0, 240))
-    return { error: "Ingestion failed. Document storage rejected the upload." }
+    return {
+      error: "Ingestion failed. Document storage rejected the upload.",
+      unavailable: true,
+    }
   }
 
   let documentId: string
@@ -159,9 +168,13 @@ export async function ingestUploadedDocument(args: {
       return {
         error:
           "Document registration failed, and storage cleanup also failed. Contact an admin to remove the orphaned upload.",
+        unavailable: true,
       }
     }
-    return { error: "Document registration failed. Storage entry removed." }
+    return {
+      error: "Document registration failed. Storage entry removed.",
+      unavailable: true,
+    }
   }
 
   const indexing = await triggerIndexing(documentId)

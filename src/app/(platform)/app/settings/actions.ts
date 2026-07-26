@@ -17,10 +17,8 @@ import {
   buildInviteAcceptUrl,
   createOwnedOrganization,
   deleteOwnedOrganization,
-  getActiveOrganization,
   inviteExpiryDate,
   isOrgRole,
-  listUserOrganizations,
   maybePurgeExpiredOrganizationInvites,
   ORG_ROLES,
   roleAtLeast,
@@ -200,13 +198,27 @@ export async function leaveOrganization(
       }
     }
 
-    await prisma.organizationMember.delete({ where: { id: membership.id } })
+    // Membership delete + active-workspace fallback must be atomic so a failed
+    // activeOrganizationId update cannot report error after the leave applied.
+    await prisma.$transaction(async (tx) => {
+      await tx.organizationMember.delete({ where: { id: membership.id } })
 
-    const remaining = await listUserOrganizations(actor.user.id)
-    const nextActive = remaining[0]?.id ?? null
-    await prisma.user.update({
-      where: { id: actor.user.id },
-      data: { activeOrganizationId: nextActive },
+      const remaining = await tx.organizationMember.findMany({
+        where: { userId: actor.user.id },
+        orderBy: [{ createdAt: "asc" }],
+        select: {
+          role: true,
+          organization: { select: { id: true } },
+        },
+      })
+      const owner = remaining.find((row) => row.role === "owner")
+      const nextActive =
+        owner?.organization.id ?? remaining[0]?.organization.id ?? null
+
+      await tx.user.update({
+        where: { id: actor.user.id },
+        data: { activeOrganizationId: nextActive },
+      })
     })
 
     await recordAuditEvent({
@@ -904,19 +916,33 @@ export async function removeOrganizationMember(
       return { error: "Use a different admin account to remove yourself." }
     }
 
-    await prisma.organizationMember.delete({ where: { id: member.id } })
+    // Membership delete + cleared active workspace must be atomic so a failed
+    // activeOrganizationId update cannot report error after the removal applied.
+    await prisma.$transaction(async (tx) => {
+      await tx.organizationMember.delete({ where: { id: member.id } })
 
-    const removedUser = await prisma.user.findUnique({
-      where: { id: member.userId },
-      select: { activeOrganizationId: true },
-    })
-    if (removedUser?.activeOrganizationId === organizationId) {
-      const fallback = await getActiveOrganization(member.userId)
-      await prisma.user.update({
+      const removedUser = await tx.user.findUnique({
         where: { id: member.userId },
-        data: { activeOrganizationId: fallback?.id ?? null },
+        select: { activeOrganizationId: true },
       })
-    }
+      if (removedUser?.activeOrganizationId === organizationId) {
+        const remaining = await tx.organizationMember.findMany({
+          where: { userId: member.userId },
+          orderBy: [{ createdAt: "asc" }],
+          select: {
+            role: true,
+            organization: { select: { id: true } },
+          },
+        })
+        const owner = remaining.find((row) => row.role === "owner")
+        const fallback =
+          owner?.organization.id ?? remaining[0]?.organization.id ?? null
+        await tx.user.update({
+          where: { id: member.userId },
+          data: { activeOrganizationId: fallback },
+        })
+      }
+    })
 
     await recordAuditEvent({
       userId: actor.user.id,

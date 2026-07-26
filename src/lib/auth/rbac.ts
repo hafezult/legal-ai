@@ -302,8 +302,35 @@ export async function setActiveOrganization(
   }
 }
 
+function isPrismaUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "P2002"
+  )
+}
+
+async function activateOwnedOrganizationIfUnset(
+  userId: string,
+  organizationId: string
+) {
+  const current = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { activeOrganizationId: true },
+  })
+  if (!current?.activeOrganizationId) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { activeOrganizationId: organizationId },
+    })
+  }
+}
+
 /**
  * Ensure the user has a personal workspace organization. Idempotent.
+ * Concurrent first-provision callers that race on the deterministic slug
+ * recover via P2002 → re-query instead of failing closed as shellLoadFailed.
  */
 export async function ensurePersonalOrganization(user: {
   id: string
@@ -315,16 +342,7 @@ export async function ensurePersonalOrganization(user: {
     select: { organizationId: true },
   })
   if (existing) {
-    const current = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { activeOrganizationId: true },
-    })
-    if (!current?.activeOrganizationId) {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { activeOrganizationId: existing.organizationId },
-      })
-    }
+    await activateOwnedOrganizationIfUnset(user.id, existing.organizationId)
     return existing.organizationId
   }
 
@@ -337,26 +355,42 @@ export async function ensurePersonalOrganization(user: {
     .slice(0, 40) || "workspace"
   const slug = `${slugBase}-${user.id.slice(-6)}`
 
-  const organization = await prisma.organization.create({
-    data: {
-      name,
-      slug,
-      members: {
-        create: {
-          userId: user.id,
-          role: "owner",
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.create({
+        data: {
+          name,
+          slug,
+          members: {
+            create: {
+              userId: user.id,
+              role: "owner",
+            },
+          },
         },
-      },
-    },
-    select: { id: true },
-  })
+        select: { id: true },
+      })
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { activeOrganizationId: organization.id },
-  })
+      await tx.user.update({
+        where: { id: user.id },
+        data: { activeOrganizationId: organization.id },
+      })
 
-  return organization.id
+      return organization.id
+    })
+  } catch (error) {
+    if (isPrismaUniqueViolation(error)) {
+      const raced = await prisma.organizationMember.findFirst({
+        where: { userId: user.id, role: "owner" },
+        select: { organizationId: true },
+      })
+      if (raced) {
+        await activateOwnedOrganizationIfUnset(user.id, raced.organizationId)
+        return raced.organizationId
+      }
+    }
+    throw error
+  }
 }
 
 /**
@@ -551,12 +585,7 @@ export async function createOwnedOrganization(
       }
     })
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error &&
-      "code" in error &&
-      (error as { code?: string }).code === "P2002"
-    ) {
+    if (isPrismaUniqueViolation(error)) {
       return {
         error: "Unable to create organization. Please try a different name.",
       }
