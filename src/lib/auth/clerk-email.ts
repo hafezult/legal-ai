@@ -10,6 +10,45 @@ export type ClerkEmailCandidate = {
   verificationStatus?: string | null
 }
 
+function verifiedClerkEmailEntries(
+  emails: ClerkEmailCandidate[]
+): ClerkEmailCandidate[] {
+  return emails.filter(
+    (entry) =>
+      entry.verificationStatus === "verified" &&
+      Boolean(entry.emailAddress?.trim())
+  )
+}
+
+/**
+ * Returns every distinct lowercased verified Clerk email.
+ * Used for invite Accept/Decline authorization when an account has multiple
+ * verified addresses.
+ */
+export function selectVerifiedClerkEmails(
+  emails: ClerkEmailCandidate[]
+): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const entry of verifiedClerkEmailEntries(emails)) {
+    const normalized = entry.emailAddress.trim().toLowerCase()
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    out.push(normalized)
+  }
+  return out
+}
+
+/** True when the invite target matches any verified Clerk email on the actor. */
+export function verifiedClerkEmailMatches(
+  verifiedEmails: readonly string[],
+  inviteEmail: string | null | undefined
+): boolean {
+  const target = inviteEmail?.trim().toLowerCase()
+  if (!target || verifiedEmails.length === 0) return false
+  return verifiedEmails.some((email) => email === target)
+}
+
 /**
  * Returns the lowercased verified primary email when available, otherwise the
  * first verified address. Unverified addresses are ignored.
@@ -18,11 +57,7 @@ export function selectVerifiedClerkEmail(
   emails: ClerkEmailCandidate[],
   primaryEmailAddressId?: string | null
 ): string | null {
-  const verified = emails.filter(
-    (entry) =>
-      entry.verificationStatus === "verified" &&
-      Boolean(entry.emailAddress?.trim())
-  )
+  const verified = verifiedClerkEmailEntries(emails)
   if (verified.length === 0) return null
 
   const primary = primaryEmailAddressId

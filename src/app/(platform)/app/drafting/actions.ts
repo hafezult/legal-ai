@@ -43,7 +43,7 @@ export type DraftSourceChunk = {
 
 export type DraftOutput = {
   draftId: string
-  matterId: string
+  matterId: string | null
   matterTitle: string
   title: string
   draftType: DraftType
@@ -331,7 +331,7 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
 
   const emptyResult = (error: string): DraftOutput => ({
     draftId: "",
-    matterId: "",
+    matterId: null,
     matterTitle: "",
     title: "",
     draftType: "advice",

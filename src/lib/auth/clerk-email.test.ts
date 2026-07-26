@@ -3,7 +3,9 @@ import { describe, it } from "node:test"
 
 import {
   selectVerifiedClerkEmail,
+  selectVerifiedClerkEmails,
   unverifiedClerkEmailPlaceholder,
+  verifiedClerkEmailMatches,
 } from "./clerk-email.ts"
 
 describe("selectVerifiedClerkEmail", () => {
@@ -86,6 +88,67 @@ describe("selectVerifiedClerkEmail", () => {
       ]),
       "first@example.com"
     )
+  })
+})
+
+describe("selectVerifiedClerkEmails", () => {
+  it("returns all distinct verified emails lowercased", () => {
+    assert.deepEqual(
+      selectVerifiedClerkEmails([
+        {
+          id: "pri",
+          emailAddress: "Counsel@Example.com",
+          verificationStatus: "verified",
+        },
+        {
+          id: "alt",
+          emailAddress: "Other@Example.com",
+          verificationStatus: "verified",
+        },
+        {
+          id: "dup",
+          emailAddress: "counsel@example.com",
+          verificationStatus: "verified",
+        },
+        {
+          id: "pending",
+          emailAddress: "pending@example.com",
+          verificationStatus: "unverified",
+        },
+      ]),
+      ["counsel@example.com", "other@example.com"]
+    )
+  })
+
+  it("returns an empty list when none are verified", () => {
+    assert.deepEqual(
+      selectVerifiedClerkEmails([
+        {
+          id: "pri",
+          emailAddress: "pending@example.com",
+          verificationStatus: "unverified",
+        },
+      ]),
+      []
+    )
+  })
+})
+
+describe("verifiedClerkEmailMatches", () => {
+  it("matches any verified address against the invite target", () => {
+    assert.equal(
+      verifiedClerkEmailMatches(
+        ["counsel@example.com", "alt@firm.com"],
+        "Alt@Firm.com"
+      ),
+      true
+    )
+    assert.equal(
+      verifiedClerkEmailMatches(["counsel@example.com"], "other@example.com"),
+      false
+    )
+    assert.equal(verifiedClerkEmailMatches([], "counsel@example.com"), false)
+    assert.equal(verifiedClerkEmailMatches(["counsel@example.com"], "  "), false)
   })
 })
 

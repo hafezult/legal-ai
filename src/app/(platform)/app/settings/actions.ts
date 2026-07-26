@@ -4,7 +4,7 @@ import { auth, currentUser } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
-import { selectVerifiedClerkEmail } from "@/lib/auth/clerk-email"
+import { selectVerifiedClerkEmails } from "@/lib/auth/clerk-email"
 import {
   generateInviteToken,
   hashInviteToken,
@@ -84,23 +84,23 @@ async function requireActor() {
 }
 
 /**
- * Invite accept/decline authorize only against a currently verified Clerk email.
+ * Invite accept/decline authorize against currently verified Clerk emails.
  * Persisted DB email is never an authorize source (stale after revoke / placeholders).
+ * All verified addresses on the Clerk account may match the invite target.
  */
-async function resolveInviteActorEmail(): Promise<string | null> {
+async function resolveInviteActorEmails(): Promise<string[]> {
   try {
     const clerkUser = await currentUser()
-    if (!clerkUser) return null
-    return selectVerifiedClerkEmail(
+    if (!clerkUser) return []
+    return selectVerifiedClerkEmails(
       clerkUser.emailAddresses.map((entry) => ({
         id: entry.id,
         emailAddress: entry.emailAddress,
         verificationStatus: entry.verification?.status ?? null,
-      })),
-      clerkUser.primaryEmailAddressId
+      }))
     )
   } catch {
-    return null
+    return []
   }
 }
 
@@ -244,15 +244,15 @@ export async function acceptInviteByToken(
   }
 
   try {
-    const inviteEmail = await resolveInviteActorEmail()
-    if (!inviteEmail) {
+    const inviteEmails = await resolveInviteActorEmails()
+    if (inviteEmails.length === 0) {
       return {
         error:
           "Verify the email address on your account before accepting an invite.",
       }
     }
     const result = await acceptOrganizationInviteByToken(
-      { id: actor.user.id, email: inviteEmail },
+      { id: actor.user.id, email: inviteEmails },
       trimmed
     )
     if (!result.ok) return { error: result.error }
@@ -297,15 +297,15 @@ export async function rejectInviteByToken(
   }
 
   try {
-    const inviteEmail = await resolveInviteActorEmail()
-    if (!inviteEmail) {
+    const inviteEmails = await resolveInviteActorEmails()
+    if (inviteEmails.length === 0) {
       return {
         error:
           "Verify the email address on your account before declining an invite.",
       }
     }
     const result = await rejectOrganizationInviteByToken(
-      { id: actor.user.id, email: inviteEmail },
+      { id: actor.user.id, email: inviteEmails },
       trimmed
     )
     if (!result.ok) return { error: result.error }

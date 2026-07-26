@@ -3,7 +3,11 @@ import Link from "next/link"
 import { currentUser } from "@clerk/nextjs/server"
 import { notFound } from "next/navigation"
 
-import { selectVerifiedClerkEmail } from "@/lib/auth/clerk-email"
+import {
+  selectVerifiedClerkEmail,
+  selectVerifiedClerkEmails,
+  verifiedClerkEmailMatches,
+} from "@/lib/auth/clerk-email"
 import { ensureAppUser } from "@/lib/auth/ensure-user"
 import { hashInviteToken, isInviteTokenShape } from "@/lib/auth/invite-token"
 import { prisma } from "@/lib/prisma"
@@ -96,28 +100,31 @@ export default async function InviteAcceptPage({
     )
   }
 
-  // Authorize only against a currently verified Clerk email — never the
-  // persisted DB address (placeholders / stale after verification revoke).
+  // Authorize against currently verified Clerk emails — never the persisted DB
+  // address (placeholders / stale after verification revoke). Any verified
+  // address on the account may match the invite target.
+  let signedInEmails: string[] = []
   let signedInEmail: string | null = null
   try {
     const clerkUser = await currentUser()
-    signedInEmail = clerkUser
-      ? selectVerifiedClerkEmail(
-          clerkUser.emailAddresses.map((entry) => ({
-            id: entry.id,
-            emailAddress: entry.emailAddress,
-            verificationStatus: entry.verification?.status ?? null,
-          })),
-          clerkUser.primaryEmailAddressId
-        )
-      : null
+    if (clerkUser) {
+      const candidates = clerkUser.emailAddresses.map((entry) => ({
+        id: entry.id,
+        emailAddress: entry.emailAddress,
+        verificationStatus: entry.verification?.status ?? null,
+      }))
+      signedInEmails = selectVerifiedClerkEmails(candidates)
+      signedInEmail = selectVerifiedClerkEmail(
+        candidates,
+        clerkUser.primaryEmailAddressId
+      )
+    }
   } catch {
+    signedInEmails = []
     signedInEmail = null
   }
 
-  const emailMatches =
-    signedInEmail !== null &&
-    invite.email.toLowerCase() === signedInEmail.toLowerCase()
+  const emailMatches = verifiedClerkEmailMatches(signedInEmails, invite.email)
 
   // Do not reveal organization name, role, or invited email until the signed-in
   // account matches the invite target.

@@ -116,10 +116,18 @@ export function isNonPublicAppHostname(hostname: string): boolean {
     if ((first & 0xffc0) === 0xfec0) return true
     // Multicast ff00::/8
     if ((first & 0xff00) === 0xff00) return true
+    // ORCHID 2001:10::/28 (RFC 4843) and ORCHIDv2 2001:20::/28 (RFC 7343)
+    if (first === 0x2001 && (hextets[1] & 0xfff0) === 0x10) return true
+    if (first === 0x2001 && (hextets[1] & 0xfff0) === 0x20) return true
     // Documentation range 2001:db8::/32 (RFC 3849)
     if (first === 0x2001 && hextets[1] === 0xdb8) return true
     // Benchmarking 2001:2::/48 (RFC 5180)
     if (first === 0x2001 && hextets[1] === 0x2) return true
+    // Teredo 2001::/32 (RFC 4380) — exclude 2001:1::/32 and other 2001:x that
+    // are not Teredo (Teredo is exactly 2001:0000::/32).
+    if (first === 0x2001 && hextets[1] === 0) return true
+    // 6to4 2002::/16 (RFC 3056)
+    if (first === 0x2002) return true
     // Discard-only 100::/64 (RFC 6666)
     if (
       first === 0x100 &&
@@ -129,9 +137,17 @@ export function isNonPublicAppHostname(hostname: string): boolean {
     ) {
       return true
     }
-    // Local-use NAT64 64:ff9b:1::/48 (RFC 8215)
-    if (first === 0x64 && hextets[1] === 0xff9b && hextets[2] === 0x1) {
-      return true
+    // Well-known NAT64 64:ff9b::/96 (RFC 6052) and local-use 64:ff9b:1::/48 (RFC 8215)
+    if (first === 0x64 && hextets[1] === 0xff9b) {
+      if (hextets[2] === 0x1) return true
+      if (
+        hextets[2] === 0 &&
+        hextets[3] === 0 &&
+        hextets[4] === 0 &&
+        hextets[5] === 0
+      ) {
+        return true
+      }
     }
 
     return false
@@ -145,6 +161,10 @@ export function isNonPublicAppHostname(hostname: string): boolean {
   if (a === 169 && b === 254) return true
   if (a === 172 && b >= 16 && b <= 31) return true
   if (a === 192 && b === 168) return true
+  // IETF protocol assignments 192.0.0.0/24 (RFC 6890)
+  if (a === 192 && b === 0 && c === 0) return true
+  // 6to4 relay anycast 192.88.99.0/24 (RFC 3068 / 7526)
+  if (a === 192 && b === 88 && c === 99) return true
   // CGNAT shared address space (RFC 6598)
   if (a === 100 && b >= 64 && b <= 127) return true
   // TEST-NET documentation ranges (RFC 5737)

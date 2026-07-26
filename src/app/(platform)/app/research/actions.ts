@@ -49,7 +49,7 @@ export type ResearchAuthorities = {
 
 export type ResearchOutput = {
   query: string
-  matterId: string
+  matterId: string | null
   matterTitle: string
   answer: string
   chunks: ResearchChunk[]
@@ -342,7 +342,7 @@ export async function restoreResearchSession(
 
   const emptyResult = (error: string): ResearchOutput => ({
     query: "",
-    matterId: "",
+    matterId: null,
     matterTitle: "",
     answer: "",
     chunks: [],

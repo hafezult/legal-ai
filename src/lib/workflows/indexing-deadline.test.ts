@@ -41,6 +41,13 @@ describe("remainingEmbedBudgetMs", () => {
       10_000
     )
   })
+
+  it("does not inflate budget when the clock jumps backward", () => {
+    assert.equal(
+      remainingEmbedBudgetMs(100_000, 50_000),
+      INDEXING_PIPELINE_BUDGET_MS - INDEXING_POST_EMBED_RESERVE_MS
+    )
+  })
 })
 
 describe("canStartEmbeddingBatch", () => {

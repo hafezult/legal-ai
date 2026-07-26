@@ -184,6 +184,14 @@ describe("isNonPublicAppHostname", () => {
     assert.equal(isNonPublicAppHostname("2001:2::1"), true)
     assert.equal(isNonPublicAppHostname("100::1"), true)
     assert.equal(isNonPublicAppHostname("64:ff9b:1::1"), true)
+    // Teredo / 6to4 / ORCHID / well-known NAT64 / IETF & 6to4 relay IPv4
+    assert.equal(isNonPublicAppHostname("2001::1"), true)
+    assert.equal(isNonPublicAppHostname("2002:cb00:7100::1"), true)
+    assert.equal(isNonPublicAppHostname("2001:10::1"), true)
+    assert.equal(isNonPublicAppHostname("2001:20::1"), true)
+    assert.equal(isNonPublicAppHostname("64:ff9b::1"), true)
+    assert.equal(isNonPublicAppHostname("192.0.0.1"), true)
+    assert.equal(isNonPublicAppHostname("192.88.99.1"), true)
     assert.equal(isNonPublicAppHostname("aether.example.com"), false)
     assert.equal(isNonPublicAppHostname("facebook.com"), false)
     assert.equal(isNonPublicAppHostname("8.8.8.8"), false)
@@ -193,7 +201,11 @@ describe("isNonPublicAppHostname", () => {
     assert.equal(isNonPublicAppHostname("198.20.0.1"), false)
     assert.equal(isNonPublicAppHostname("223.255.255.255"), false)
     assert.equal(isNonPublicAppHostname("2001:4860:4860::8888"), false)
-    assert.equal(isNonPublicAppHostname("64:ff9b::1"), false)
+    assert.equal(isNonPublicAppHostname("192.0.1.1"), false)
+    assert.equal(isNonPublicAppHostname("192.88.100.1"), false)
+    // Adjacent to Teredo / ORCHID — still public when not in those prefixes
+    assert.equal(isNonPublicAppHostname("2001:1::1"), false)
+    assert.equal(isNonPublicAppHostname("2001:30::1"), false)
   })
 
   it("rejects IPv6 documentation origins outside development", () => {

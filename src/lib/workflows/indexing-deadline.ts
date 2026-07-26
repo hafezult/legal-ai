@@ -31,10 +31,10 @@ export function remainingEmbedBudgetMs(
   const pipelineBudgetMs = options.pipelineBudgetMs ?? INDEXING_PIPELINE_BUDGET_MS
   const postEmbedReserveMs =
     options.postEmbedReserveMs ?? INDEXING_POST_EMBED_RESERVE_MS
-  return Math.max(
-    0,
-    pipelineBudgetMs - (nowMs - startedAtMs) - postEmbedReserveMs
-  )
+  // Clamp elapsed at 0 so a backward clock jump cannot inflate the budget.
+  const elapsedMs = Math.max(0, nowMs - startedAtMs)
+  const maxEmbedBudgetMs = Math.max(0, pipelineBudgetMs - postEmbedReserveMs)
+  return Math.max(0, Math.min(maxEmbedBudgetMs, pipelineBudgetMs - elapsedMs - postEmbedReserveMs))
 }
 
 /** True when at least one OpenAI embedding batch can finish before the budget. */

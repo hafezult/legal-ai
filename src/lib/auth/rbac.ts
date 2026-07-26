@@ -540,8 +540,32 @@ export async function createOwnedOrganization(
  * Decline a pending invite by opaque token when the signed-in user's email matches.
  * Deletes the invite row so admins can re-invite the same address.
  */
+function actorInviteEmails(
+  user: { email: string | readonly string[] }
+): string[] {
+  const raw = Array.isArray(user.email) ? user.email : [user.email]
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const entry of raw) {
+    const normalized = entry?.trim().toLowerCase()
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    out.push(normalized)
+  }
+  return out
+}
+
+function inviteEmailAuthorized(
+  user: { email: string | readonly string[] },
+  inviteEmail: string
+): boolean {
+  const target = inviteEmail.trim().toLowerCase()
+  if (!target) return false
+  return actorInviteEmails(user).includes(target)
+}
+
 export async function rejectOrganizationInviteByToken(
-  user: { id: string; email: string },
+  user: { id: string; email: string | readonly string[] },
   token: string
 ): Promise<
   | { ok: true; organizationId: string; organizationName: string }
@@ -567,8 +591,9 @@ export async function rejectOrganizationInviteByToken(
     return { ok: false, error: "Invite not found or link is invalid." }
   }
   // Email match before accepted/expired details so a leaked token cannot probe
-  // invite lifecycle state for the wrong signed-in account.
-  if (!user.email || invite.email.toLowerCase() !== user.email.toLowerCase()) {
+  // invite lifecycle state for the wrong signed-in account. Any verified Clerk
+  // address on the actor may authorize (not only the primary).
+  if (!inviteEmailAuthorized(user, invite.email)) {
     return {
       ok: false,
       error:
@@ -608,7 +633,7 @@ export async function rejectOrganizationInviteByToken(
  * Accept a pending invite by opaque token when the signed-in user's email matches.
  */
 export async function acceptOrganizationInviteByToken(
-  user: { id: string; email: string },
+  user: { id: string; email: string | readonly string[] },
   token: string
 ): Promise<
   | { ok: true; organizationId: string; organizationName: string; role: OrgRole }
@@ -635,8 +660,9 @@ export async function acceptOrganizationInviteByToken(
     return { ok: false, error: "Invite not found or link is invalid." }
   }
   // Email match before accepted/expired details so a leaked token cannot probe
-  // invite lifecycle state for the wrong signed-in account.
-  if (!user.email || invite.email.toLowerCase() !== user.email.toLowerCase()) {
+  // invite lifecycle state for the wrong signed-in account. Any verified Clerk
+  // address on the actor may authorize (not only the primary).
+  if (!inviteEmailAuthorized(user, invite.email)) {
     // Do not reveal the invitee email to the wrong signed-in account.
     return {
       ok: false,
