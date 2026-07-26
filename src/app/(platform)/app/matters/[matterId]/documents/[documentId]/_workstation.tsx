@@ -399,10 +399,11 @@ function TabChunks({ chunks }: { chunks: WorkstationChunk[] }) {
           </span>
         </div>
         <input
-          type="text"
+          type="search"
           placeholder="Search chunks…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search chunks"
           className="w-full rounded border border-white/[0.07] bg-white/[0.02] px-3 py-1.5 text-[11px] text-white/72 placeholder:text-white/22 focus:border-white/[0.14] focus:outline-none"
         />
       </div>

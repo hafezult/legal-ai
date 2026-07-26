@@ -14,6 +14,7 @@ import {
 } from "@/lib/documents/upload"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
+import { destructiveMutationKey } from "@/lib/rate-limit-policy"
 import {
   cleanupStoragePaths,
   ensureBucket,
@@ -335,7 +336,7 @@ export async function deleteDocument(
     if (!user) return { error: "Session not found. Please sign in again." }
 
     const throttle = await consumeRateLimit(
-      `document-delete:${user.id}`,
+      destructiveMutationKey(user.id),
       DOCUMENT_DELETE_RATE_LIMIT
     )
     if (!throttle.ok) {

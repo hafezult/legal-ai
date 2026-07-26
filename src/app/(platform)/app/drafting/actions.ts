@@ -18,6 +18,7 @@ import {
 } from "@/lib/drafting/types"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
+import { destructiveMutationKey } from "@/lib/rate-limit-policy"
 import { buildCitationSnapshot } from "@/lib/retrieval/citation-snapshot"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
@@ -429,7 +430,7 @@ export async function deleteDraft(draftId: string): Promise<DraftDeleteState> {
     if (!user) return { error: "Session not found. Please sign in again." }
 
     const throttle = await consumeRateLimit(
-      `draft-delete:${user.id}`,
+      destructiveMutationKey(user.id),
       DRAFT_DELETE_RATE_LIMIT
     )
     if (!throttle.ok) {

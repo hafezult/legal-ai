@@ -12,6 +12,7 @@ import {
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
 import { consumeRateLimit } from "@/lib/rate-limit"
+import { destructiveMutationKey } from "@/lib/rate-limit-policy"
 import { buildCitationSnapshot } from "@/lib/retrieval/citation-snapshot"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
@@ -448,7 +449,7 @@ export async function deleteResearchSession(
     if (!user) return { error: "Session not found. Please sign in again." }
 
     const throttle = await consumeRateLimit(
-      `research-delete:${user.id}`,
+      destructiveMutationKey(user.id),
       RESEARCH_DELETE_RATE_LIMIT
     )
     if (!throttle.ok) {

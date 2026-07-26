@@ -21,6 +21,7 @@ import {
 } from "@/lib/matters/limits"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
+import { destructiveMutationKey } from "@/lib/rate-limit-policy"
 import { cleanupStoragePaths } from "@/lib/storage/documents"
 
 const MATTER_CREATE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
@@ -393,7 +394,7 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
     if (!user) return { error: "Session not found. Please sign in again." }
 
     const throttle = await consumeRateLimit(
-      `matter-delete:${user.id}`,
+      destructiveMutationKey(user.id),
       DESTRUCTIVE_MUTATION_RATE_LIMIT
     )
     if (!throttle.ok) {
@@ -555,7 +556,7 @@ export async function deleteConversation(
     if (!user) return { error: "Session not found. Please sign in again." }
 
     const throttle = await consumeRateLimit(
-      `conversation-delete:${user.id}`,
+      destructiveMutationKey(user.id),
       DESTRUCTIVE_MUTATION_RATE_LIMIT
     )
     if (!throttle.ok) {

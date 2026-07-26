@@ -328,18 +328,22 @@ export function OrganizationAccessPanel({
             </span>
             <div className="mt-2 flex flex-wrap gap-2">
               <input
+                id="org-invite-email"
                 type="email"
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
                 placeholder="colleague@firm.com"
+                aria-label="Invite email"
                 disabled={isPending}
                 className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-black/25 px-3 py-2 text-sm text-white/80 outline-none transition-colors focus:border-white/[0.18] disabled:opacity-50"
               />
               <select
+                id="org-invite-role"
                 value={inviteRole}
                 onChange={(e) =>
                   setInviteRole(e.target.value as (typeof ROLE_OPTIONS)[number])
                 }
+                aria-label="Invite role"
                 disabled={isPending}
                 className="rounded-lg border border-white/[0.08] bg-black/25 px-2 py-2 text-sm text-white/70 outline-none"
               >
@@ -453,6 +457,7 @@ export function OrganizationAccessPanel({
                 <select
                   value={member.role}
                   disabled={isPending}
+                  aria-label={`Role for ${member.name || member.email || "member"}`}
                   onChange={(e) =>
                     run(
                       () =>
@@ -608,8 +613,10 @@ export function OrganizationAccessPanel({
             ) : (
               <div className="mt-3 flex flex-wrap gap-2">
                 <select
+                  id="org-transfer-member"
                   value={transferMemberId}
                   onChange={(e) => setTransferMemberId(e.target.value)}
+                  aria-label="Transfer ownership to member"
                   disabled={isPending}
                   className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-black/25 px-3 py-2 text-sm text-white/80 outline-none transition-colors focus:border-white/[0.18] disabled:opacity-50"
                 >
@@ -660,9 +667,11 @@ export function OrganizationAccessPanel({
             {canDeleteOrg ? (
               <div className="mt-3 flex flex-wrap gap-2">
                 <input
+                  id="org-delete-confirmation"
                   value={deleteConfirmation}
                   onChange={(e) => setDeleteConfirmation(e.target.value)}
                   placeholder={`Type “${organizationName}” to confirm`}
+                  aria-label={`Type ${organizationName} to confirm organization deletion`}
                   disabled={isPending}
                   className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-black/25 px-3 py-2 text-sm text-white/80 outline-none transition-colors focus:border-white/[0.18] disabled:opacity-50"
                 />

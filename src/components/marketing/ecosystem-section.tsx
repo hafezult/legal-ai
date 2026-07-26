@@ -276,9 +276,10 @@ export function EnterpriseEcosystemSection() {
   return (
     <Section id="ecosystem" className="border-t border-white/[0.06]">
       <span className="sr-only">
-        Diagram: enterprise systems such as Microsoft 365, iManage, NetDocuments,
-        SharePoint, compliance, document stores, matters, and internal knowledge connect
-        into Aether Core as the central orchestration layer.
+        Diagram: illustrative enterprise topology around Aether Core. Matter
+        repositories and document stores ground today&apos;s workspace; connectors
+        such as Microsoft 365, iManage, NetDocuments, and SharePoint remain a
+        deployment roadmap, not live integrations in this build.
       </span>
       <Container>
         <div className="grid gap-14 lg:grid-cols-12 lg:items-center lg:gap-16">

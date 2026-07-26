@@ -294,10 +294,14 @@ export function DraftingClient({
 
         {matters.length > 0 && (
           <div className="min-w-[220px]">
-            <p className="mb-1.5 text-[10px] uppercase tracking-[0.16em] text-white/35">
+            <label
+              htmlFor="drafting-active-matter"
+              className="mb-1.5 block text-[10px] uppercase tracking-[0.16em] text-white/35"
+            >
               Active matter
-            </p>
+            </label>
             <select
+              id="drafting-active-matter"
               value={selectedMatter}
               onChange={(event) => setSelectedMatter(event.target.value)}
               className="w-full cursor-pointer appearance-none rounded-lg border border-white/[0.08] bg-zinc-950 px-4 py-2.5 text-sm text-white/80 focus:border-white/[0.16] focus:outline-none"

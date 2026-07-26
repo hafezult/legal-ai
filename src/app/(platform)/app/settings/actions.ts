@@ -31,6 +31,10 @@ import {
 import { sendOrganizationInviteEmail } from "@/lib/email/invite"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
+import {
+  inviteDecisionKey,
+  orgAdminMutationKey,
+} from "@/lib/rate-limit-policy"
 
 const INVITE_RATE_LIMIT = { limit: 10, windowMs: 60_000 } as const
 const INVITE_DECISION_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
@@ -160,7 +164,7 @@ export async function leaveOrganization(
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
-    `org-leave:${actor.user.id}`,
+    orgAdminMutationKey(actor.user.id),
     ORG_ADMIN_MUTATION_RATE_LIMIT
   )
   if (!throttle.ok) {
@@ -231,7 +235,7 @@ export async function acceptInviteByToken(
   }
 
   const throttle = await consumeRateLimit(
-    `invite-accept:${actor.user.id}`,
+    inviteDecisionKey(actor.user.id),
     INVITE_DECISION_RATE_LIMIT
   )
   if (!throttle.ok) {
@@ -284,7 +288,7 @@ export async function rejectInviteByToken(
   }
 
   const throttle = await consumeRateLimit(
-    `invite-decline:${actor.user.id}`,
+    inviteDecisionKey(actor.user.id),
     INVITE_DECISION_RATE_LIMIT
   )
   if (!throttle.ok) {
@@ -376,7 +380,7 @@ export async function renameOrganization(
   }
 
   const throttle = await consumeRateLimit(
-    `org-rename:${actor.user.id}:${organizationId}`,
+    orgAdminMutationKey(actor.user.id),
     ORG_ADMIN_MUTATION_RATE_LIMIT
   )
   if (!throttle.ok) {
@@ -571,7 +575,7 @@ export async function transferOwnership(
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
-    `org-transfer:${actor.user.id}:${organizationId}`,
+    orgAdminMutationKey(actor.user.id),
     ORG_ADMIN_MUTATION_RATE_LIMIT
   )
   if (!throttle.ok) {
@@ -616,7 +620,7 @@ export async function deleteOrganization(
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
-    `org-delete:${actor.user.id}`,
+    orgAdminMutationKey(actor.user.id),
     ORG_ADMIN_MUTATION_RATE_LIMIT
   )
   if (!throttle.ok) {
@@ -736,7 +740,7 @@ export async function revokeOrganizationInvite(
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
-    `invite-revoke:${actor.user.id}:${organizationId}`,
+    orgAdminMutationKey(actor.user.id),
     ORG_ADMIN_MUTATION_RATE_LIMIT
   )
   if (!throttle.ok) {
@@ -798,7 +802,7 @@ export async function updateOrganizationMemberRole(
   const role = roleInput
 
   const throttle = await consumeRateLimit(
-    `org-role:${actor.user.id}:${organizationId}`,
+    orgAdminMutationKey(actor.user.id),
     ORG_ADMIN_MUTATION_RATE_LIMIT
   )
   if (!throttle.ok) {
@@ -862,7 +866,7 @@ export async function removeOrganizationMember(
   if ("error" in actor) return { error: actor.error }
 
   const throttle = await consumeRateLimit(
-    `org-remove:${actor.user.id}:${organizationId}`,
+    orgAdminMutationKey(actor.user.id),
     ORG_ADMIN_MUTATION_RATE_LIMIT
   )
   if (!throttle.ok) {
