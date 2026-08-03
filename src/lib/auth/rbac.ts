@@ -20,6 +20,7 @@ import {
   type OrgPermission,
   type OrgRole,
 } from "@/lib/auth/roles"
+import type { Prisma } from "@prisma/client"
 
 export {
   ORG_ROLES,
@@ -172,19 +173,12 @@ export async function requireMatterPermission(
   }
 }
 
-type MatterPermissionTx = {
-  $queryRaw: typeof prisma.$queryRaw
-  matter: {
-    findFirst: typeof prisma.matter.findFirst
-  }
-}
-
 /**
  * Lock a matter row and re-resolve permission inside the caller's transaction
  * so long-running or check-then-act mutations cannot complete after revocation.
  */
 export async function requireMatterPermissionLocked(
-  tx: MatterPermissionTx,
+  tx: Prisma.TransactionClient,
   userId: string,
   matterId: string,
   permission: OrgPermission
