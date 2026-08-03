@@ -400,11 +400,10 @@ export async function getActiveOrganization(
   const primary = organizations.find((org) => org.role === "owner") ?? organizations[0]
 
   if (user && user.activeOrganizationId !== primary.id) {
+    // Repair under the same Organization → member → User lock protocol so a
+    // concurrent removal cannot persist a stale active workspace after revoke.
     try {
-      await prisma.user.update({
-        where: { id: userId },
-        data: { activeOrganizationId: primary.id },
-      })
+      await setActiveOrganization(userId, primary.id)
     } catch {
       /* Best-effort persistence of the active workspace */
     }
@@ -413,32 +412,43 @@ export async function getActiveOrganization(
   return primary
 }
 
-/** Persist the user's active organization when they hold membership. */
+/**
+ * Persist the user's active organization when they hold membership.
+ * Serializes with Organization FOR UPDATE before rewriting activeOrganizationId
+ * so concurrent leave/remove/delete cannot report a successful switch after revoke.
+ */
 export async function setActiveOrganization(
   userId: string,
   organizationId: string
 ): Promise<OrganizationSummary | null> {
-  const membership = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: { organizationId, userId },
-    },
-    select: {
-      role: true,
-      organization: {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const membership = await requireOrganizationMembershipLocked(
+        tx,
+        userId,
+        organizationId
+      )
+      if (!membership.ok) return null
+
+      const organization = await tx.organization.findUnique({
+        where: { id: organizationId },
         select: { id: true, name: true, slug: true },
-      },
-    },
-  })
-  if (!membership || !isOrgRole(membership.role)) return null
+      })
+      if (!organization) return null
 
-  await prisma.user.update({
-    where: { id: userId },
-    data: { activeOrganizationId: organizationId },
-  })
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+      await tx.user.update({
+        where: { id: userId },
+        data: { activeOrganizationId: organizationId },
+      })
 
-  return {
-    ...membership.organization,
-    role: membership.role,
+      return {
+        ...organization,
+        role: membership.role,
+      }
+    })
+  } catch {
+    return null
   }
 }
 

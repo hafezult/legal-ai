@@ -175,33 +175,34 @@ export async function leaveOrganization(
   }
 
   try {
-    const membership = await prisma.organizationMember.findUnique({
-      where: {
-        organizationId_userId: {
-          organizationId,
-          userId: actor.user.id,
-        },
-      },
-      select: {
-        id: true,
-        role: true,
-        organization: { select: { name: true } },
-      },
-    })
-    if (!membership) {
-      return { error: "Organization not found or access denied." }
-    }
-    if (membership.role === "owner") {
-      return {
-        error:
-          "Owners cannot leave. Transfer ownership to another member, or delete the organization from Settings.",
-      }
-    }
-
-    // Membership delete + active-workspace fallback must be atomic so a failed
-    // activeOrganizationId update cannot report error after the leave applied.
-    // Conditional delete refuses if the actor was promoted to owner concurrently.
+    // Membership delete + active-workspace fallback must serialize with the
+    // Organization lock used by ownership/invite/remove writers, then lock the
+    // actor User row before rewriting activeOrganizationId.
+    let organizationName = ""
     await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+
+      const membership = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: {
+            organizationId,
+            userId: actor.user.id,
+          },
+        },
+        select: {
+          id: true,
+          role: true,
+          organization: { select: { name: true } },
+        },
+      })
+      if (!membership) {
+        throw new Error("MEMBERSHIP_NOT_FOUND")
+      }
+      if (membership.role === "owner") {
+        throw new Error("OWNER_CANNOT_LEAVE")
+      }
+      organizationName = membership.organization.name
+
       const left = await tx.organizationMember.deleteMany({
         where: {
           id: membership.id,
@@ -213,6 +214,8 @@ export async function leaveOrganization(
       if (left.count !== 1) {
         throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
       }
+
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actor.user.id} FOR UPDATE`
 
       const remaining = await tx.organizationMember.findMany({
         where: { userId: actor.user.id },
@@ -238,9 +241,18 @@ export async function leaveOrganization(
       entityType: "organization",
       entityId: organizationId,
       organizationId,
-      summary: `Left organization “${membership.organization.name}”`,
+      summary: `Left organization “${organizationName}”`,
     })
   } catch (error) {
+    if (error instanceof Error && error.message === "MEMBERSHIP_NOT_FOUND") {
+      return { error: "Organization not found or access denied." }
+    }
+    if (error instanceof Error && error.message === "OWNER_CANNOT_LEAVE") {
+      return {
+        error:
+          "Owners cannot leave. Transfer ownership to another member, or delete the organization from Settings.",
+      }
+    }
     if (
       error instanceof Error &&
       error.message === "CONCURRENT_MEMBERSHIP_CHANGE"
@@ -1252,6 +1264,7 @@ export async function removeOrganizationMember(
         throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
       }
 
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${member.userId} FOR UPDATE`
       const removedUser = await tx.user.findUnique({
         where: { id: member.userId },
         select: { activeOrganizationId: true },
