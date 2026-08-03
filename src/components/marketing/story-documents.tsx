@@ -15,15 +15,15 @@ export function DocumentStory() {
               Read the deal once. Remember it everywhere.
             </h2>
             <p className="mt-6 text-lg leading-relaxed text-white/[0.62]">
-              Structure obligations, risk, and definitions across portfolios—then route
-              those signals into drafting, diligence, and matter strategy.
+              Index matter sources once, then ground research and drafting in cited
+              excerpts—so diligence and strategy stay tied to the evidence.
             </p>
           </div>
 
           <GlassPanel className="divide-y divide-white/[0.06] overflow-hidden p-0">
             <div className="flex items-center justify-between px-6 py-4 text-xs uppercase tracking-[0.18em] text-white/45">
               <span>Matter bundle</span>
-              <span className="text-white/30">Live</span>
+              <span className="text-white/30">Preview</span>
             </div>
             {[
               { name: "MSA — Cloud Services", meta: "12 sections · 3 deviations" },
