@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { probeDatabase } from "./health.ts"
+import { probeDatabase } from "./health-database.ts"
 
 describe("probeDatabase", () => {
   it("reports missing when DATABASE_URL is unset", async () => {

@@ -12,19 +12,23 @@ export type ReadyReportCache<T> = {
   get: (now?: number) => ReadyCacheEntry<T> | null
   set: (value: T, now?: number) => ReadyCacheEntry<T>
   clear: () => void
-  load: (fetcher: () => Promise<T>, now?: number) => Promise<T>
+  load: (fetcher: () => Promise<T>) => Promise<T>
 }
 
-export function createReadyReportCache<T>(ttlMs: number): ReadyReportCache<T> {
+export function createReadyReportCache<T>(
+  ttlMs: number,
+  options?: { now?: () => number }
+): ReadyReportCache<T> {
+  const clock = options?.now ?? Date.now
   let cached: ReadyCacheEntry<T> | null = null
   let inFlight: Promise<T> | null = null
 
-  function get(now = Date.now()): ReadyCacheEntry<T> | null {
+  function get(now = clock()): ReadyCacheEntry<T> | null {
     if (cached && cached.expiresAt > now) return cached
     return null
   }
 
-  function set(value: T, now = Date.now()): ReadyCacheEntry<T> {
+  function set(value: T, now = clock()): ReadyCacheEntry<T> {
     cached = { expiresAt: now + ttlMs, value }
     return cached
   }
@@ -34,8 +38,8 @@ export function createReadyReportCache<T>(ttlMs: number): ReadyReportCache<T> {
     inFlight = null
   }
 
-  async function load(fetcher: () => Promise<T>, now = Date.now()): Promise<T> {
-    const hit = get(now)
+  async function load(fetcher: () => Promise<T>): Promise<T> {
+    const hit = get()
     if (hit) return hit.value
     if (inFlight) return inFlight
 

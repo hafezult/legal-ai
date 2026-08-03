@@ -5,16 +5,20 @@ import { createReadyReportCache } from "./health-ready-cache.ts"
 
 describe("createReadyReportCache", () => {
   it("returns cached value within TTL without re-fetching", async () => {
+    let now = 1_000
     let calls = 0
-    const cache = createReadyReportCache<{ n: number }>(5_000)
+    const cache = createReadyReportCache<{ n: number }>(5_000, {
+      now: () => now,
+    })
     const first = await cache.load(async () => {
       calls += 1
       return { n: 1 }
-    }, 1_000)
+    })
+    now = 2_000
     const second = await cache.load(async () => {
       calls += 1
       return { n: 2 }
-    }, 2_000)
+    })
 
     assert.deepEqual(first, { n: 1 })
     assert.deepEqual(second, { n: 1 })
@@ -33,11 +37,11 @@ describe("createReadyReportCache", () => {
       calls += 1
       await gate
       return { n: 7 }
-    }, 10)
+    })
     const p2 = cache.load(async () => {
       calls += 1
       return { n: 99 }
-    }, 11)
+    })
 
     release()
     const [a, b] = await Promise.all([p1, p2])
@@ -47,16 +51,20 @@ describe("createReadyReportCache", () => {
   })
 
   it("re-fetches after TTL expiry", async () => {
+    let now = 0
     let calls = 0
-    const cache = createReadyReportCache<{ n: number }>(100)
+    const cache = createReadyReportCache<{ n: number }>(100, {
+      now: () => now,
+    })
     await cache.load(async () => {
       calls += 1
       return { n: 1 }
-    }, 0)
+    })
+    now = 150
     const next = await cache.load(async () => {
       calls += 1
       return { n: 2 }
-    }, 150)
+    })
 
     assert.deepEqual(next, { n: 2 })
     assert.equal(calls, 2)
