@@ -48,7 +48,7 @@ export async function loadProvenanceChunks(
       content: true,
       pageRef: true,
       headingPath: true,
-      document: { select: { fileName: true } },
+      document: { select: { id: true, fileName: true } },
     },
   })
 
@@ -60,6 +60,7 @@ export async function loadProvenanceChunks(
       pageRef: row.pageRef,
       headingPath: row.headingPath,
       distance: 0,
+      documentId: row.document.id,
     })),
     chunkIds
   )

@@ -181,6 +181,7 @@ export default async function DocumentViewerPage({
       rawSessions = candidates
         .filter((session) =>
           sessionReferencesDocument(session, {
+            id: doc.id,
             fileName: doc.fileName,
             chunkIds,
           })
@@ -248,10 +249,10 @@ export default async function DocumentViewerPage({
         query: s.query,
         chunkIds: s.chunkIds,
         createdAt: s.createdAt.toISOString(),
-        snapshotExcerpts: snapshotEntriesForDocument(
-          s.citationSnapshot,
-          doc.fileName
-        ).map((entry) => ({
+        snapshotExcerpts: snapshotEntriesForDocument(s.citationSnapshot, {
+          id: doc.id,
+          fileName: doc.fileName,
+        }).map((entry) => ({
           id: entry.id,
           content: entry.content,
           pageRef: entry.pageRef,

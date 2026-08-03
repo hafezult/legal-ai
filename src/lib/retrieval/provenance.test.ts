@@ -43,6 +43,7 @@ describe("provenanceChunksFromSnapshot", () => {
         fileName: "agreement.pdf",
         pageRef: 2,
         headingPath: "Clause 1",
+        documentId: "doc-1",
       },
     ])
     const parsed = JSON.parse(snapshot) as Array<{
@@ -51,12 +52,15 @@ describe("provenanceChunksFromSnapshot", () => {
       fileName: string
       pageRef: number | null
       headingPath: string | null
+      documentId?: string
     }>
+    assert.equal(parsed[0]?.documentId, "doc-1")
     const chunks = provenanceChunksFromSnapshot(parsed)
     assert.equal(chunks.length, 1)
     assert.equal(chunks[0]?.id, "chunk-1")
     assert.equal(chunks[0]?.distance, 0)
     assert.equal(chunks[0]?.pageRef, 2)
+    assert.equal(chunks[0]?.documentId, "doc-1")
   })
 })
 

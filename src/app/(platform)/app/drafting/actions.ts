@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
+import {
+  buildDraftUserPrompt,
+  groundedSystemRulesAppendix,
+} from "@/lib/ai/prompt-envelope"
 import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   matterAccessWhere,
@@ -39,6 +43,7 @@ export type DraftSourceChunk = {
   pageRef: number | null
   headingPath: string | null
   distance: number
+  documentId?: string
 }
 
 export type DraftOutput = {
@@ -77,7 +82,8 @@ Rules you must follow without exception:
 3. When relying on a source, cite the document name and page number exactly as provided.
 4. If the sources are insufficient, state the gap clearly and draft only what is supported.
 5. Structure the output with clear headings appropriate to the requested draft type.
-6. Do not include conversational preamble — return the draft itself.`
+6. Do not include conversational preamble — return the draft itself.
+7. ${groundedSystemRulesAppendix()}`
 
   switch (draftType) {
     case "advice":
@@ -109,19 +115,6 @@ async function generateGroundedDraft(
     return "Draft generation unavailable — OPENAI_API_KEY not configured. Retrieved source excerpts are listed above for manual drafting."
   }
 
-  const context = chunks
-    .map((chunk, index) => {
-      const src = [
-        `Source ${index + 1}: ${chunk.fileName}`,
-        chunk.headingPath ? `Section: ${chunk.headingPath}` : null,
-        chunk.pageRef ? `Page ${chunk.pageRef}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")
-      return `[${src}]\n${chunk.content}`
-    })
-    .join("\n\n---\n\n")
-
   const { createOpenAIClient } = await import("@/lib/ai/openai-client")
   const client = await createOpenAIClient()
 
@@ -133,7 +126,11 @@ async function generateGroundedDraft(
       { role: "system", content: systemPromptFor(draftType) },
       {
         role: "user",
-        content: `Draft type: ${DRAFT_TYPE_LABELS[draftType]}\nInstruction: ${instruction}\n\n--- RETRIEVED SOURCES ---\n\n${context}`,
+        content: buildDraftUserPrompt(
+          DRAFT_TYPE_LABELS[draftType],
+          instruction,
+          chunks
+        ),
       },
     ],
   })
@@ -255,6 +252,7 @@ export async function generateDraft(
       pageRef: chunk.pageRef,
       headingPath: chunk.headingPath,
       distance: chunk.distance,
+      documentId: chunk.documentId,
     }))
   } catch (err) {
     if (err instanceof Error) {

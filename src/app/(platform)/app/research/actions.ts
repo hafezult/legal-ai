@@ -17,6 +17,10 @@ import { buildCitationSnapshot } from "@/lib/retrieval/citation-snapshot"
 import { loadProvenanceChunks } from "@/lib/retrieval/provenance"
 import { semanticSearch, indexedChunkCount } from "@/lib/retrieval/search"
 import { isEmbeddingConfigured } from "@/lib/ai/embeddings"
+import {
+  buildResearchUserPrompt,
+  groundedSystemRulesAppendix,
+} from "@/lib/ai/prompt-envelope"
 import { MAX_RESEARCH_QUERY_CHARS } from "@/lib/research/limits"
 
 const RESEARCH_RATE_LIMIT = { limit: 12, windowMs: 60_000 } as const
@@ -37,6 +41,7 @@ export type ResearchChunk = {
   pageRef: number | null
   headingPath: string | null
   distance: number
+  documentId?: string
 }
 
 export type ResearchAuthorities = {
@@ -72,19 +77,6 @@ async function generateGroundedResponse(
     return "AI analysis unavailable — OPENAI_API_KEY not configured. Retrieved excerpts are displayed above."
   }
 
-  const context = chunks
-    .map((c, i) => {
-      const src = [
-        `Source ${i + 1}: ${c.fileName}`,
-        c.headingPath ? `Section: ${c.headingPath}` : null,
-        c.pageRef ? `Page ${c.pageRef}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")
-      return `[${src}]\n${c.content}`
-    })
-    .join("\n\n---\n\n")
-
   const { createOpenAIClient } = await import("@/lib/ai/openai-client")
   const client = await createOpenAIClient()
 
@@ -104,11 +96,12 @@ Rules you must follow without exception:
 4. When citing a source, reference the document name and page number exactly as provided.
 5. If the sources do not contain sufficient information, state this clearly: "The retrieved sources do not address this point."
 6. Structure your response with clear paragraphs. Use headings where appropriate.
-7. Apply UK legal terminology throughout (claimant/defendant, barrister, counsel, chambers, disclosure, privilege, etc.).`,
+7. Apply UK legal terminology throughout (claimant/defendant, barrister, counsel, chambers, disclosure, privilege, etc.).
+8. ${groundedSystemRulesAppendix()}`,
       },
       {
         role: "user",
-        content: `Research query: ${query}\n\n--- RETRIEVED SOURCES ---\n\n${context}`,
+        content: buildResearchUserPrompt(query, chunks),
       },
     ],
   })
@@ -226,6 +219,7 @@ export async function runResearch(
       pageRef: c.pageRef,
       headingPath: c.headingPath,
       distance: c.distance,
+      documentId: c.documentId,
     }))
   } catch (err) {
     if (err instanceof Error) {
