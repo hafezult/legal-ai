@@ -1,37 +1,113 @@
 import { currentUser } from "@clerk/nextjs/server"
+import { headers } from "next/headers"
 
+import {
+  selectVerifiedClerkEmail,
+  unverifiedClerkEmailPlaceholder,
+} from "@/lib/auth/clerk-email"
+import {
+  SKIP_INVITE_AUTO_ACCEPT_HEADER,
+  shouldAcceptPendingInvites,
+} from "@/lib/auth/invite-auto-accept"
+import {
+  acceptPendingOrganizationInvites,
+  ensurePersonalOrganization,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
+export type EnsureAppUserOptions = {
+  /**
+   * Opt-in only. When true, verified-email invites are auto-joined without
+   * switching the active workspace. Defaults to false — membership requires
+   * explicit Accept on `/app/invites/[token]` so Decline cannot be bypassed.
+   */
+  acceptPendingInvites?: boolean
+}
+
 /**
- * Upserts the signed-in Clerk user into Postgres (idempotent).
+ * Upserts the signed-in Clerk user into Postgres (idempotent), ensures a
+ * personal organization workspace exists, and optionally accepts outstanding invites.
  */
-export async function ensureAppUser() {
+export async function ensureAppUser(options: EnsureAppUserOptions = {}) {
   const clerkUser = await currentUser()
   if (!clerkUser) {
     return null
   }
 
-  const primary =
-    clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId)
-      ?.emailAddress ?? clerkUser.emailAddresses[0]?.emailAddress
-
-  const email = primary ?? ""
+  // Only verified Clerk emails are safe for invite auto-accept matching.
+  const verifiedEmail = selectVerifiedClerkEmail(
+    clerkUser.emailAddresses.map((entry) => ({
+      id: entry.id,
+      emailAddress: entry.emailAddress,
+      verificationStatus: entry.verification?.status ?? null,
+    })),
+    clerkUser.primaryEmailAddressId
+  )
+  const email =
+    verifiedEmail || unverifiedClerkEmailPlaceholder(clerkUser.id)
 
   const name =
     clerkUser.fullName ||
     [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
     null
 
-  return prisma.user.upsert({
-    where: { clerkId: clerkUser.id },
-    create: {
-      clerkId: clerkUser.id,
-      email,
-      name,
-    },
-    update: {
-      email,
-      name,
-    },
-  })
+  let user
+  try {
+    user = await prisma.user.upsert({
+      where: { clerkId: clerkUser.id },
+      create: {
+        clerkId: clerkUser.id,
+        email,
+        name,
+      },
+      update: {
+        email,
+        name,
+      },
+    })
+  } catch {
+    // Unique email collisions (shared Clerk email / account reuse) must not
+    // block sign-in. Keep the existing row email and fall back to a stable
+    // per-Clerk placeholder on first create.
+    user = await prisma.user.upsert({
+      where: { clerkId: clerkUser.id },
+      create: {
+        clerkId: clerkUser.id,
+        email: unverifiedClerkEmailPlaceholder(clerkUser.id),
+        name,
+      },
+      update: {
+        name,
+      },
+    })
+  }
+
+  // Personal-org provisioning must not be swallowed: platform shell and invite
+  // pages catch thrown failures and surface WorkspaceLoadError / shellLoadFailed
+  // instead of rendering a false empty workspace.
+  await ensurePersonalOrganization(user)
+
+  // Invite matching must use the currently verified Clerk email, never a
+  // collision-fallback / placeholder persisted on the User row. Middleware
+  // stamps SKIP_INVITE_AUTO_ACCEPT_HEADER on `/app/invites/*` so even an
+  // accidental acceptPendingInvites: true cannot silently join before Decline.
+  const skipHeader = (await headers()).get(SKIP_INVITE_AUTO_ACCEPT_HEADER)
+  if (
+    shouldAcceptPendingInvites({
+      acceptPendingInvites: options.acceptPendingInvites,
+      skipHeader,
+    }) &&
+    verifiedEmail
+  ) {
+    try {
+      await acceptPendingOrganizationInvites({
+        id: user.id,
+        email: verifiedEmail,
+      })
+    } catch {
+      /* Invite acceptance is best-effort; retries on next navigation */
+    }
+  }
+
+  return user
 }
