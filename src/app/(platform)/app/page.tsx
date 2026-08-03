@@ -61,7 +61,7 @@ export default async function DashboardPage() {
   let recentSessions: {
     id: string
     query: string
-    response: string | null
+    hasResponse: boolean
     chunkIds: string[]
     createdAt: Date
     matter: { id: string; title: string }
@@ -92,8 +92,13 @@ export default async function DashboardPage() {
         activeOrg && isOrgRole(activeOrg.role) ? activeOrg.role : "viewer"
       canViewHealthDetails = roleAtLeast(activeRole, "admin")
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
-      ;[matterCount, retrievalReadyCount, researchSessionCount, recentSessions, recentMatters] =
-        await Promise.all([
+      const [
+        countedMatters,
+        countedRetrievalReady,
+        countedResearchSessions,
+        sessionRows,
+        matterRows,
+      ] = await Promise.all([
           prisma.matter.count({
             where: { ...matterWhere, status: "active" },
           }),

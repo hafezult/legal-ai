@@ -15,8 +15,8 @@ import { MatterStatusControls } from "@/components/matters/matter-status-control
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import {
   canDeleteWorkProduct,
-  getMatterAccess,
   matterAccessWhere,
+  requireMatterPermissionLocked,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import {
@@ -205,6 +205,7 @@ export default async function MatterDetailPage({
   let canWrite = false
   let canDelete = false
   let loadFailed = false
+  let permissionLoadFailed = false
   let indexedDocuments = 0
   let retrievalReadyDocuments = 0
   let failedDocuments = 0
@@ -300,71 +301,89 @@ export default async function MatterDetailPage({
         },
       })
       if (row) {
-        const access = await getMatterAccess(user.id, row.id)
-        canWrite = Boolean(access?.role && roleHasPermission(access.role, "write"))
-        canDelete = Boolean(access?.role && roleHasPermission(access.role, "delete"))
-        const staleBefore = new Date(
-          new Date().getTime() - STALE_INDEXING_MS
-        )
-        const documentWhere = { matterId: row.id }
-        const [indexed, retrievalReady, failed] = await Promise.all([
-          prisma.document.count({
-            where: { ...documentWhere, ...documentCorpusIndexedWhere() },
-          }),
-          prisma.document.count({
-            where: { ...documentWhere, ...documentRetrievalReadyWhere() },
-          }),
-          prisma.document.count({
-            where: {
-              ...documentWhere,
-              OR: documentRetryOr(staleBefore),
-            },
-          }),
-        ])
-        indexedDocuments = indexed
-        retrievalReadyDocuments = retrievalReady
-        failedDocuments = failed
-        matter = {
-          id: row.id,
-          title: row.title,
-          description: row.description,
-          clientName: row.clientName,
-          practiceArea: row.practiceArea,
-          jurisdiction: row.jurisdiction,
-          riskLevel: row.riskLevel,
-          billingCode: row.billingCode,
-          status: row.status,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-          documents: row.documents,
-          draftDocuments: row.draftDocuments,
-          _count: row._count,
-          researchSessions: row.researchSessions.map((session) => ({
-            id: session.id,
-            query: session.query,
-            response: session.response,
-            chunkIds: session.chunkIds,
-            createdAt: session.createdAt,
-            canDelete: canDeleteWorkProduct({
-              actorUserId: user.id,
-              createdByUserId: session.userId,
-              matterCanWrite: canWrite,
-              matterCanDelete: canDelete,
+        // Final locked read reauth before returning saved research answers /
+        // conversation bodies so a mid-render revocation cannot fail open.
+        let stillAllowed
+        try {
+          stillAllowed = await prisma.$transaction(async (tx) =>
+            requireMatterPermissionLocked(tx, user.id, row.id, "read")
+          )
+        } catch {
+          permissionLoadFailed = true
+          stillAllowed = null
+        }
+
+        if (permissionLoadFailed) {
+          // handled below
+        } else if (!stillAllowed || !stillAllowed.ok) {
+          // Treat revoked mid-load access as not found.
+        } else {
+          const role = stillAllowed.access.role
+          canWrite = role ? roleHasPermission(role, "write") : false
+          canDelete = role ? roleHasPermission(role, "delete") : false
+          const staleBefore = new Date(
+            new Date().getTime() - STALE_INDEXING_MS
+          )
+          const documentWhere = { matterId: row.id }
+          const [indexed, retrievalReady, failed] = await Promise.all([
+            prisma.document.count({
+              where: { ...documentWhere, ...documentCorpusIndexedWhere() },
             }),
-          })),
-          conversations: row.conversations.map((conversation) => ({
-            id: conversation.id,
-            title: conversation.title,
-            createdAt: conversation.createdAt,
-            messages: conversation.messages,
-            _count: conversation._count,
-            canDelete: canDeleteWorkProduct({
-              actorUserId: user.id,
-              createdByUserId: conversation.createdByUserId,
-              matterCanWrite: canWrite,
-              matterCanDelete: canDelete,
+            prisma.document.count({
+              where: { ...documentWhere, ...documentRetrievalReadyWhere() },
             }),
-          })),
+            prisma.document.count({
+              where: {
+                ...documentWhere,
+                OR: documentRetryOr(staleBefore),
+              },
+            }),
+          ])
+          indexedDocuments = indexed
+          retrievalReadyDocuments = retrievalReady
+          failedDocuments = failed
+          matter = {
+            id: row.id,
+            title: row.title,
+            description: row.description,
+            clientName: row.clientName,
+            practiceArea: row.practiceArea,
+            jurisdiction: row.jurisdiction,
+            riskLevel: row.riskLevel,
+            billingCode: row.billingCode,
+            status: row.status,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+            documents: row.documents,
+            draftDocuments: row.draftDocuments,
+            _count: row._count,
+            researchSessions: row.researchSessions.map((session) => ({
+              id: session.id,
+              query: session.query,
+              response: session.response,
+              chunkIds: session.chunkIds,
+              createdAt: session.createdAt,
+              canDelete: canDeleteWorkProduct({
+                actorUserId: user.id,
+                createdByUserId: session.userId,
+                matterCanWrite: canWrite,
+                matterCanDelete: canDelete,
+              }),
+            })),
+            conversations: row.conversations.map((conversation) => ({
+              id: conversation.id,
+              title: conversation.title,
+              createdAt: conversation.createdAt,
+              messages: conversation.messages,
+              _count: conversation._count,
+              canDelete: canDeleteWorkProduct({
+                actorUserId: user.id,
+                createdByUserId: conversation.createdByUserId,
+                matterCanWrite: canWrite,
+                matterCanDelete: canDelete,
+              }),
+            })),
+          }
         }
       }
     }
@@ -377,6 +396,16 @@ export default async function MatterDetailPage({
       <WorkspaceLoadError
         title="Matter workspace unavailable"
         description="Aether could not load this matter from the data plane. Retry shortly, or verify Settings readiness if the outage continues."
+        homeHref="/app/matters"
+      />
+    )
+  }
+
+  if (permissionLoadFailed) {
+    return (
+      <WorkspaceLoadError
+        title="Matter permissions unavailable"
+        description="Aether could not verify read access for this matter. Retry shortly, or verify Settings readiness if the outage continues."
         homeHref="/app/matters"
       />
     )

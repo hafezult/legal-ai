@@ -3,7 +3,10 @@
 import { useCallback, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
-import { deleteResearchSession } from "@/app/(platform)/app/research/actions"
+import {
+  deleteResearchSession,
+  restoreResearchSession,
+} from "@/app/(platform)/app/research/actions"
 import { downloadMarkdown } from "@/lib/download"
 
 export type MatterResearchSession = {
@@ -26,17 +29,22 @@ function fmtShortDate(value: Date | string) {
   }).format(d)
 }
 
-function sessionMarkdown(session: MatterResearchSession, matterTitle: string) {
+function sessionMarkdown(args: {
+  matterTitle: string
+  query: string
+  answer: string
+  chunkCount: number
+}) {
   const lines = [
-    `# Research — ${matterTitle}`,
+    `# Research — ${args.matterTitle}`,
     "",
-    `Query: ${session.query}`,
+    `Query: ${args.query}`,
     "",
     "## Answer",
     "",
-    session.response?.trim() || "_No saved response._",
+    args.answer.trim() || "_No saved response._",
     "",
-    `Provenance chunks: ${session.chunkIds.length}`,
+    `Provenance chunks: ${args.chunkCount}`,
   ]
   return lines.join("\n")
 }
@@ -56,21 +64,47 @@ export function MatterResearchPanel({
 }) {
   const router = useRouter()
   const [isDeleting, startDelete] = useTransition()
+  const [isExporting, startExport] = useTransition()
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [exportingId, setExportingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
 
   const handleExport = useCallback(
     (session: MatterResearchSession) => {
-      const stamp = new Date().toISOString().slice(0, 10)
-      downloadMarkdown(
-        `research-${matterTitle.slice(0, 40)}-${stamp}.md`,
-        sessionMarkdown(session, matterTitle)
-      )
+      if (isExporting) return
       setError(null)
-      setStatus("Research export downloaded.")
+      setStatus("Preparing research export…")
+      setExportingId(session.id)
+      startExport(async () => {
+        try {
+          // Re-authorize under lock before exporting saved AI bodies.
+          const output = await restoreResearchSession(session.id)
+          setExportingId(null)
+          if (output.error) {
+            setStatus(null)
+            setError(output.error)
+            return
+          }
+          const stamp = new Date().toISOString().slice(0, 10)
+          downloadMarkdown(
+            `research-${matterTitle.slice(0, 40)}-${stamp}.md`,
+            sessionMarkdown({
+              matterTitle: output.matterTitle || matterTitle,
+              query: output.query || session.query,
+              answer: output.answer,
+              chunkCount: output.chunks.length || session.chunkIds.length,
+            })
+          )
+          setStatus("Research export downloaded.")
+        } catch {
+          setExportingId(null)
+          setStatus(null)
+          setError("Unable to export research session. Please try again.")
+        }
+      })
     },
-    [matterTitle]
+    [isExporting, matterTitle]
   )
 
   const handleDelete = useCallback(
@@ -173,9 +207,12 @@ export function MatterResearchPanel({
                   <button
                     type="button"
                     onClick={() => handleExport(session)}
-                    className="rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/60"
+                    disabled={isExporting && exportingId === session.id}
+                    className="rounded border border-white/[0.08] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/60 disabled:pointer-events-none disabled:opacity-40"
                   >
-                    Export
+                    {isExporting && exportingId === session.id
+                      ? "Exporting…"
+                      : "Export"}
                   </button>
                   {session.canDelete ? (
                     <button

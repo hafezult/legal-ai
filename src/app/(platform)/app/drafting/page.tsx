@@ -203,7 +203,8 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
           title: draft.title,
           draftType: draft.draftType,
           instruction: draft.instruction,
-          content: draft.content,
+          // Never ship saved draft bodies in list props — restore under lock.
+          hasContent: Boolean(draft.content?.trim()),
           chunkIds: draft.chunkIds,
           createdAt: draft.createdAt,
           matterId: draft.matterId,

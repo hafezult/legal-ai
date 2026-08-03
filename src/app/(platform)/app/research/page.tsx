@@ -106,6 +106,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
             select: {
               id: true,
               query: true,
+              // Presence only — full response returns via locked restore.
               response: true,
               chunkIds: true,
               createdAt: true,
@@ -196,7 +197,8 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
         return {
           id: session.id,
           query: session.query,
-          response: session.response,
+          // Never ship saved AI bodies in list props — restore under lock.
+          hasResponse: Boolean(session.response?.trim()),
           chunkIds: session.chunkIds,
           createdAt: session.createdAt,
           matterId: session.matterId,

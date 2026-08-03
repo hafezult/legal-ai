@@ -44,7 +44,8 @@ type RecentDraft = {
   title: string
   draftType: string
   instruction: string
-  content: string | null
+  /** Presence flag only — body loaded via locked restore. */
+  hasContent: boolean
   chunkIds: string[]
   createdAt: Date | string
   matterId: string
@@ -194,29 +195,20 @@ export function DraftingClient({
     setDraftType(typed)
     setLocalError(null)
     setExportNotice(null)
-    setResults({
-      draftId: draft.id,
-      matterId: draft.matterId,
-      matterTitle: draft.matterTitle,
-      title: draft.title,
-      draftType: typed,
-      instruction: draft.instruction,
-      content: draft.content ?? "",
-      chunks: [],
-      retrievalCount: draft.chunkIds.length,
-      indexedChunks: draft.chunkIds.length,
-      embeddingConfigured: true,
-    })
+    // Do not seed saved draft bodies from list props — wait for locked restore.
+    setResults(null)
 
     startRestoreTransition(async () => {
       try {
         const output = await restoreDraft(draft.id)
         if (output.error) {
+          setResults(null)
           setLocalError(output.error)
           return
         }
         setResults(output)
       } catch {
+        setResults(null)
         setLocalError("Unable to restore draft. Please try again.")
       }
     })
@@ -511,8 +503,8 @@ export function DraftingClient({
                           {excerpt(draft.instruction)}
                         </p>
                         <p className="mt-1.5 text-xs text-white/28">
-                          {draft.content
-                            ? excerpt(draft.content, 120)
+                          {draft.hasContent
+                            ? "Draft content saved — open to restore under current access."
                             : "No draft content saved."}
                         </p>
                       </button>

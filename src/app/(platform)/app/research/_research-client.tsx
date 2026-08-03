@@ -69,7 +69,8 @@ type Matter = {
 type RecentSession = {
   id: string
   query: string
-  response: string | null
+  /** Presence flag only — body loaded via locked restore. */
+  hasResponse: boolean
   chunkIds: string[]
   createdAt: Date | string
   matterId: string
@@ -219,28 +220,20 @@ export function ResearchClient({
       setQuery(session.query)
       setLocalError(null)
       setExportNotice(null)
-      setResults({
-        query: session.query,
-        matterId: session.matterId,
-        matterTitle: session.matterTitle,
-        answer: session.response ?? "",
-        chunks: [],
-        authorities: emptyAuthorities(),
-        sessionId: session.id,
-        retrievalCount: session.chunkIds.length,
-        indexedChunks: session.chunkIds.length,
-        embeddingConfigured: true,
-      })
+      // Do not seed saved AI bodies from list props — wait for locked restore.
+      setResults(null)
 
       startRestoreTransition(async () => {
         try {
           const output = await restoreResearchSession(session.id)
           if (output.error) {
+            setResults(null)
             setLocalError(output.error)
             return
           }
           setResults(output)
         } catch {
+          setResults(null)
           setLocalError("Unable to restore research session. Please try again.")
         }
       })
@@ -519,8 +512,8 @@ export function ResearchClient({
                         </div>
                         <p className="mt-2 text-sm text-white/62">{excerpt(session.query)}</p>
                         <p className="mt-1.5 text-xs text-white/28">
-                          {session.response
-                            ? excerpt(session.response, 120)
+                          {session.hasResponse
+                            ? "Grounded response saved — open to restore under current access."
                             : "No grounded response saved for this session."}
                         </p>
                       </button>
