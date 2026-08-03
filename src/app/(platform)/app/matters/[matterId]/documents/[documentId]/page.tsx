@@ -7,6 +7,7 @@ import {
   matterAccessWhere,
   requireMatterPermissionLocked,
   roleHasPermission,
+  type OrgRole,
 } from "@/lib/auth/rbac"
 import { isParsedTextTruncated } from "@/lib/documents/parsed-text"
 import { extractAuthorities } from "@/lib/legal/authorities"
@@ -135,7 +136,7 @@ export default async function DocumentViewerPage({
       let rawChunks: LockedChunk[] = []
       let rawSessions: LockedSession[] = []
       let sessionsLoadFailed = false
-      let role: string | null = null
+      let role: OrgRole | null = null
 
       try {
         const locked = await prisma.$transaction(async (tx) => {
