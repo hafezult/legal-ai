@@ -465,15 +465,27 @@ async function activateOwnedOrganizationIfUnset(
   userId: string,
   organizationId: string
 ) {
-  const current = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { activeOrganizationId: true },
-  })
-  if (!current?.activeOrganizationId) {
-    await prisma.user.update({
-      where: { id: userId },
-      data: { activeOrganizationId: organizationId },
+  // Serialize with leave/switch/remove active-org writers: Organization →
+  // membership proof → User FOR UPDATE before rewriting activeOrganizationId.
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+      const membership = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: { organizationId, userId },
+        },
+        select: { id: true },
+      })
+      if (!membership) return
+
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+      await tx.user.updateMany({
+        where: { id: userId, activeOrganizationId: null },
+        data: { activeOrganizationId: organizationId },
+      })
     })
+  } catch {
+    /* Best-effort persistence of the active workspace */
   }
 }
 
@@ -521,6 +533,7 @@ export async function ensurePersonalOrganization(user: {
         select: { id: true },
       })
 
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`
       await tx.user.update({
         where: { id: user.id },
         data: { activeOrganizationId: organization.id },
@@ -688,6 +701,9 @@ async function claimOrganizationInviteAcceptance(args: {
       }
 
       if (args.switchActive) {
+        // Match leave/switch/remove: lock User before rewriting active org so
+        // concurrent active-workspace mutations cannot both report success.
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${args.userId} FOR UPDATE`
         await tx.user.update({
           where: { id: args.userId },
           data: { activeOrganizationId: args.organizationId },
@@ -744,6 +760,7 @@ export async function createOwnedOrganization(
         select: { id: true, name: true, slug: true },
       })
 
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
       await tx.user.update({
         where: { id: userId },
         data: { activeOrganizationId: organization.id },

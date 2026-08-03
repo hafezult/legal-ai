@@ -90,215 +90,282 @@ export default async function DocumentViewerPage({
       // sync/data-plane failure — not a blank workstation.
       loadFailed = true
     } else {
-    const doc = await prisma.document.findFirst({
-      where: {
-        id: documentId,
-        matterId,
-        matter: matterAccessWhere(user.id),
-      },
-      select: {
-        id: true,
-        fileName: true,
-        storagePath: true,
-        mimeType: true,
-        fileSize: true,
-        pageCount: true,
-        chunkCount: true,
-        extractionConf: true,
-        uploadStatus: true,
-        indexingStatus: true,
-        retrievalStatus: true,
-        parseStatus: true,
-        parsedText: true,
-        uploadedAt: true,
-        createdAt: true,
-        updatedAt: true,
-        matterId: true,
-        publishedRunId: true,
-        indexingRunId: true,
-        matter: { select: { title: true, clientName: true } },
-      },
-    })
-
-    if (!doc) {
-      missing = true
-    } else {
-    // Prefer published generation so mid-reindex staging rows stay hidden.
-    const chunkWhere = inspectionChunkWhere({
-      id: documentId,
-      publishedRunId: doc.publishedRunId,
-      indexingRunId: doc.indexingRunId,
-    })
-    const rawChunks = await prisma.documentChunk.findMany({
-      where: chunkWhere,
-      orderBy: { chunkIndex: "asc" },
-      select: {
-        id: true,
-        chunkIndex: true,
-        content: true,
-        tokenCount: true,
-        pageRef: true,
-        headingPath: true,
-        createdAt: true,
-      },
-    })
-
-    // Determine which chunks have embeddings (requires raw SQL — vector type)
-    let embeddedIds: Set<string> = new Set()
-    let embeddingsLoadFailed = false
-    if (rawChunks.length > 0) {
-      const ids = rawChunks.map((c) => c.id)
-      try {
-        const rows = await prisma.$queryRaw<{ id: string }[]>`
-          SELECT id FROM "DocumentChunk"
-          WHERE id = ANY(${ids}::text[])
-            AND embedding IS NOT NULL
-        `
-        embeddedIds = new Set(rows.map((r) => r.id))
-      } catch {
-        embeddingsLoadFailed = true
+      // Load sensitive document/chunk/session bodies under the same matter lock
+      // used by deleteDocument so a concurrent delete cannot leave this page
+      // returning stale parsed text after permission reauth alone.
+      type LockedDoc = {
+        id: string
+        fileName: string
+        storagePath: string | null
+        mimeType: string
+        fileSize: number
+        pageCount: number | null
+        chunkCount: number | null
+        extractionConf: number | null
+        uploadStatus: string
+        indexingStatus: string
+        retrievalStatus: string
+        parseStatus: string
+        parsedText: string | null
+        uploadedAt: Date
+        updatedAt: Date
+        matterId: string
+        publishedRunId: string | null
+        indexingRunId: string | null
+        matter: { title: string; clientName: string | null }
       }
-    }
+      type LockedChunk = {
+        id: string
+        chunkIndex: number
+        content: string
+        tokenCount: number | null
+        pageRef: string | null
+        headingPath: string | null
+        createdAt: Date
+      }
+      type LockedSession = {
+        id: string
+        query: string
+        chunkIds: string[]
+        citationSnapshot: string | null
+        createdAt: Date
+      }
 
-    // Research sessions that referenced this document (live chunk ids or
-    // immutable citation snapshots — survives publish-swap after reindex).
-    const chunkIds = rawChunks.map((c) => c.id)
-    let rawSessions: {
-      id: string
-      query: string
-      chunkIds: string[]
-      citationSnapshot: string | null
-      createdAt: Date
-    }[] = []
-    let sessionsLoadFailed = false
+      let lockedDoc: LockedDoc | null = null
+      let rawChunks: LockedChunk[] = []
+      let rawSessions: LockedSession[] = []
+      let sessionsLoadFailed = false
+      let role: string | null = null
 
-    try {
-      const candidates = await prisma.researchSession.findMany({
-        where: { matterId },
-        orderBy: { createdAt: "desc" },
-        take: 80,
-        select: {
-          id: true,
-          query: true,
-          chunkIds: true,
-          citationSnapshot: true,
-          createdAt: true,
-        },
-      })
-      rawSessions = candidates
-        .filter((session) =>
-          sessionReferencesDocument(session, {
-            id: doc.id,
-            fileName: doc.fileName,
-            chunkIds,
+      try {
+        const locked = await prisma.$transaction(async (tx) => {
+          const stillAllowed = await requireMatterPermissionLocked(
+            tx,
+            user.id,
+            matterId,
+            "read"
+          )
+          if (!stillAllowed.ok) {
+            return { status: "denied" as const }
+          }
+
+          const doc = await tx.document.findFirst({
+            where: {
+              id: documentId,
+              matterId,
+              matter: matterAccessWhere(user.id),
+            },
+            select: {
+              id: true,
+              fileName: true,
+              storagePath: true,
+              mimeType: true,
+              fileSize: true,
+              pageCount: true,
+              chunkCount: true,
+              extractionConf: true,
+              uploadStatus: true,
+              indexingStatus: true,
+              retrievalStatus: true,
+              parseStatus: true,
+              parsedText: true,
+              uploadedAt: true,
+              createdAt: true,
+              updatedAt: true,
+              matterId: true,
+              publishedRunId: true,
+              indexingRunId: true,
+              matter: { select: { title: true, clientName: true } },
+            },
           })
-        )
-        .slice(0, 20)
-    } catch {
-      sessionsLoadFailed = true
-    }
+          if (!doc) {
+            return { status: "missing" as const }
+          }
 
-    // Prefer full chunk text for authorities; parsedText alone is capped.
-    const authoritySource =
-      rawChunks.length > 0
-        ? rawChunks.map((c) => c.content).join("\n\n")
-        : (doc.parsedText ?? "")
-    const authorities = authoritySource
-      ? extractAuthorities(authoritySource)
-      : []
+          // Prefer published generation so mid-reindex staging rows stay hidden.
+          const chunkWhere = inspectionChunkWhere({
+            id: documentId,
+            publishedRunId: doc.publishedRunId,
+            indexingRunId: doc.indexingRunId,
+          })
+          const chunks = await tx.documentChunk.findMany({
+            where: chunkWhere,
+            orderBy: { chunkIndex: "asc" },
+            select: {
+              id: true,
+              chunkIndex: true,
+              content: true,
+              tokenCount: true,
+              pageRef: true,
+              headingPath: true,
+              createdAt: true,
+            },
+          })
 
-    // Final locked read reauth before minting a signed URL or returning
-    // parsed/chunk text so a mid-render revocation cannot fail open.
-    let stillAllowed
-    try {
-      stillAllowed = await prisma.$transaction(async (tx) =>
-        requireMatterPermissionLocked(tx, user.id, matterId, "read")
-      )
-    } catch {
-      permissionLoadFailed = true
-      stillAllowed = null
-    }
+          // Research sessions that referenced this document (live chunk ids or
+          // immutable citation snapshots — survives publish-swap after reindex).
+          const chunkIds = chunks.map((c) => c.id)
+          let sessions: LockedSession[] = []
+          let sessionsFailed = false
+          try {
+            const candidates = await tx.researchSession.findMany({
+              where: { matterId },
+              orderBy: { createdAt: "desc" },
+              take: 80,
+              select: {
+                id: true,
+                query: true,
+                chunkIds: true,
+                citationSnapshot: true,
+                createdAt: true,
+              },
+            })
+            sessions = candidates
+              .filter((session) =>
+                sessionReferencesDocument(session, {
+                  id: doc.id,
+                  fileName: doc.fileName,
+                  chunkIds,
+                })
+              )
+              .slice(0, 20)
+          } catch {
+            sessionsFailed = true
+          }
 
-    if (permissionLoadFailed) {
-      // handled below
-    } else if (!stillAllowed || !stillAllowed.ok) {
-      missing = true
-    } else {
-      const role = stillAllowed.access.role
-      canWrite = role ? roleHasPermission(role, "write") : false
-      canDelete = role ? roleHasPermission(role, "delete") : false
+          return {
+            status: "ok" as const,
+            role: stillAllowed.access.role,
+            doc,
+            chunks,
+            sessions,
+            sessionsFailed,
+          }
+        })
 
-      // Short-lived preview URL; only after locked reauth succeeds.
-      let signedUrl: string | null = null
-      if (doc.storagePath) {
-        try {
-          const { data: urlData } = await createSignedUrl(doc.storagePath, 900)
-          signedUrl = urlData?.signedUrl ?? null
-        } catch {
-          /* storage unavailable */
+        if (locked.status === "denied") {
+          missing = true
+        } else if (locked.status === "missing") {
+          missing = true
+        } else {
+          lockedDoc = locked.doc
+          rawChunks = locked.chunks
+          rawSessions = locked.sessions
+          sessionsLoadFailed = locked.sessionsFailed
+          role = locked.role
+        }
+      } catch {
+        permissionLoadFailed = true
+      }
+
+      if (permissionLoadFailed) {
+        // handled below
+      } else if (missing || !lockedDoc || !role) {
+        missing = true
+      } else {
+        canWrite = roleHasPermission(role, "write")
+        canDelete = roleHasPermission(role, "delete")
+
+        // Embedding presence probe after the locked body read — chunk ids are
+        // already a consistent snapshot under the matter lock.
+        let embeddedIds: Set<string> = new Set()
+        let embeddingsLoadFailed = false
+        if (rawChunks.length > 0) {
+          const ids = rawChunks.map((c) => c.id)
+          try {
+            const rows = await prisma.$queryRaw<{ id: string }[]>`
+              SELECT id FROM "DocumentChunk"
+              WHERE id = ANY(${ids}::text[])
+                AND embedding IS NOT NULL
+            `
+            embeddedIds = new Set(rows.map((r) => r.id))
+          } catch {
+            embeddingsLoadFailed = true
+          }
+        }
+
+        // Prefer full chunk text for authorities; parsedText alone is capped.
+        const authoritySource =
+          rawChunks.length > 0
+            ? rawChunks.map((c) => c.content).join("\n\n")
+            : (lockedDoc.parsedText ?? "")
+        const authorities = authoritySource
+          ? extractAuthorities(authoritySource)
+          : []
+
+        // Short-lived preview URL; only after locked reauth + body re-read.
+        let signedUrl: string | null = null
+        if (lockedDoc.storagePath) {
+          try {
+            const { data: urlData } = await createSignedUrl(
+              lockedDoc.storagePath,
+              900
+            )
+            signedUrl = urlData?.signedUrl ?? null
+          } catch {
+            /* storage unavailable */
+          }
+        }
+
+        // Serialise (no Date objects allowed across RSC boundary)
+        data = {
+          doc: {
+            id: lockedDoc.id,
+            fileName: lockedDoc.fileName,
+            mimeType: lockedDoc.mimeType,
+            fileSize: lockedDoc.fileSize,
+            pageCount: lockedDoc.pageCount,
+            chunkCount: rawChunks.length,
+            extractionConf: lockedDoc.extractionConf,
+            uploadStatus: lockedDoc.uploadStatus,
+            indexingStatus: lockedDoc.indexingStatus,
+            retrievalStatus: lockedDoc.retrievalStatus,
+            publishedRunId: lockedDoc.publishedRunId,
+            parseStatus: lockedDoc.parseStatus,
+            parsedText: lockedDoc.parsedText,
+            uploadedAt: lockedDoc.uploadedAt.toISOString(),
+            updatedAt: lockedDoc.updatedAt.toISOString(),
+            matterId: lockedDoc.matterId,
+            matterTitle: lockedDoc.matter.title,
+            matterClient: lockedDoc.matter.clientName,
+          },
+          chunks: rawChunks.map((c) => ({
+            id: c.id,
+            chunkIndex: c.chunkIndex,
+            content: c.content,
+            tokenCount: c.tokenCount,
+            pageRef: c.pageRef,
+            headingPath: c.headingPath,
+            hasEmbedding: embeddedIds.has(c.id),
+            createdAt: c.createdAt.toISOString(),
+          })),
+          sessions: rawSessions.map((s) => ({
+            id: s.id,
+            query: s.query,
+            chunkIds: s.chunkIds,
+            createdAt: s.createdAt.toISOString(),
+            snapshotExcerpts: snapshotEntriesForDocument(s.citationSnapshot, {
+              id: lockedDoc!.id,
+              fileName: lockedDoc!.fileName,
+            }).map((entry) => ({
+              id: entry.id,
+              content: entry.content,
+              pageRef: entry.pageRef,
+              headingPath: entry.headingPath,
+            })),
+          })),
+          sessionsLoadFailed,
+          embeddingsLoadFailed,
+          authorities: authorities.map((a) => ({
+            citation: a.citation,
+            type: a.type,
+            normalized: a.normalized,
+          })),
+          embeddedCount: embeddedIds.size,
+          signedUrl,
+          parsedTextTruncated: isParsedTextTruncated(lockedDoc.parsedText),
         }
       }
-
-      // Serialise (no Date objects allowed across RSC boundary)
-      data = {
-        doc: {
-          id: doc.id,
-          fileName: doc.fileName,
-          mimeType: doc.mimeType,
-          fileSize: doc.fileSize,
-          pageCount: doc.pageCount,
-          chunkCount: rawChunks.length,
-          extractionConf: doc.extractionConf,
-          uploadStatus: doc.uploadStatus,
-          indexingStatus: doc.indexingStatus,
-          retrievalStatus: doc.retrievalStatus,
-          publishedRunId: doc.publishedRunId,
-          parseStatus: doc.parseStatus,
-          parsedText: doc.parsedText,
-          uploadedAt: doc.uploadedAt.toISOString(),
-          updatedAt: doc.updatedAt.toISOString(),
-          matterId: doc.matterId,
-          matterTitle: doc.matter.title,
-          matterClient: doc.matter.clientName,
-        },
-        chunks: rawChunks.map((c) => ({
-          id: c.id,
-          chunkIndex: c.chunkIndex,
-          content: c.content,
-          tokenCount: c.tokenCount,
-          pageRef: c.pageRef,
-          headingPath: c.headingPath,
-          hasEmbedding: embeddedIds.has(c.id),
-          createdAt: c.createdAt.toISOString(),
-        })),
-        sessions: rawSessions.map((s) => ({
-          id: s.id,
-          query: s.query,
-          chunkIds: s.chunkIds,
-          createdAt: s.createdAt.toISOString(),
-          snapshotExcerpts: snapshotEntriesForDocument(s.citationSnapshot, {
-            id: doc.id,
-            fileName: doc.fileName,
-          }).map((entry) => ({
-            id: entry.id,
-            content: entry.content,
-            pageRef: entry.pageRef,
-            headingPath: entry.headingPath,
-          })),
-        })),
-        sessionsLoadFailed,
-        embeddingsLoadFailed,
-        authorities: authorities.map((a) => ({
-          citation: a.citation,
-          type: a.type,
-          normalized: a.normalized,
-        })),
-        embeddedCount: embeddedIds.size,
-        signedUrl,
-        parsedTextTruncated: isParsedTextTruncated(doc.parsedText),
-      }
-    }
-    }
     }
   } catch {
     loadFailed = true
