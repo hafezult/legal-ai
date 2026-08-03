@@ -18,6 +18,7 @@ import {
 import {
   ORG_ROLES,
   isOrgRole,
+  resolveInviteAcceptMembership,
   roleAtLeast,
   roleHasPermission,
   roleStrictlyAbove,
@@ -29,6 +30,7 @@ import type { Prisma } from "@prisma/client"
 export {
   ORG_ROLES,
   isOrgRole,
+  resolveInviteAcceptMembership,
   roleAtLeast,
   roleHasPermission,
   roleStrictlyAbove,
@@ -577,6 +579,10 @@ async function claimOrganizationInviteAcceptance(args: {
 > {
   try {
     return await prisma.$transaction(async (tx) => {
+      // Serialize with ownership transfer / org delete so invite accept cannot
+      // demote a concurrently promoted owner (or race last-owner checks).
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${args.organizationId} FOR UPDATE`
+
       const claimed = await tx.organizationInvite.updateMany({
         where: {
           id: args.inviteId,
@@ -600,28 +606,41 @@ async function claimOrganizationInviteAcceptance(args: {
         select: { id: true, role: true },
       })
 
-      let effectiveRole: OrgRole = args.role
+      const decision = resolveInviteAcceptMembership(
+        args.role,
+        existing?.role
+      )
+      let effectiveRole = decision.effectiveRole
 
-      if (!existing) {
+      if (decision.action === "create") {
         await tx.organizationMember.create({
           data: {
             organizationId: args.organizationId,
             userId: args.userId,
-            role: args.role,
+            role: decision.effectiveRole,
           },
         })
-      } else if (existing.role === "owner") {
-        effectiveRole = "owner"
-      } else if (
-        isOrgRole(existing.role) &&
-        roleStrictlyAbove(args.role, existing.role)
-      ) {
-        await tx.organizationMember.update({
-          where: { id: existing.id },
-          data: { role: args.role },
+      } else if (decision.action === "upgrade" && existing) {
+        // CAS on the evaluated role so a surprising mid-tx change cannot demote.
+        const upgraded = await tx.organizationMember.updateMany({
+          where: {
+            id: existing.id,
+            organizationId: args.organizationId,
+            role: decision.fromRole,
+          },
+          data: { role: decision.effectiveRole },
         })
-      } else if (isOrgRole(existing.role)) {
-        effectiveRole = existing.role
+        if (upgraded.count !== 1) {
+          const again = await tx.organizationMember.findUnique({
+            where: { id: existing.id },
+            select: { role: true },
+          })
+          if (again?.role === "owner") {
+            effectiveRole = "owner"
+          } else if (again && isOrgRole(again.role)) {
+            effectiveRole = again.role
+          }
+        }
       }
 
       if (args.switchActive) {

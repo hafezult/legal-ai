@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 
 import {
   isOrgRole,
+  resolveInviteAcceptMembership,
   roleAtLeast,
   roleHasPermission,
   roleStrictlyAbove,
@@ -32,5 +33,41 @@ describe("organization role helpers", () => {
     assert.equal(roleHasPermission("member", "delete"), false)
     assert.equal(roleHasPermission("admin", "manage_members"), true)
     assert.equal(roleHasPermission("owner", "delete"), true)
+  })
+})
+
+describe("resolveInviteAcceptMembership", () => {
+  it("creates membership when the invitee is not already a member", () => {
+    assert.deepEqual(resolveInviteAcceptMembership("admin", null), {
+      action: "create",
+      effectiveRole: "admin",
+    })
+  })
+
+  it("never demotes an existing owner via invite acceptance", () => {
+    assert.deepEqual(resolveInviteAcceptMembership("member", "owner"), {
+      action: "keep",
+      effectiveRole: "owner",
+    })
+    assert.deepEqual(resolveInviteAcceptMembership("admin", "owner"), {
+      action: "keep",
+      effectiveRole: "owner",
+    })
+  })
+
+  it("upgrades only when the invite outranks the current role", () => {
+    assert.deepEqual(resolveInviteAcceptMembership("admin", "member"), {
+      action: "upgrade",
+      effectiveRole: "admin",
+      fromRole: "member",
+    })
+    assert.deepEqual(resolveInviteAcceptMembership("member", "admin"), {
+      action: "keep",
+      effectiveRole: "admin",
+    })
+    assert.deepEqual(resolveInviteAcceptMembership("member", "member"), {
+      action: "keep",
+      effectiveRole: "member",
+    })
   })
 })

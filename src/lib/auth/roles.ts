@@ -38,3 +38,34 @@ export function roleStrictlyAbove(actor: OrgRole, target: OrgRole): boolean {
 export function roleHasPermission(role: OrgRole, permission: OrgPermission): boolean {
   return ROLE_PERMISSIONS[role].has(permission)
 }
+
+/**
+ * Resolve how invite acceptance should affect an existing membership.
+ * Never demotes — especially never overwrites `owner` with an invite role.
+ */
+export function resolveInviteAcceptMembership(
+  inviteRole: OrgRole,
+  existingRole: string | null | undefined
+):
+  | { action: "create"; effectiveRole: OrgRole }
+  | { action: "keep"; effectiveRole: OrgRole }
+  | { action: "upgrade"; effectiveRole: OrgRole; fromRole: OrgRole } {
+  if (!existingRole) {
+    return { action: "create", effectiveRole: inviteRole }
+  }
+  if (existingRole === "owner") {
+    return { action: "keep", effectiveRole: "owner" }
+  }
+  if (isOrgRole(existingRole) && roleStrictlyAbove(inviteRole, existingRole)) {
+    return {
+      action: "upgrade",
+      effectiveRole: inviteRole,
+      fromRole: existingRole,
+    }
+  }
+  if (isOrgRole(existingRole)) {
+    return { action: "keep", effectiveRole: existingRole }
+  }
+  // Unknown legacy role — do not mutate; surface invite role for audit only.
+  return { action: "keep", effectiveRole: inviteRole }
+}
