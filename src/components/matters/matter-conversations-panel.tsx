@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState, useTransition } from "react"
+import { useCallback, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
 type ConversationMessageRow = {
@@ -75,9 +75,7 @@ export function MatterConversationsPanel({
 }) {
   const router = useRouter()
   const [title, setTitle] = useState("")
-  const [expandedId, setExpandedId] = useState<string | null>(
-    conversations[0]?.id ?? null
-  )
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const [draftById, setDraftById] = useState<Record<string, string>>({})
   const [messagesById, setMessagesById] = useState<
     Record<string, ConversationMessageRow[]>
@@ -128,11 +126,19 @@ export function MatterConversationsPanel({
     [restoreMessagesAction]
   )
 
-  useEffect(() => {
-    if (!expandedId) return
-    if (requestedMessageIds.has(expandedId)) return
-    loadMessages(expandedId)
-  }, [expandedId, loadMessages, requestedMessageIds])
+  const toggleConversation = useCallback(
+    (conversationId: string) => {
+      if (expandedId === conversationId) {
+        setExpandedId(null)
+        return
+      }
+      setExpandedId(conversationId)
+      if (!requestedMessageIds.has(conversationId)) {
+        loadMessages(conversationId)
+      }
+    },
+    [expandedId, loadMessages, requestedMessageIds]
+  )
 
   const runCreate = useCallback(() => {
     const nextTitle = title.trim()
@@ -341,11 +347,7 @@ export function MatterConversationsPanel({
                     id={`conversation-toggle-${conversation.id}`}
                     aria-expanded={isExpanded}
                     aria-controls={`conversation-panel-${conversation.id}`}
-                    onClick={() =>
-                      setExpandedId((current) =>
-                        current === conversation.id ? null : conversation.id
-                      )
-                    }
+                    onClick={() => toggleConversation(conversation.id)}
                     className="min-w-0 flex-1 text-left"
                   >
                     <p className="truncate text-sm text-white/70">{conversation.title}</p>
