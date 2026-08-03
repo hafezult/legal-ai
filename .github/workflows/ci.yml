@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - cursor/overall-project-finalization-9ff9
+      - cursor/overall-project-finalization-da3a
 
 permissions:
   contents: read
@@ -40,14 +40,16 @@ jobs:
       OPENAI_API_KEY: ""
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       # Intentionally denylisted prefix — CI must not use a production-strong secret.
-      INDEXING_SECRET: aether-ci-validate-9ff9-k7n3p9q2w5x8z!
+      INDEXING_SECRET: aether-ci-validate-da3a-k7n3p9q2w5x8z!
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        # Pin full commit SHA for supply-chain integrity (actions/checkout@v7).
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        # Pin full commit SHA for supply-chain integrity (actions/setup-node@v7).
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
