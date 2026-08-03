@@ -14,6 +14,21 @@ jobs:
   validate:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: aether
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U user -d aether"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       DATABASE_URL: postgresql://user:password@localhost:5432/aether?schema=public
       DIRECT_URL: postgresql://user:password@localhost:5432/aether?schema=public
@@ -42,6 +57,9 @@ jobs:
 
       - name: Validate Prisma schema
         run: npx prisma validate
+
+      - name: Apply migrations (pgvector)
+        run: npx prisma migrate deploy
 
       - name: Lint
         run: npm run lint
