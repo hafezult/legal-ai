@@ -7,11 +7,28 @@ const buckets = new Map<string, Bucket>()
 /** Cap in-process keys so attacker-chosen IPs/ids cannot grow memory unboundedly. */
 const MAX_IN_MEMORY_BUCKETS = 5_000
 
+/** Bound Upstash REST so a blackholed Redis cannot stall request handlers. */
+const UPSTASH_FETCH_TIMEOUT_MS = 1_500
+
 type RateLimitResult = { ok: true } | { ok: false; retryAfterMs: number }
+
+export type RateLimitOptions = {
+  limit: number
+  windowMs: number
+  /**
+   * When true, skip Upstash even if configured. Used by cheap liveness probes
+   * that must not perform external network I/O.
+   */
+  localOnly?: boolean
+}
 
 export type UpstashPipelineDecision =
   | { ok: true }
   | { ok: false; retryAfterMs: number; rejectMember: string }
+
+export type UpstashPipelineParse =
+  | { ok: true; count: number; oldestScore: number | null }
+  | { ok: false }
 
 /**
  * Interpret an Upstash pipeline response for the sliding-window limiter.
@@ -39,6 +56,48 @@ export function decideUpstashRateLimit(args: {
     retryAfterMs: Math.max(1000, args.windowMs - (args.now - oldest)),
     rejectMember: args.member,
   }
+}
+
+/**
+ * Validate a 5-command Upstash pipeline body (ZREMRANGEBYSCORE, ZADD, ZCARD,
+ * PEXPIRE, ZRANGE). Malformed or error-bearing rows return `{ ok: false }` so
+ * callers fall back to the in-memory limiter instead of fail-opening.
+ */
+export function parseUpstashPipelineRows(
+  rows: unknown
+): UpstashPipelineParse {
+  if (!Array.isArray(rows) || rows.length < 5) {
+    return { ok: false }
+  }
+
+  for (let i = 0; i < 5; i += 1) {
+    const row = rows[i]
+    if (
+      typeof row !== "object" ||
+      row === null ||
+      ("error" in row && (row as { error?: unknown }).error != null)
+    ) {
+      return { ok: false }
+    }
+  }
+
+  const countRaw = (rows[2] as { result?: unknown }).result
+  const count = typeof countRaw === "number" ? countRaw : Number(countRaw)
+  if (!Number.isFinite(count) || count < 0) {
+    return { ok: false }
+  }
+
+  const oldestRow = (rows[4] as { result?: unknown }).result
+  let oldestScore: number | null = null
+  if (Array.isArray(oldestRow) && oldestRow.length >= 2) {
+    const score = Number(oldestRow[1])
+    if (!Number.isFinite(score)) {
+      return { ok: false }
+    }
+    oldestScore = score
+  }
+
+  return { ok: true, count, oldestScore }
 }
 
 function evictStaleBuckets(now: number, windowMs: number) {
@@ -95,30 +154,43 @@ function upstashConfigured(): boolean {
   )
 }
 
-async function upstashCommand(
+async function upstashFetch(
   base: string,
   token: string,
-  command: unknown[]
-): Promise<boolean> {
+  body: unknown
+): Promise<Response | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), UPSTASH_FETCH_TIMEOUT_MS)
   try {
-    const response = await fetch(`${base}/pipeline`, {
+    return await fetch(`${base}/pipeline`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify([command]),
+      body: JSON.stringify(body),
       cache: "no-store",
+      signal: controller.signal,
     })
-    return response.ok
   } catch {
-    return false
+    return null
+  } finally {
+    clearTimeout(timer)
   }
+}
+
+async function upstashCommand(
+  base: string,
+  token: string,
+  command: unknown[]
+): Promise<boolean> {
+  const response = await upstashFetch(base, token, [command])
+  return Boolean(response?.ok)
 }
 
 /**
  * Optional Upstash Redis REST sliding-window limiter for multi-instance deploys.
- * Falls back to the in-process bucket when unset or on transport errors.
+ * Falls back to the in-process bucket when unset, timed out, or malformed.
  */
 async function consumeUpstash(
   key: string,
@@ -134,40 +206,33 @@ async function consumeUpstash(
   const member = `${now}:${Math.random().toString(36).slice(2, 10)}`
 
   try {
-    const response = await fetch(`${base}/pipeline`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify([
-        ["ZREMRANGEBYSCORE", redisKey, "-inf", String(windowStart)],
-        ["ZADD", redisKey, String(now), member],
-        ["ZCARD", redisKey],
-        ["PEXPIRE", redisKey, String(options.windowMs)],
-        ["ZRANGE", redisKey, "0", "0", "WITHSCORES"],
-      ]),
-      cache: "no-store",
-    })
+    const response = await upstashFetch(base, token, [
+      ["ZREMRANGEBYSCORE", redisKey, "-inf", String(windowStart)],
+      ["ZADD", redisKey, String(now), member],
+      ["ZCARD", redisKey],
+      ["PEXPIRE", redisKey, String(options.windowMs)],
+      ["ZRANGE", redisKey, "0", "0", "WITHSCORES"],
+    ])
 
-    if (!response.ok) return null
+    if (!response?.ok) return null
 
-    const rows = (await response.json()) as Array<{ result?: unknown }>
-    const count = Number(rows[2]?.result ?? 0)
-    const oldestRow = rows[4]?.result
-    let oldestScore: number | null = null
-    if (Array.isArray(oldestRow) && oldestRow.length >= 2) {
-      const score = Number(oldestRow[1])
-      if (Number.isFinite(score)) oldestScore = score
+    let rows: unknown
+    try {
+      rows = await response.json()
+    } catch {
+      return null
     }
 
+    const parsed = parseUpstashPipelineRows(rows)
+    if (!parsed.ok) return null
+
     const decision = decideUpstashRateLimit({
-      count,
+      count: parsed.count,
       limit: options.limit,
       windowMs: options.windowMs,
       now,
       member,
-      oldestScore,
+      oldestScore: parsed.oldestScore,
     })
 
     if (!decision.ok) {
@@ -198,17 +263,19 @@ async function consumeUpstash(
 /**
  * Sliding-window rate limiter for expensive server actions.
  * Uses Upstash Redis when `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`
- * are set; otherwise best-effort in-process (resets on restart, not shared).
+ * are set (unless `localOnly`); otherwise best-effort in-process (resets on
+ * restart, not shared).
  */
 export async function consumeRateLimit(
   key: string,
-  options: { limit: number; windowMs: number }
+  options: RateLimitOptions
 ): Promise<RateLimitResult> {
-  if (upstashConfigured()) {
-    const distributed = await consumeUpstash(key, options)
+  const { localOnly, ...window } = options
+  if (!localOnly && upstashConfigured()) {
+    const distributed = await consumeUpstash(key, window)
     if (distributed) return distributed
   }
-  return consumeInMemory(key, options)
+  return consumeInMemory(key, window)
 }
 
 /** Test helper — clears in-process buckets between cases. */

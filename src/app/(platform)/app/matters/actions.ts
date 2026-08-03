@@ -6,6 +6,7 @@ import { redirect } from "next/navigation"
 import { recordAuditEvent } from "@/lib/audit"
 import { requireClerkId } from "@/lib/auth/require-actor"
 import {
+  ensurePersonalOrganization,
   getActiveOrganization,
   matterAccessWhere,
   requireMatterPermission,
@@ -163,9 +164,12 @@ export async function createMatter(
     return { error: "Matter metadata contains an unsupported option." }
   }
 
-  let user: { id: string } | null = null
+  let user: { id: string; name: string | null; email: string } | null = null
   try {
-    user = await prisma.user.findUnique({ where: { clerkId } })
+    user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true, name: true, email: true },
+    })
   } catch {
     return { error: "Unable to reach the data layer. Please try again." }
   }
@@ -187,16 +191,28 @@ export async function createMatter(
   }
 
   let matter: { id: string }
-  let organizationId: string | null = null
+  let organizationId: string
   try {
-    const organization = await getActiveOrganization(user.id)
-    if (organization && !roleHasPermission(organization.role, "write")) {
+    let organization = await getActiveOrganization(user.id)
+    if (!organization) {
+      // Personal workspace should already exist; recover once then refuse
+      // rather than inserting a legacy organizationId:null matter.
+      await ensurePersonalOrganization(user)
+      organization = await getActiveOrganization(user.id)
+    }
+    if (!organization) {
+      return {
+        error:
+          "No active organization is available for matter creation. Open Settings to confirm your workspace, then retry.",
+      }
+    }
+    if (!roleHasPermission(organization.role, "write")) {
       return {
         error:
           "Your organization role is read-only. Ask an admin to grant write access before creating matters.",
       }
     }
-    organizationId = organization?.id ?? null
+    organizationId = organization.id
     matter = await prisma.matter.create({
       data: {
         title: fields.title,

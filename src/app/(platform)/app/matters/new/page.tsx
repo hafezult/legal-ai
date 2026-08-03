@@ -39,8 +39,14 @@ export default async function NewMatterPage() {
       loadFailed = true
     } else {
       const activeOrg = await getActiveOrganization(user.id)
-      // No active org: allow the intake form; createMatter enforces membership.
-      canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
+      // Fail closed without an active organization — createMatter refuses
+      // legacy organizationId:null inserts; surface intake unavailable here.
+      canWrite = activeOrg
+        ? roleHasPermission(activeOrg.role, "write")
+        : false
+      if (!activeOrg) {
+        loadFailed = true
+      }
     }
   } catch {
     loadFailed = true

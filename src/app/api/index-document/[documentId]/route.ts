@@ -98,17 +98,17 @@ export async function POST(
     )
   }
 
-  const document = await prisma.document.findUnique({
-    where: { id: documentId },
-    select: { id: true },
-  })
-  if (!document) {
-    // Same shape as unauthorized failures once past the secret gate — avoid
-    // confirming document existence to holders of a leaked shared secret.
-    return NextResponse.json({ error: "Indexing unavailable" }, { status: 404 })
-  }
-
   try {
+    const document = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { id: true },
+    })
+    if (!document) {
+      // Same shape as unauthorized failures once past the secret gate — avoid
+      // confirming document existence to holders of a leaked shared secret.
+      return NextResponse.json({ error: "Indexing unavailable" }, { status: 404 })
+    }
+
     const result = await runIndexingPipeline(documentId)
     return NextResponse.json({
       ok: true,
@@ -124,6 +124,15 @@ export async function POST(
     }
     const msg = error instanceof Error ? error.message : "Indexing failed"
     console.error(`[/api/index-document/${documentId}]`, msg)
-    return NextResponse.json({ error: "Indexing failed" }, { status: 500 })
+    // Data-layer / provider outages surface as unavailable; unexpected defects
+    // still return a generic failure without leaking internals.
+    const unavailable =
+      /(?:timed?\s*out|ECONN|ENOTFOUND|503|unavailable|prisma|database)/i.test(
+        msg
+      )
+    return NextResponse.json(
+      { error: unavailable ? "Indexing unavailable" : "Indexing failed" },
+      { status: unavailable ? 503 : 500 }
+    )
   }
 }

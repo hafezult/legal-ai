@@ -144,11 +144,13 @@ export default async function DashboardPage() {
   const systemLayers: SystemLayer[] = [
     {
       label: "Authentication layer",
+      // Unknown probe outcome (catch / non-admin) stays pending — never claim
+      // Auth is operational without a successful Clerk probe.
       status: health
         ? health.probes.clerk.status === "ok"
           ? "operational"
           : "pending"
-        : "operational",
+        : "pending",
     },
     {
       label: "Data plane",

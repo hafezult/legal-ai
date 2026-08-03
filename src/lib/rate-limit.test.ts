@@ -5,6 +5,7 @@ import {
   consumeRateLimit,
   decideUpstashRateLimit,
   inMemoryRateLimitBucketCountForTests,
+  parseUpstashPipelineRows,
   resetRateLimitBucketsForTests,
 } from "./rate-limit.ts"
 
@@ -60,6 +61,78 @@ describe("decideUpstashRateLimit", () => {
     if (!decision.ok) {
       assert.equal(decision.rejectMember, "10000:abc")
       assert.equal(decision.retryAfterMs, 51_000)
+    }
+  })
+})
+
+describe("parseUpstashPipelineRows", () => {
+  it("accepts a well-formed 5-command pipeline body", () => {
+    const parsed = parseUpstashPipelineRows([
+      { result: 1 },
+      { result: 1 },
+      { result: 2 },
+      { result: 1 },
+      { result: ["1000:abc", "1000"] },
+    ])
+    assert.equal(parsed.ok, true)
+    if (parsed.ok) {
+      assert.equal(parsed.count, 2)
+      assert.equal(parsed.oldestScore, 1000)
+    }
+  })
+
+  it("rejects short, errored, or non-numeric ZCARD responses", () => {
+    assert.equal(parseUpstashPipelineRows([]).ok, false)
+    assert.equal(
+      parseUpstashPipelineRows([
+        { result: 1 },
+        { result: 1 },
+        { error: "ERR" },
+        { result: 1 },
+        { result: [] },
+      ]).ok,
+      false
+    )
+    assert.equal(
+      parseUpstashPipelineRows([
+        { result: 1 },
+        { result: 1 },
+        { result: "not-a-number" },
+        { result: 1 },
+        { result: [] },
+      ]).ok,
+      false
+    )
+    assert.equal(
+      parseUpstashPipelineRows([
+        { result: 1 },
+        { result: 1 },
+        {},
+        { result: 1 },
+        { result: [] },
+      ]).ok,
+      false
+    )
+  })
+
+  it("localOnly skips Upstash and still enforces the in-memory window", async () => {
+    resetRateLimitBucketsForTests()
+    const previousUrl = process.env.UPSTASH_REDIS_REST_URL
+    const previousToken = process.env.UPSTASH_REDIS_REST_TOKEN
+    process.env.UPSTASH_REDIS_REST_URL = "https://example.upstash.io"
+    process.env.UPSTASH_REDIS_REST_TOKEN = "test-token"
+    try {
+      const options = { limit: 1, windowMs: 60_000, localOnly: true as const }
+      assert.equal((await consumeRateLimit("local-only", options)).ok, true)
+      assert.equal((await consumeRateLimit("local-only", options)).ok, false)
+    } finally {
+      if (previousUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL
+      else process.env.UPSTASH_REDIS_REST_URL = previousUrl
+      if (previousToken === undefined) {
+        delete process.env.UPSTASH_REDIS_REST_TOKEN
+      } else {
+        process.env.UPSTASH_REDIS_REST_TOKEN = previousToken
+      }
     }
   })
 })

@@ -12,9 +12,10 @@ const HEALTH_RATE_LIMIT = { limit: 120, windowMs: 60_000 } as const
 export async function GET(request: Request) {
   // Public probe is process liveness only — no DB/service fan-out.
   // Detailed dependency probes remain on Settings via getHealthReport().
+  // In-process only — liveness must not call Upstash even when configured.
   const throttle = await consumeRateLimit(
     `health:${clientKeyFromRequest(request)}`,
-    HEALTH_RATE_LIMIT
+    { ...HEALTH_RATE_LIMIT, localOnly: true }
   )
   if (!throttle.ok) {
     return NextResponse.json(
