@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useState, useTransition } from "react"
+import { useCallback, useEffect, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 
 type ConversationMessageRow = {
@@ -14,7 +14,6 @@ type ConversationRow = {
   id: string
   title: string
   createdAt: Date | string
-  messages: ConversationMessageRow[]
   _count: { messages: number }
   canDelete?: boolean
 }
@@ -35,6 +34,11 @@ type ConversationMessageCreateAction = (
 ) => Promise<{
   error?: string
   success?: boolean
+}>
+
+type ConversationMessagesRestoreAction = (conversationId: string) => Promise<{
+  error?: string
+  messages?: ConversationMessageRow[]
 }>
 
 function fmtShortDate(value: Date | string) {
@@ -59,12 +63,14 @@ export function MatterConversationsPanel({
   createAction,
   deleteAction,
   createMessageAction,
+  restoreMessagesAction,
   readOnly = false,
 }: {
   conversations: ConversationRow[]
   createAction: ConversationCreateAction
   deleteAction: ConversationDeleteAction
   createMessageAction: ConversationMessageCreateAction
+  restoreMessagesAction: ConversationMessagesRestoreAction
   readOnly?: boolean
 }) {
   const router = useRouter()
@@ -73,6 +79,13 @@ export function MatterConversationsPanel({
     conversations[0]?.id ?? null
   )
   const [draftById, setDraftById] = useState<Record<string, string>>({})
+  const [messagesById, setMessagesById] = useState<
+    Record<string, ConversationMessageRow[]>
+  >({})
+  const [requestedMessageIds, setRequestedMessageIds] = useState<Set<string>>(
+    () => new Set()
+  )
+  const [loadingMessagesId, setLoadingMessagesId] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
@@ -81,6 +94,45 @@ export function MatterConversationsPanel({
     type: "success" | "error"
     text: string
   } | null>(null)
+
+  const loadMessages = useCallback(
+    (conversationId: string) => {
+      setRequestedMessageIds((prev) => {
+        if (prev.has(conversationId)) return prev
+        const next = new Set(prev)
+        next.add(conversationId)
+        return next
+      })
+      setLoadingMessagesId(conversationId)
+      startTransition(async () => {
+        try {
+          const result = await restoreMessagesAction(conversationId)
+          setLoadingMessagesId(null)
+          if (result.error) {
+            setMessage({ type: "error", text: result.error })
+            return
+          }
+          setMessagesById((prev) => ({
+            ...prev,
+            [conversationId]: result.messages ?? [],
+          }))
+        } catch {
+          setLoadingMessagesId(null)
+          setMessage({
+            type: "error",
+            text: "Unable to load conversation messages. Please try again.",
+          })
+        }
+      })
+    },
+    [restoreMessagesAction]
+  )
+
+  useEffect(() => {
+    if (!expandedId) return
+    if (requestedMessageIds.has(expandedId)) return
+    loadMessages(expandedId)
+  }, [expandedId, loadMessages, requestedMessageIds])
 
   const runCreate = useCallback(() => {
     const nextTitle = title.trim()
@@ -125,6 +177,17 @@ export function MatterConversationsPanel({
           if (expandedId === conversationId) {
             setExpandedId(null)
           }
+          setMessagesById((prev) => {
+            const next = { ...prev }
+            delete next[conversationId]
+            return next
+          })
+          setRequestedMessageIds((prev) => {
+            if (!prev.has(conversationId)) return prev
+            const next = new Set(prev)
+            next.delete(conversationId)
+            return next
+          })
           setMessage({ type: "success", text: "Conversation deleted." })
           router.refresh()
         } catch {
@@ -159,6 +222,13 @@ export function MatterConversationsPanel({
           }
           setDraftById((prev) => ({ ...prev, [conversationId]: "" }))
           setMessage({ type: "success", text: "Message added." })
+          const restored = await restoreMessagesAction(conversationId)
+          if (!restored.error) {
+            setMessagesById((prev) => ({
+              ...prev,
+              [conversationId]: restored.messages ?? [],
+            }))
+          }
           router.refresh()
         } catch {
           setPostingId(null)
@@ -169,7 +239,7 @@ export function MatterConversationsPanel({
         }
       })
     },
-    [createMessageAction, draftById, router]
+    [createMessageAction, draftById, restoreMessagesAction, router]
   )
 
   const totalMessages = conversations.reduce(
@@ -225,7 +295,9 @@ export function MatterConversationsPanel({
             disabled={isPending || !title.trim()}
             className="rounded-lg border border-white/[0.1] bg-white/[0.04] px-4 py-2 text-[12px] text-white/65 transition-colors hover:border-white/[0.18] hover:text-white/88 disabled:opacity-45"
           >
-            {isPending && !deletingId && !postingId ? "Saving..." : "Create thread"}
+            {isPending && !deletingId && !postingId && !loadingMessagesId
+              ? "Saving..."
+              : "Create thread"}
           </button>
         </form>
       )}
@@ -254,6 +326,9 @@ export function MatterConversationsPanel({
           conversations.map((conversation) => {
             const isExpanded = expandedId === conversation.id
             const draft = draftById[conversation.id] ?? ""
+            const messages = messagesById[conversation.id]
+            const isLoadingMessages =
+              loadingMessagesId === conversation.id && !messages
 
             return (
               <div
@@ -324,14 +399,18 @@ export function MatterConversationsPanel({
                     aria-labelledby={`conversation-toggle-${conversation.id}`}
                     className="border-t border-white/[0.04] px-3.5 py-3"
                   >
-                    {conversation.messages.length === 0 ? (
+                    {isLoadingMessages ? (
+                      <p className="text-xs leading-relaxed text-white/22">
+                        Loading messages…
+                      </p>
+                    ) : !messages || messages.length === 0 ? (
                       <p className="text-xs leading-relaxed text-white/22">
                         No messages yet. Add a note or run research to capture the
                         exchange.
                       </p>
                     ) : (
                       <div className="space-y-2.5">
-                        {conversation.messages.map((entry) => (
+                        {messages.map((entry) => (
                           <div
                             key={entry.id}
                             className="rounded-md border border-white/[0.04] bg-black/20 px-3 py-2.5"

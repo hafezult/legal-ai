@@ -897,3 +897,98 @@ export async function createConversationMessage(
 
   return { success: true }
 }
+
+export type RestoreConversationMessagesResult = {
+  error?: string
+  messages?: Array<{
+    id: string
+    role: string
+    content: string
+    createdAt: Date
+  }>
+}
+
+/**
+ * Load conversation message bodies under a final locked matter read so list
+ * pages can omit saved AI/note content from initial props.
+ */
+export async function restoreConversationMessages(
+  conversationId: string
+): Promise<RestoreConversationMessagesResult> {
+  const clerk = await requireClerkId()
+  if (!clerk.ok) return { error: clerk.error }
+  const { clerkId } = clerk
+  if (!conversationId) return { error: "Conversation id is required." }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId },
+      select: { id: true },
+    })
+    if (!user) return { error: "Session not found. Please sign in again." }
+
+    const throttle = await consumeRateLimit(
+      `conversation-restore:${user.id}`,
+      MESSAGE_RATE_LIMIT
+    )
+    if (!throttle.ok) {
+      return {
+        error:
+          "Conversation restore rate limit exceeded. Please wait and try again.",
+      }
+    }
+
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        matter: matterAccessWhere(user.id),
+      },
+      select: { id: true, matterId: true },
+    })
+    if (!conversation) {
+      return { error: "Conversation not found or access denied." }
+    }
+
+    const messages = await prisma.$transaction(async (tx) => {
+      const permission = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        conversation.matterId,
+        "read"
+      )
+      if (!permission.ok) {
+        throw new Error(`PERMISSION:${permission.error}`)
+      }
+
+      const stillThere = await tx.conversation.findFirst({
+        where: {
+          id: conversation.id,
+          matterId: conversation.matterId,
+        },
+        select: { id: true },
+      })
+      if (!stillThere) {
+        throw new Error("PERMISSION:Conversation not found or access denied.")
+      }
+
+      return tx.conversationMessage.findMany({
+        where: { conversationId: conversation.id },
+        orderBy: { createdAt: "asc" },
+        take: 40,
+        select: {
+          id: true,
+          role: true,
+          content: true,
+          createdAt: true,
+        },
+      })
+    })
+
+    return { messages }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
+      return { error: error.message.slice("PERMISSION:".length) }
+    }
+    return { error: "Unable to load conversation messages. Please try again." }
+  }
+}

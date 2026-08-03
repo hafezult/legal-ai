@@ -12,8 +12,8 @@ import { downloadMarkdown } from "@/lib/download"
 export type MatterResearchSession = {
   id: string
   query: string
-  response: string | null
-  chunkIds: string[]
+  hasResponse: boolean
+  chunkCount: number
   createdAt: Date | string
   canDelete?: boolean
 }
@@ -93,7 +93,7 @@ export function MatterResearchPanel({
               matterTitle: output.matterTitle || matterTitle,
               query: output.query || session.query,
               answer: output.answer,
-              chunkCount: output.chunks.length || session.chunkIds.length,
+              chunkCount: output.chunks.length || session.chunkCount,
             })
           )
           setStatus("Research export downloaded.")
@@ -184,19 +184,14 @@ export function MatterResearchPanel({
                     {fmtShortDate(session.createdAt)}
                   </p>
                   <p className="text-[10px] text-white/22">
-                    {session.chunkIds.length} chunk
-                    {session.chunkIds.length !== 1 ? "s" : ""}
-                    {session.response ? " · response saved" : ""}
+                    {session.chunkCount} chunk
+                    {session.chunkCount !== 1 ? "s" : ""}
+                    {session.hasResponse ? " · response saved" : ""}
                   </p>
                 </div>
                 <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/42">
                   {session.query}
                 </p>
-                {session.response ? (
-                  <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-white/26">
-                    {session.response}
-                  </p>
-                ) : null}
                 <div className="mt-2.5 flex flex-wrap gap-2">
                   <a
                     href={`/app/research?matter=${matterId}&session=${session.id}`}

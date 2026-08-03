@@ -32,6 +32,7 @@ import {
   createConversationMessage,
   deleteConversation,
   deleteMatter,
+  restoreConversationMessages,
   updateMatter,
   updateMatterStatus,
 } from "../actions"
@@ -148,8 +149,8 @@ export default async function MatterDetailPage({
   type ResearchSessionRow = {
     id: string
     query: string
-    response: string | null
-    chunkIds: string[]
+    hasResponse: boolean
+    chunkCount: number
     createdAt: Date
     canDelete: boolean
   }
@@ -161,18 +162,10 @@ export default async function MatterDetailPage({
     createdAt: Date
   }
 
-  type ConversationMessageRow = {
-    id: string
-    role: string
-    content: string
-    createdAt: Date
-  }
-
   type ConversationRow = {
     id: string
     title: string
     createdAt: Date
-    messages: ConversationMessageRow[]
     _count: { messages: number }
     canDelete: boolean
   }
@@ -277,16 +270,6 @@ export default async function MatterDetailPage({
               title: true,
               createdAt: true,
               createdByUserId: true,
-              messages: {
-                orderBy: { createdAt: "asc" },
-                take: 40,
-                select: {
-                  id: true,
-                  role: true,
-                  content: true,
-                  createdAt: true,
-                },
-              },
               _count: { select: { messages: true } },
             },
           },
@@ -301,8 +284,9 @@ export default async function MatterDetailPage({
         },
       })
       if (row) {
-        // Final locked read reauth before returning saved research answers /
-        // conversation bodies so a mid-render revocation cannot fail open.
+        // Final locked read reauth before returning matter payloads. Saved AI
+        // bodies are omitted from list props (hasResponse / message counts only);
+        // restore actions re-check under lock before returning content.
         let stillAllowed
         try {
           stillAllowed = await prisma.$transaction(async (tx) =>
@@ -360,8 +344,8 @@ export default async function MatterDetailPage({
             researchSessions: row.researchSessions.map((session) => ({
               id: session.id,
               query: session.query,
-              response: session.response,
-              chunkIds: session.chunkIds,
+              hasResponse: Boolean(session.response && session.response.trim()),
+              chunkCount: session.chunkIds.length,
               createdAt: session.createdAt,
               canDelete: canDeleteWorkProduct({
                 actorUserId: user.id,
@@ -374,7 +358,6 @@ export default async function MatterDetailPage({
               id: conversation.id,
               title: conversation.title,
               createdAt: conversation.createdAt,
-              messages: conversation.messages,
               _count: conversation._count,
               canDelete: canDeleteWorkProduct({
                 actorUserId: user.id,
@@ -419,6 +402,7 @@ export default async function MatterDetailPage({
   const boundCreateConversation = createConversation.bind(null, matter.id)
   const boundDeleteConversation = deleteConversation
   const boundCreateConversationMessage = createConversationMessage
+  const boundRestoreConversationMessages = restoreConversationMessages
 
   const hasDocuments = matter._count.documents > 0
   const allDocumentsIndexed =
@@ -662,6 +646,7 @@ export default async function MatterDetailPage({
           createAction={boundCreateConversation}
           deleteAction={boundDeleteConversation}
           createMessageAction={boundCreateConversationMessage}
+          restoreMessagesAction={boundRestoreConversationMessages}
           readOnly={!canWrite}
         />
       </div>
