@@ -56,7 +56,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
   let recentSessions: {
     id: string
     query: string
-    response: string | null
+    hasResponse: boolean
     chunkIds: string[]
     createdAt: Date
     matterId: string

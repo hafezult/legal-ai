@@ -6,6 +6,7 @@ import {
   getActiveOrganization,
   isOrgRole,
   matterAccessWhereForActiveOrg,
+  requireOrganizationMembershipLocked,
   roleAtLeast,
 } from "@/lib/auth/rbac"
 import { documentRetrievalReadyWhere } from "@/lib/documents/status"
@@ -136,9 +137,44 @@ export default async function DashboardPage() {
             },
           }),
         ])
+      matterCount = countedMatters
+      retrievalReadyCount = countedRetrievalReady
+      researchSessionCount = countedResearchSessions
+      // Never ship saved AI bodies in dashboard list props.
+      recentSessions = sessionRows.map((row) => ({
+        id: row.id,
+        query: row.query,
+        hasResponse: Boolean(row.response?.trim()),
+        chunkIds: row.chunkIds,
+        createdAt: row.createdAt,
+        matter: row.matter,
+      }))
+      recentMatters = matterRows
     }
   } catch {
     loadFailed = true
+  }
+
+  // Re-check admin under the org membership lock before returning probe details.
+  if (canViewHealthDetails) {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { clerkId: userId },
+        select: { id: true },
+      })
+      const activeOrg = user ? await getActiveOrganization(user.id) : null
+      if (!user || !activeOrg) {
+        canViewHealthDetails = false
+      } else {
+        const locked = await prisma.$transaction(async (tx) =>
+          requireOrganizationMembershipLocked(tx, user.id, activeOrg.id)
+        )
+        canViewHealthDetails =
+          locked.ok && roleAtLeast(locked.role, "admin")
+      }
+    } catch {
+      canViewHealthDetails = false
+    }
   }
 
   // Dependency probe details stay admin/owner-only; members see workspace signals.
@@ -306,7 +342,7 @@ export default async function DashboardPage() {
                       {session.chunkIds.length > 0
                         ? ` · ${session.chunkIds.length} chunk${session.chunkIds.length !== 1 ? "s" : ""}`
                         : ""}
-                      {session.response ? " · response saved" : ""}
+                      {session.hasResponse ? " · response saved" : ""}
                     </p>
                   </Link>
                 ))}

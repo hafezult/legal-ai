@@ -58,7 +58,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
     title: string
     draftType: string
     instruction: string
-    content: string | null
+    hasContent: boolean
     chunkIds: string[]
     createdAt: Date
     matterId: string

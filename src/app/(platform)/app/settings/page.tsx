@@ -6,6 +6,7 @@ import {
   getActiveOrganization,
   isOrgRole,
   listUserOrganizations,
+  requireOrganizationMembershipLocked,
   roleAtLeast,
   roleHasPermission,
   roleStrictlyAbove,
@@ -175,11 +176,34 @@ export default async function SettingsPage() {
     } else {
       organizations = await listUserOrganizations(user.id)
       const active = await getActiveOrganization(user.id)
-      const activeRole =
+      let activeRole =
         active && isOrgRole(active.role) ? active.role : "viewer"
       canManageMembers = roleHasPermission(activeRole, "manage_members")
       // Dependency probe details are admin/owner-only (not every signed-in role).
       canViewHealthDetails = roleAtLeast(activeRole, "admin")
+
+      // Final locked membership reauth before admin-only emails / invites /
+      // health probe details so a mid-render demotion cannot fail open.
+      if (active && (canManageMembers || canViewHealthDetails)) {
+        try {
+          const locked = await prisma.$transaction(async (tx) =>
+            requireOrganizationMembershipLocked(tx, user.id, active.id)
+          )
+          if (!locked.ok) {
+            activeRole = "viewer"
+            canManageMembers = false
+            canViewHealthDetails = false
+          } else {
+            activeRole = locked.role
+            canManageMembers = roleHasPermission(activeRole, "manage_members")
+            canViewHealthDetails = roleAtLeast(activeRole, "admin")
+          }
+        } catch {
+          // Fail closed for admin payloads when the lock/reauth path is down.
+          canManageMembers = false
+          canViewHealthDetails = false
+        }
+      }
 
       if (canViewHealthDetails) {
         try {

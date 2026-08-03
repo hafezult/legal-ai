@@ -343,6 +343,40 @@ export async function getPrimaryOrganization(
 }
 
 /**
+ * Lock Organization then the actor's OrganizationMember row and return the
+ * current role. Callers that return admin-only payloads (member emails, invites,
+ * health probe details) should re-check with this immediately before serialize
+ * so a concurrent demotion cannot fail open.
+ *
+ * Lock order matches ownership / invite / delete writers: Organization first.
+ */
+export async function requireOrganizationMembershipLocked(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  organizationId: string
+): Promise<
+  | { ok: true; role: OrgRole }
+  | { ok: false; error: string }
+> {
+  await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+
+  const lockedMembers = await tx.$queryRaw<Array<{ role: string }>>`
+    SELECT role FROM "OrganizationMember"
+    WHERE "organizationId" = ${organizationId}
+      AND "userId" = ${userId}
+    FOR UPDATE
+  `
+  const role = lockedMembers[0]?.role
+  if (!role || !isOrgRole(role)) {
+    return {
+      ok: false,
+      error: "Organization membership not found or access denied.",
+    }
+  }
+  return { ok: true, role }
+}
+
+/**
  * Active workspace organization for matter creation and settings.
  * Falls back to the primary org when the stored selection is missing or stale.
  */
