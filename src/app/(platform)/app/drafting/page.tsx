@@ -13,6 +13,8 @@ import { DraftingClient } from "./_drafting-client"
 import { restoreDraft, type DraftOutput } from "./actions"
 
 export const dynamic = "force-dynamic"
+/** Drafting actions may embed + complete sequentially under this budget. */
+export const maxDuration = 300
 
 /** Matter picker rows for the drafting surface. */
 const DRAFTING_MATTERS_LIMIT = 100

@@ -1,5 +1,5 @@
 import { STORAGE_BUCKET, getSupabaseAdmin } from "./client"
-import { normalizeStoragePaths } from "./paths"
+import { normalizeStoragePaths, STORAGE_REMOVE_BATCH_SIZE } from "./paths"
 
 export type StorageCleanupResult = {
   ok: boolean
@@ -7,7 +7,7 @@ export type StorageCleanupResult = {
   error?: string
 }
 
-export { normalizeStoragePaths }
+export { normalizeStoragePaths, STORAGE_REMOVE_BATCH_SIZE }
 
 export async function uploadToStorage(
   path: string,
@@ -31,7 +31,18 @@ export async function removeManyFromStorage(paths: string[]) {
   if (uniquePaths.length === 0) return { data: [], error: null }
 
   const client = getSupabaseAdmin()
-  return client.storage.from(STORAGE_BUCKET).remove(uniquePaths)
+  const removed: { name: string }[] = []
+
+  for (let i = 0; i < uniquePaths.length; i += STORAGE_REMOVE_BATCH_SIZE) {
+    const batch = uniquePaths.slice(i, i + STORAGE_REMOVE_BATCH_SIZE)
+    const { data, error } = await client.storage
+      .from(STORAGE_BUCKET)
+      .remove(batch)
+    if (error) return { data: removed, error }
+    if (data?.length) removed.push(...data)
+  }
+
+  return { data: removed, error: null }
 }
 
 /**

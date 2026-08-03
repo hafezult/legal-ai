@@ -516,29 +516,63 @@ export async function addOrganizationMember(
     const expiresAt = inviteExpiryDate()
     const inviteUrl = buildInviteAcceptUrl(token)
 
-    await prisma.organizationInvite.upsert({
-      where: {
-        organizationId_email: {
-          organizationId,
-          email: emailNormalized,
-        },
-      },
-      create: {
-        organizationId,
-        email: emailNormalized,
-        role,
-        tokenHash,
-        invitedByUserId: actor.user.id,
-        expiresAt,
-      },
-      update: {
-        role,
-        tokenHash,
-        invitedByUserId: actor.user.id,
-        expiresAt,
-        acceptedAt: null,
-      },
-    })
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Serialize concurrent invites for the same org+email so two admins
+        // cannot both mint tokens and email a link that the other immediately
+        // invalidates via upsert.
+        await tx.$executeRaw`
+          SELECT pg_advisory_xact_lock(
+            hashtext(${`org-invite:${organizationId}:${emailNormalized}`})
+          )
+        `
+
+        const lockedPending = await tx.organizationInvite.findFirst({
+          where: {
+            organizationId,
+            email: { equals: emailNormalized, mode: "insensitive" },
+            acceptedAt: null,
+            expiresAt: { gt: new Date() },
+          },
+          select: { id: true },
+        })
+        if (lockedPending) {
+          throw new Error("PENDING_INVITE_EXISTS")
+        }
+
+        await tx.organizationInvite.upsert({
+          where: {
+            organizationId_email: {
+              organizationId,
+              email: emailNormalized,
+            },
+          },
+          create: {
+            organizationId,
+            email: emailNormalized,
+            role,
+            tokenHash,
+            invitedByUserId: actor.user.id,
+            expiresAt,
+          },
+          update: {
+            role,
+            tokenHash,
+            invitedByUserId: actor.user.id,
+            expiresAt,
+            acceptedAt: null,
+          },
+        })
+      })
+    } catch (error) {
+      if (error instanceof Error && error.message === "PENDING_INVITE_EXISTS") {
+        return {
+          error:
+            "An invite is already pending for that email. Revoke it before sending another.",
+        }
+      }
+      throw error
+    }
 
     const organization = await prisma.organization.findUnique({
       where: { id: organizationId },
@@ -720,8 +754,13 @@ export async function refreshOrganizationInviteLink(
     }
 
     const token = generateInviteToken()
-    await prisma.organizationInvite.update({
-      where: { id: invite.id },
+    const rotated = await prisma.organizationInvite.updateMany({
+      where: {
+        id: invite.id,
+        organizationId,
+        acceptedAt: null,
+        expiresAt: { gt: new Date() },
+      },
       data: {
         tokenHash: hashInviteToken(token),
         // Refreshing a pending link also renews the acceptance window so a
@@ -729,6 +768,9 @@ export async function refreshOrganizationInviteLink(
         expiresAt: inviteExpiryDate(),
       },
     })
+    if (rotated.count !== 1) {
+      return { error: "Invite not found or already accepted." }
+    }
 
     await recordAuditEvent({
       userId: actor.user.id,

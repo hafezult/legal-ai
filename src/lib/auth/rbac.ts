@@ -907,46 +907,65 @@ export async function deleteOwnedOrganization(
     }
   }
 
-  const ownedCount = await prisma.organizationMember.count({
-    where: { userId: actorUserId, role: "owner" },
-  })
-  if (ownedCount <= 1) {
-    return {
-      ok: false,
-      error:
-        "Create another organization first. You must keep at least one owned workspace.",
-    }
-  }
-
   const matterCount = membership.organization._count.matters
 
-  const affectedUsers = await prisma.user.findMany({
-    where: { activeOrganizationId: organizationId },
-    select: { id: true },
-  })
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Serialize "keep one owned workspace" checks so concurrent deletes of
+      // the actor's final two orgs cannot both observe ownedCount=2 and wipe both.
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actorUserId} FOR UPDATE`
 
-  await prisma.$transaction(async (tx) => {
-    await tx.user.updateMany({
-      where: { activeOrganizationId: organizationId },
-      data: { activeOrganizationId: null },
-    })
-    // Org delete SetNulls Matter.organizationId. Preserve an access path for
-    // creator-less org matters by assigning the deleting owner as creator.
-    await tx.matter.updateMany({
-      where: { organizationId, userId: null },
-      data: { userId: actorUserId },
-    })
-    await tx.organization.delete({ where: { id: organizationId } })
-  })
+      const ownedCount = await tx.organizationMember.count({
+        where: { userId: actorUserId, role: "owner" },
+      })
+      if (ownedCount <= 1) {
+        throw new Error("LAST_OWNED_ORGANIZATION")
+      }
 
-  // Restore valid active workspaces for users who pointed at the deleted org.
-  for (const user of affectedUsers) {
-    try {
-      await getActiveOrganization(user.id)
-    } catch {
-      /* Best-effort; membership queries still work without a stored selection */
+      const stillOwner = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: { organizationId, userId: actorUserId },
+        },
+        select: { role: true },
+      })
+      if (!stillOwner || stillOwner.role !== "owner") {
+        throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
+      }
+
+      await tx.user.updateMany({
+        where: { activeOrganizationId: organizationId },
+        data: { activeOrganizationId: null },
+      })
+      // Org delete SetNulls Matter.organizationId. Preserve an access path for
+      // creator-less org matters by assigning the deleting owner as creator.
+      await tx.matter.updateMany({
+        where: { organizationId, userId: null },
+        data: { userId: actorUserId },
+      })
+      await tx.organization.delete({ where: { id: organizationId } })
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message === "LAST_OWNED_ORGANIZATION") {
+      return {
+        ok: false,
+        error:
+          "Create another organization first. You must keep at least one owned workspace.",
+      }
     }
+    if (
+      error instanceof Error &&
+      error.message === "CONCURRENT_OWNERSHIP_CHANGE"
+    ) {
+      return {
+        ok: false,
+        error: "Ownership changed concurrently. Refresh and try again.",
+      }
+    }
+    throw error
   }
+
+  // Active-organization repair is lazy via getActiveOrganization on next load —
+  // avoid unbounded post-commit N+1 fan-out across every affected user.
 
   return { ok: true, organizationName, matterCount }
 }

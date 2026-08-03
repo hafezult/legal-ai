@@ -21,6 +21,8 @@ import {
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
+/** Retry reindex runs the indexing pipeline in-process on this segment. */
+export const maxDuration = 300
 
 type WorkflowDocument = {
   id: string

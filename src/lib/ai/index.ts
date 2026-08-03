@@ -8,4 +8,5 @@ export {
 export {
   OPENAI_REQUEST_TIMEOUT_MS,
   createOpenAIClient,
+  openAICallBudgetFromDeadline,
 } from "@/lib/ai/openai-client"

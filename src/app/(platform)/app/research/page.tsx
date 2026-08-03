@@ -13,6 +13,8 @@ import { ResearchClient } from "./_research-client"
 import { restoreResearchSession, type ResearchOutput } from "./actions"
 
 export const dynamic = "force-dynamic"
+/** Research actions may embed + complete sequentially under this budget. */
+export const maxDuration = 300
 
 /** Matter picker rows for the research surface. */
 const RESEARCH_MATTERS_LIMIT = 100

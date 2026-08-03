@@ -5,6 +5,9 @@ export function normalizeStoragePaths(paths: string[]): string[] {
   return [...new Set(paths.filter((path) => Boolean(path?.trim())))]
 }
 
+/** Supabase Storage remove() batch size — avoid giant single-request deletes. */
+export const STORAGE_REMOVE_BATCH_SIZE = 100
+
 /**
  * Build a collision-resistant object key for an uploaded document.
  * Includes a UUID so same-ms uploads of the same filename cannot collide.

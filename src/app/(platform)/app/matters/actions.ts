@@ -436,17 +436,34 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
       select: {
         id: true,
         title: true,
-        documents: {
-          select: { storagePath: true },
-        },
+        _count: { select: { documents: true } },
       },
     })
     if (!matter) return { error: "Matter not found or access denied." }
 
     deletedTitle = matter.title
-    storagePaths = matter.documents
-      .map((document) => document.storagePath)
-      .filter((path): path is string => Boolean(path))
+
+    // Page storage paths so large matters do not load every document row at once.
+    // cleanupStoragePaths batches Supabase removes separately.
+    const PATH_PAGE = 200
+    let pathCursor: string | undefined
+    for (;;) {
+      const page = await prisma.document.findMany({
+        where: { matterId: matter.id },
+        select: { id: true, storagePath: true },
+        orderBy: { id: "asc" },
+        take: PATH_PAGE,
+        ...(pathCursor
+          ? { skip: 1, cursor: { id: pathCursor } }
+          : {}),
+      })
+      if (page.length === 0) break
+      for (const document of page) {
+        if (document.storagePath) storagePaths.push(document.storagePath)
+      }
+      pathCursor = page[page.length - 1]?.id
+      if (page.length < PATH_PAGE) break
+    }
 
     const organizationId = permission.access.organizationId
 
@@ -463,7 +480,7 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
       organizationId,
       summary: `Deleted matter “${deletedTitle}”`,
       metadata: {
-        documentCount: matter.documents.length,
+        documentCount: matter._count.documents,
         role: permission.access.role,
         deletedMatterId: matter.id,
       },

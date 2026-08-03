@@ -20,6 +20,8 @@ import {
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
+/** Retry reindex runs the indexing pipeline in-process on this segment. */
+export const maxDuration = 300
 
 /** Newest sources rendered in the cross-matter registry. */
 const DOCUMENTS_PAGE_LIMIT = 100

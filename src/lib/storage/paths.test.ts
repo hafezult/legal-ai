@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { buildDocumentStoragePath, normalizeStoragePaths } from "./paths.ts"
+import {
+  buildDocumentStoragePath,
+  normalizeStoragePaths,
+  STORAGE_REMOVE_BATCH_SIZE,
+} from "./paths.ts"
 
 describe("normalizeStoragePaths", () => {
   it("deduplicates and drops empty paths", () => {
@@ -13,6 +17,13 @@ describe("normalizeStoragePaths", () => {
 
   it("returns an empty list for empty input", () => {
     assert.deepEqual(normalizeStoragePaths([]), [])
+  })
+})
+
+describe("STORAGE_REMOVE_BATCH_SIZE", () => {
+  it("keeps multi-path deletes in bounded provider batches", () => {
+    assert.ok(STORAGE_REMOVE_BATCH_SIZE >= 50)
+    assert.ok(STORAGE_REMOVE_BATCH_SIZE <= 500)
   })
 })
 
