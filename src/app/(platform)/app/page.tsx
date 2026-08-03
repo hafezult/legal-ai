@@ -155,7 +155,12 @@ export default async function DashboardPage() {
     loadFailed = true
   }
 
-  // Re-check admin under the org membership lock before returning probe details.
+  // Gather probe details only when the provisional role looks privileged, then
+  // re-check admin under the org membership lock immediately before publish.
+  let pendingHealth: Awaited<ReturnType<typeof getHealthReport>> | null = null
+  if (canViewHealthDetails) {
+    pendingHealth = await getHealthReport().catch(() => null)
+  }
   if (canViewHealthDetails) {
     try {
       const user = await prisma.user.findUnique({
@@ -178,9 +183,7 @@ export default async function DashboardPage() {
   }
 
   // Dependency probe details stay admin/owner-only; members see workspace signals.
-  const health = canViewHealthDetails
-    ? await getHealthReport().catch(() => null)
-    : null
+  const health = canViewHealthDetails ? pendingHealth : null
 
   const systemLayers: SystemLayer[] = [
     {

@@ -545,28 +545,67 @@ export async function restoreResearchSession(
       )
     }
 
-    // Final locked reauth immediately before returning saved AI content /
-    // provenance excerpts so a mid-restore revocation cannot fail open.
-    let stillAllowed
+    // Final locked reauth + re-read before returning saved AI content so a
+    // mid-restore revoke/delete cannot fail open with a stale body.
+    let restored: {
+      id: string
+      query: string
+      response: string | null
+      matterTitle: string
+    }
     try {
-      stillAllowed = await prisma.$transaction(async (tx) =>
-        requireMatterPermissionLocked(tx, user.id, session.matterId, "read")
-      )
+      const lockedRead = await prisma.$transaction(async (tx) => {
+        const stillAllowed = await requireMatterPermissionLocked(
+          tx,
+          user.id,
+          session.matterId,
+          "read"
+        )
+        if (!stillAllowed.ok) {
+          return { ok: false as const, error: RESEARCH_ACCESS_REVOKED_MESSAGE }
+        }
+        const fresh = await tx.researchSession.findFirst({
+          where: {
+            id: session.id,
+            matterId: session.matterId,
+          },
+          select: {
+            id: true,
+            query: true,
+            response: true,
+            matter: { select: { title: true } },
+          },
+        })
+        if (!fresh) {
+          return {
+            ok: false as const,
+            error: "Research session not found or access denied.",
+          }
+        }
+        return {
+          ok: true as const,
+          value: {
+            id: fresh.id,
+            query: fresh.query,
+            response: fresh.response,
+            matterTitle: fresh.matter.title,
+          },
+        }
+      })
+      if (!lockedRead.ok) return emptyResult(lockedRead.error)
+      restored = lockedRead.value
     } catch {
       return emptyResult("Unable to verify workspace permissions.")
     }
-    if (!stillAllowed.ok) {
-      return emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE)
-    }
 
     return {
-      query: session.query,
+      query: restored.query,
       matterId: session.matterId,
-      matterTitle: session.matter.title,
-      answer: session.response ?? "",
+      matterTitle: restored.matterTitle,
+      answer: restored.response ?? "",
       chunks,
       authorities,
-      sessionId: session.id,
+      sessionId: restored.id,
       retrievalCount: chunks.length,
       indexedChunks,
       embeddingConfigured: isEmbeddingConfigured(),

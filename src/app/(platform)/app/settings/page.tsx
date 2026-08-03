@@ -205,11 +205,12 @@ export default async function SettingsPage() {
         }
       }
 
+      let pendingHealth: Awaited<ReturnType<typeof getHealthReport>> | null = null
       if (canViewHealthDetails) {
         try {
-          health = await getHealthReport()
+          pendingHealth = await getHealthReport()
         } catch {
-          health = null
+          pendingHealth = null
         }
       }
 
@@ -228,6 +229,8 @@ export default async function SettingsPage() {
 
       // Scope activity via organizationId: active-org events, plus the actor's
       // personal/legacy (organizationId null) trail. Do not leak other orgs.
+      // Admin-action filtering uses a provisional flag; final lock below may
+      // strip admin payloads before render even if these rows were fetched.
       activity = await prisma.auditEvent.findMany({
         where: {
           AND: [
@@ -262,8 +265,6 @@ export default async function SettingsPage() {
       })
 
       if (active) {
-        const canManageInvites = canManageMembers
-
         const [memberRows, inviteRows] = await Promise.all([
           prisma.organizationMember.findMany({
             where: { organizationId: active.id },
@@ -278,7 +279,9 @@ export default async function SettingsPage() {
           }),
           // Raw invite tokens are never stored or serialized; admins mint a
           // fresh link via refreshOrganizationInviteLink when copying.
-          canManageInvites
+          // Fetch pending invites whenever the provisional role looked
+          // privileged; final locked reauth below may discard them.
+          canManageMembers
             ? prisma.organizationInvite.findMany({
                 where: {
                   organizationId: active.id,
@@ -296,6 +299,37 @@ export default async function SettingsPage() {
               })
             : Promise.resolve([]),
         ])
+
+        // Final locked membership reauth immediately before publishing admin
+        // emails / invites / health details gathered after the earlier lock.
+        if (canManageMembers || canViewHealthDetails) {
+          try {
+            const locked = await prisma.$transaction(async (tx) =>
+              requireOrganizationMembershipLocked(tx, user.id, active.id)
+            )
+            if (!locked.ok) {
+              activeRole = "viewer"
+              canManageMembers = false
+              canViewHealthDetails = false
+            } else {
+              activeRole = locked.role
+              canManageMembers = roleHasPermission(activeRole, "manage_members")
+              canViewHealthDetails = roleAtLeast(activeRole, "admin")
+            }
+          } catch {
+            canManageMembers = false
+            canViewHealthDetails = false
+          }
+        }
+
+        health = canViewHealthDetails ? pendingHealth : null
+        if (!canManageMembers) {
+          activity = activity.filter(
+            (event) =>
+              !(memberAdminActions as readonly string[]).includes(event.action)
+          )
+        }
+
         organization = {
           id: active.id,
           name: active.name,
@@ -315,19 +349,23 @@ export default async function SettingsPage() {
               isSelf,
             }
           }),
-          invites: inviteRows
-            .filter(
-              (invite) =>
-                isOrgRole(invite.role) &&
-                roleStrictlyAbove(activeRole, invite.role)
-            )
-            .map((invite) => ({
-              id: invite.id,
-              email: invite.email,
-              role: invite.role,
-              expiresAt: invite.expiresAt.toISOString(),
-            })),
+          invites: canManageMembers
+            ? inviteRows
+                .filter(
+                  (invite) =>
+                    isOrgRole(invite.role) &&
+                    roleStrictlyAbove(activeRole, invite.role)
+                )
+                .map((invite) => ({
+                  id: invite.id,
+                  email: invite.email,
+                  role: invite.role,
+                  expiresAt: invite.expiresAt.toISOString(),
+                }))
+            : [],
         }
+      } else {
+        health = null
       }
     }
   } catch {

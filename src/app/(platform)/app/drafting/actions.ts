@@ -550,28 +550,77 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
       )
     }
 
-    // Final locked reauth immediately before returning saved draft content /
-    // provenance excerpts so a mid-restore revocation cannot fail open.
-    let stillAllowed
+    // Final locked reauth + re-read before returning saved draft content so a
+    // mid-restore revoke/delete cannot fail open with a stale body.
+    let restored: {
+      id: string
+      title: string
+      draftType: string
+      instruction: string
+      content: string | null
+      matterTitle: string
+    }
     try {
-      stillAllowed = await prisma.$transaction(async (tx) =>
-        requireMatterPermissionLocked(tx, user.id, draft.matterId, "read")
-      )
+      const lockedRead = await prisma.$transaction(async (tx) => {
+        const stillAllowed = await requireMatterPermissionLocked(
+          tx,
+          user.id,
+          draft.matterId,
+          "read"
+        )
+        if (!stillAllowed.ok) {
+          return { ok: false as const, error: DRAFT_ACCESS_REVOKED_MESSAGE }
+        }
+        const fresh = await tx.draftDocument.findFirst({
+          where: {
+            id: draft.id,
+            matterId: draft.matterId,
+          },
+          select: {
+            id: true,
+            title: true,
+            draftType: true,
+            instruction: true,
+            content: true,
+            matter: { select: { title: true } },
+          },
+        })
+        if (!fresh) {
+          return {
+            ok: false as const,
+            error: "Draft not found or access denied.",
+          }
+        }
+        return {
+          ok: true as const,
+          value: {
+            id: fresh.id,
+            title: fresh.title,
+            draftType: fresh.draftType,
+            instruction: fresh.instruction,
+            content: fresh.content,
+            matterTitle: fresh.matter.title,
+          },
+        }
+      })
+      if (!lockedRead.ok) return emptyResult(lockedRead.error)
+      restored = lockedRead.value
     } catch {
       return emptyResult("Unable to verify workspace permissions.")
     }
-    if (!stillAllowed.ok) {
-      return emptyResult(DRAFT_ACCESS_REVOKED_MESSAGE)
-    }
+
+    const restoredType: DraftType = isDraftType(restored.draftType)
+      ? restored.draftType
+      : draftType
 
     return {
-      draftId: draft.id,
+      draftId: restored.id,
       matterId: draft.matterId,
-      matterTitle: draft.matter.title,
-      title: draft.title,
-      draftType,
-      instruction: draft.instruction,
-      content: draft.content ?? "",
+      matterTitle: restored.matterTitle,
+      title: restored.title,
+      draftType: restoredType,
+      instruction: restored.instruction,
+      content: restored.content ?? "",
       chunks,
       retrievalCount: chunks.length,
       indexedChunks,
