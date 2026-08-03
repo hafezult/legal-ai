@@ -14,6 +14,9 @@ import { restoreResearchSession, type ResearchOutput } from "./actions"
 
 export const dynamic = "force-dynamic"
 
+/** Matter picker rows for the research surface. */
+const RESEARCH_MATTERS_LIMIT = 100
+
 type ResearchPageProps = {
   searchParams?: Promise<{
     matter?: string
@@ -81,6 +84,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
           prisma.matter.findMany({
             where: { AND: [matterWhere, { status: { not: "archived" } }] },
             orderBy: { updatedAt: "desc" },
+            take: RESEARCH_MATTERS_LIMIT,
             select: {
               id: true,
               title: true,

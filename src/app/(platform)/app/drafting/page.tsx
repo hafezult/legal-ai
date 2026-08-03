@@ -14,6 +14,9 @@ import { restoreDraft, type DraftOutput } from "./actions"
 
 export const dynamic = "force-dynamic"
 
+/** Matter picker rows for the drafting surface. */
+const DRAFTING_MATTERS_LIMIT = 100
+
 type DraftingPageProps = {
   searchParams?: Promise<{
     matter?: string
@@ -83,6 +86,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
           prisma.matter.findMany({
             where: { AND: [matterWhere, { status: { not: "archived" } }] },
             orderBy: { updatedAt: "desc" },
+            take: DRAFTING_MATTERS_LIMIT,
             select: {
               id: true,
               title: true,

@@ -244,6 +244,7 @@ export default async function SettingsPage() {
           prisma.organizationMember.findMany({
             where: { organizationId: active.id },
             orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+            take: 200,
             select: {
               id: true,
               role: true,
@@ -261,6 +262,7 @@ export default async function SettingsPage() {
                   expiresAt: { gt: new Date() },
                 },
                 orderBy: { createdAt: "desc" },
+                take: 100,
                 select: {
                   id: true,
                   email: true,

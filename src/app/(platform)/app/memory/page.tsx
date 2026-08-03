@@ -15,6 +15,9 @@ import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
 
+/** Newest matters rendered in the memory registry. */
+const MEMORY_MATTERS_LIMIT = 100
+
 type MemoryMatter = {
   id: string
   title: string
@@ -76,6 +79,7 @@ export default async function MemoryPage() {
           prisma.matter.findMany({
             where: matterWhere,
             orderBy: { updatedAt: "desc" },
+            take: MEMORY_MATTERS_LIMIT,
             select: {
               id: true,
               title: true,
@@ -107,6 +111,7 @@ export default async function MemoryPage() {
           // every matter row (one flat conversation projection instead).
           prisma.conversation.findMany({
             where: { matter: matterWhere },
+            take: MEMORY_MATTERS_LIMIT * 40,
             select: {
               matterId: true,
               _count: { select: { messages: true } },

@@ -12,6 +12,9 @@ import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
 
+/** Newest matters rendered in the registry (large orgs stay bounded). */
+const MATTERS_PAGE_LIMIT = 100
+
 function formatDate(date: Date) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -64,6 +67,7 @@ export default async function MattersPage() {
       matters = await prisma.matter.findMany({
         where: matterWhere,
         orderBy: { updatedAt: "desc" },
+        take: MATTERS_PAGE_LIMIT,
         select: {
           id: true,
           title: true,
