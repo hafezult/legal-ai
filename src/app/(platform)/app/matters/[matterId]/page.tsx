@@ -20,9 +20,11 @@ import {
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import {
+  documentCorpusIndexedWhere,
   documentNeedsRetry,
-  isDocumentCorpusIndexed,
-  isDocumentRetrievalReady,
+  documentRetrievalReadyWhere,
+  documentRetryOr,
+  STALE_INDEXING_MS,
 } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 import {
@@ -37,6 +39,9 @@ import {
 export const dynamic = "force-dynamic"
 /** Upload/reindex run the indexing pipeline in-process on this segment. */
 export const maxDuration = 300
+
+/** Newest sources rendered in the matter source registry. */
+const MATTER_DOCUMENTS_LIMIT = 100
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -200,6 +205,9 @@ export default async function MatterDetailPage({
   let canWrite = false
   let canDelete = false
   let loadFailed = false
+  let indexedDocuments = 0
+  let retrievalReadyDocuments = 0
+  let failedDocuments = 0
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -224,6 +232,7 @@ export default async function MatterDetailPage({
           updatedAt: true,
           documents: {
             orderBy: { uploadedAt: "desc" },
+            take: MATTER_DOCUMENTS_LIMIT,
             select: {
               id: true,
               fileName: true,
@@ -294,6 +303,27 @@ export default async function MatterDetailPage({
         const access = await getMatterAccess(user.id, row.id)
         canWrite = Boolean(access?.role && roleHasPermission(access.role, "write"))
         canDelete = Boolean(access?.role && roleHasPermission(access.role, "delete"))
+        const staleBefore = new Date(
+          new Date().getTime() - STALE_INDEXING_MS
+        )
+        const documentWhere = { matterId: row.id }
+        const [indexed, retrievalReady, failed] = await Promise.all([
+          prisma.document.count({
+            where: { ...documentWhere, ...documentCorpusIndexedWhere() },
+          }),
+          prisma.document.count({
+            where: { ...documentWhere, ...documentRetrievalReadyWhere() },
+          }),
+          prisma.document.count({
+            where: {
+              ...documentWhere,
+              OR: documentRetryOr(staleBefore),
+            },
+          }),
+        ])
+        indexedDocuments = indexed
+        retrievalReadyDocuments = retrievalReady
+        failedDocuments = failed
         matter = {
           id: row.id,
           title: row.title,
@@ -361,17 +391,14 @@ export default async function MatterDetailPage({
   const boundDeleteConversation = deleteConversation
   const boundCreateConversationMessage = createConversationMessage
 
-  const hasDocuments = matter.documents.length > 0
-  const indexedDocuments = matter.documents.filter(isDocumentCorpusIndexed).length
-  const retrievalReadyDocuments = matter.documents.filter(isDocumentRetrievalReady).length
-  const failedDocuments = matter.documents.filter((doc) =>
-    documentNeedsRetry(doc)
-  ).length
-  const allDocumentsIndexed = hasDocuments && indexedDocuments === matter._count.documents
+  const hasDocuments = matter._count.documents > 0
+  const allDocumentsIndexed =
+    hasDocuments && indexedDocuments === matter._count.documents
   const hasIndexedDocuments = indexedDocuments > 0
   const hasRetrievalReady = retrievalReadyDocuments > 0
   const hasResearchSessions = matter._count.researchSessions > 0
   const hasDrafts = matter._count.draftDocuments > 0
+  const documentsTruncated = matter._count.documents > matter.documents.length
 
   const sourceIngestionNote = !hasDocuments
     ? "Awaiting first document"
@@ -391,7 +418,9 @@ export default async function MatterDetailPage({
   ]
 
   const systemLayers = [
-    { label: "Authentication layer",  status: "operational" },
+    // Decorative status only — never claim Auth is operational without a
+    // successful Clerk probe (Mission Control owns that signal).
+    { label: "Authentication layer",  status: "pending" },
     { label: "Matter context",        status: "active" },
     { label: "Retrieval system",      status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
     { label: "Embedding index",       status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
@@ -493,6 +522,9 @@ export default async function MatterDetailPage({
           <div className="mt-6">
             <p className="mb-3 text-[10px] uppercase tracking-[0.16em] text-white/32">
               Source registry
+              {documentsTruncated
+                ? ` · showing ${matter.documents.length} of ${matter._count.documents}`
+                : ""}
             </p>
 
             <div className="overflow-hidden rounded-lg border border-white/[0.06]">

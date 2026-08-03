@@ -17,13 +17,34 @@ import { ingestUploadHttpStatus } from "@/lib/documents/ingest-upload-status"
 import { validateUploadContentLength } from "@/lib/documents/upload"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
+import { clientKeyFromRequest } from "@/lib/request-ip"
 
 export const maxDuration = 300
 
 const UPLOAD_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
+/** Pre-auth IP throttle so unauthenticated floods cannot hammer Clerk/Prisma. */
+const UPLOAD_AUTH_RATE_LIMIT = { limit: 60, windowMs: 60_000 } as const
 
 function jsonResult(result: IngestUploadResult, status = 200) {
   return NextResponse.json(result, { status })
+}
+
+function rateLimitResponse(retryAfterMs: number, message: string) {
+  const seconds = Math.ceil(retryAfterMs / 1000)
+  return NextResponse.json(
+    {
+      error: message.replace(
+        "{seconds}",
+        `${seconds} second${seconds === 1 ? "" : "s"}`
+      ),
+    },
+    {
+      status: 429,
+      headers: {
+        "Retry-After": String(seconds),
+      },
+    }
+  )
 }
 
 /**
@@ -34,6 +55,18 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ matterId: string }> }
 ) {
+  // Throttle by client IP before auth/user lookup (parity with index-document).
+  const authThrottle = await consumeRateLimit(
+    `upload-auth:${clientKeyFromRequest(request)}`,
+    UPLOAD_AUTH_RATE_LIMIT
+  )
+  if (!authThrottle.ok) {
+    return rateLimitResponse(
+      authThrottle.retryAfterMs,
+      "Upload rate limit reached. Retry in about {seconds}."
+    )
+  }
+
   const contentLengthCheck = validateUploadContentLength(
     request.headers.get("content-length")
   )
@@ -72,17 +105,9 @@ export async function POST(
       UPLOAD_RATE_LIMIT
     )
     if (!throttle.ok) {
-      const seconds = Math.ceil(throttle.retryAfterMs / 1000)
-      return NextResponse.json(
-        {
-          error: `Upload rate limit reached. Retry in about ${seconds} second${seconds === 1 ? "" : "s"}.`,
-        },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": String(seconds),
-          },
-        }
+      return rateLimitResponse(
+        throttle.retryAfterMs,
+        "Upload rate limit reached. Retry in about {seconds}."
       )
     }
 

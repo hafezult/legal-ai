@@ -160,7 +160,7 @@ function researchMarkdown(output: ResearchOutput) {
 export function ResearchClient({
   matters,
   recentSessions,
-  canWrite = true,
+  canWrite = false,
   initialMatterId,
   initialResults = null,
 }: {

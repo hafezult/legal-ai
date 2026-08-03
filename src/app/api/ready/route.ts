@@ -25,9 +25,11 @@ async function loadHealthReport(): Promise<HealthReport> {
  * `x-aether-health-secret` matching a strong HEALTH_DETAIL_SECRET or INDEXING_SECRET.
  */
 export async function GET(request: Request) {
+  // In-process only — readiness must not stall on Upstash when configured
+  // (matches `/api/health`). Probe results stay short-TTL cached below.
   const throttle = await consumeRateLimit(
     `ready:${clientKeyFromRequest(request)}`,
-    READY_RATE_LIMIT
+    { ...READY_RATE_LIMIT, localOnly: true }
   )
   if (!throttle.ok) {
     return NextResponse.json(

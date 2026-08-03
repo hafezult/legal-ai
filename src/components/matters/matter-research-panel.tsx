@@ -46,7 +46,7 @@ export function MatterResearchPanel({
   matterTitle,
   sessions,
   totalCount,
-  canWrite = true,
+  canWrite = false,
 }: {
   matterId: string
   matterTitle: string

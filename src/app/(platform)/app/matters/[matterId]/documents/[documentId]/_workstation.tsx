@@ -935,8 +935,8 @@ export function DocumentWorkstation({
   data,
   reindexAction,
   deleteAction,
-  canWrite = true,
-  canDelete = true,
+  canWrite = false,
+  canDelete = false,
 }: {
   data: WorkstationData
   reindexAction: DocumentIndexAction

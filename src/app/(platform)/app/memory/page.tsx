@@ -7,10 +7,7 @@ import {
   matterAccessWhereForActiveOrg,
   roleHasPermission,
 } from "@/lib/auth/rbac"
-import {
-  isDocumentRetrievalReady,
-  publishedChunkCountContribution,
-} from "@/lib/documents/status"
+import { documentRetrievalReadyWhere } from "@/lib/documents/status"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
@@ -23,12 +20,7 @@ type MemoryMatter = {
   title: string
   clientName: string | null
   updatedAt: Date
-  documents: {
-    indexingStatus: string
-    retrievalStatus: string
-    publishedRunId: string | null
-    chunkCount: number
-  }[]
+  documentCount: number
   messageCount: number
   publishedChunkCount: number
   _count: {
@@ -64,6 +56,9 @@ export default async function MemoryPage() {
   let matters: MemoryMatter[] = []
   let canWrite = false
   let messageCount = 0
+  let documentCount = 0
+  let chunkCount = 0
+  let retrievalReadyCount = 0
   let loadFailed = false
 
   try {
@@ -74,50 +69,66 @@ export default async function MemoryPage() {
       const activeOrg = await getActiveOrganization(user.id)
       canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
-      const [matterRows, messageTotal, conversationMessageRows] =
-        await Promise.all([
-          prisma.matter.findMany({
-            where: matterWhere,
-            orderBy: { updatedAt: "desc" },
-            take: MEMORY_MATTERS_LIMIT,
-            select: {
-              id: true,
-              title: true,
-              clientName: true,
-              updatedAt: true,
-              documents: {
-                select: {
-                  indexingStatus: true,
-                  retrievalStatus: true,
-                  publishedRunId: true,
-                  // Document.chunkCount tracks the published generation size.
-                  chunkCount: true,
-                },
-              },
-              _count: {
-                select: {
-                  researchSessions: true,
-                  conversations: true,
-                  draftDocuments: true,
-                },
+      const documentWhere = { matter: matterWhere }
+      const [
+        matterRows,
+        messageTotal,
+        conversationMessageRows,
+        sourceTotal,
+        retrievalReadyTotal,
+        publishedDocs,
+      ] = await Promise.all([
+        prisma.matter.findMany({
+          where: matterWhere,
+          orderBy: { updatedAt: "desc" },
+          take: MEMORY_MATTERS_LIMIT,
+          select: {
+            id: true,
+            title: true,
+            clientName: true,
+            updatedAt: true,
+            _count: {
+              select: {
+                documents: true,
+                researchSessions: true,
+                conversations: true,
+                draftDocuments: true,
               },
             },
-          }),
-          // Workspace total for the summary strip.
-          prisma.conversationMessage.count({
-            where: { conversation: { matter: matterWhere } },
-          }),
-          // Per-matter message totals without nesting conversation graphs on
-          // every matter row (one flat conversation projection instead).
-          prisma.conversation.findMany({
-            where: { matter: matterWhere },
-            take: MEMORY_MATTERS_LIMIT * 40,
-            select: {
-              matterId: true,
-              _count: { select: { messages: true } },
-            },
-          }),
-        ])
+          },
+        }),
+        // Workspace total for the summary strip.
+        prisma.conversationMessage.count({
+          where: { conversation: { matter: matterWhere } },
+        }),
+        // Per-matter message totals without nesting conversation graphs on
+        // every matter row (one flat conversation projection instead).
+        prisma.conversation.findMany({
+          where: { matter: matterWhere },
+          take: MEMORY_MATTERS_LIMIT * 40,
+          select: {
+            matterId: true,
+            _count: { select: { messages: true } },
+          },
+        }),
+        prisma.document.count({ where: documentWhere }),
+        prisma.document.count({
+          where: {
+            ...documentWhere,
+            ...documentRetrievalReadyWhere(),
+          },
+        }),
+        // Published-generation chunk sums without nesting every source row on
+        // each matter (bounded to the same matter set via access filter).
+        prisma.document.groupBy({
+          by: ["matterId"],
+          where: {
+            ...documentWhere,
+            publishedRunId: { not: null },
+          },
+          _sum: { chunkCount: true },
+        }),
+      ])
       const messagesByMatter = new Map<string, number>()
       for (const row of conversationMessageRows) {
         messagesByMatter.set(
@@ -125,25 +136,36 @@ export default async function MemoryPage() {
           (messagesByMatter.get(row.matterId) ?? 0) + row._count.messages
         )
       }
+      const chunksByMatter = new Map<string, number>()
+      for (const row of publishedDocs) {
+        chunksByMatter.set(row.matterId, row._sum.chunkCount ?? 0)
+      }
       matters = matterRows.map((matter) => ({
-        ...matter,
+        id: matter.id,
+        title: matter.title,
+        clientName: matter.clientName,
+        updatedAt: matter.updatedAt,
+        documentCount: matter._count.documents,
         messageCount: messagesByMatter.get(matter.id) ?? 0,
-        publishedChunkCount: matter.documents.reduce(
-          (sum, doc) => sum + publishedChunkCountContribution(doc),
-          0
-        ),
+        publishedChunkCount: chunksByMatter.get(matter.id) ?? 0,
+        _count: {
+          researchSessions: matter._count.researchSessions,
+          conversations: matter._count.conversations,
+          draftDocuments: matter._count.draftDocuments,
+        },
       }))
       messageCount = messageTotal
+      documentCount = sourceTotal
+      retrievalReadyCount = retrievalReadyTotal
+      chunkCount = publishedDocs.reduce(
+        (sum, row) => sum + (row._sum.chunkCount ?? 0),
+        0
+      )
     }
   } catch {
     loadFailed = true
   }
 
-  const documentCount = matters.reduce((sum, matter) => sum + matter.documents.length, 0)
-  const chunkCount = matters.reduce(
-    (sum, matter) => sum + matter.publishedChunkCount,
-    0
-  )
   const researchSessionCount = matters.reduce(
     (sum, matter) => sum + matter._count.researchSessions,
     0
@@ -154,14 +176,6 @@ export default async function MemoryPage() {
   )
   const draftCount = matters.reduce(
     (sum, matter) => sum + matter._count.draftDocuments,
-    0
-  )
-  const retrievalReadyCount = matters.reduce(
-    (sum, matter) =>
-      sum +
-      matter.documents.filter(
-        (doc) => isDocumentRetrievalReady(doc)
-      ).length,
     0
   )
 
@@ -301,7 +315,7 @@ export default async function MemoryPage() {
                 {matter.clientName ?? "-"}
               </span>
               <span className="w-20 shrink-0 text-right text-xs tabular-nums text-white/45">
-                {matter.documents.length}
+                {matter.documentCount}
               </span>
               <span className="w-20 shrink-0 text-right text-xs tabular-nums text-white/45">
                 {matter.publishedChunkCount}

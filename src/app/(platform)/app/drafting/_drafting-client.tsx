@@ -126,7 +126,7 @@ function draftMarkdown(output: DraftOutput) {
 export function DraftingClient({
   matters,
   recentDrafts,
-  canWrite = true,
+  canWrite = false,
   initialMatterId,
   initialResults = null,
 }: {

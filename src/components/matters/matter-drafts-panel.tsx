@@ -25,7 +25,7 @@ export function MatterDraftsPanel({
   matterId,
   drafts,
   totalCount,
-  canWrite = true,
+  canWrite = false,
 }: {
   matterId: string
   drafts: MatterDraftPreview[]
