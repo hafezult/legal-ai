@@ -3,6 +3,8 @@
 
 import { randomUUID } from "node:crypto"
 
+import type { Prisma } from "@prisma/client"
+
 import { prisma } from "@/lib/prisma"
 import { extractText } from "@/lib/parsing"
 import { chunkDocument } from "@/lib/retrieval/chunking"
@@ -24,14 +26,29 @@ import {
   isIndexingRunSupersededError,
 } from "@/lib/workflows/indexing-errors"
 import {
+  resolvePipelineClaim,
+  type IndexingClaim,
+} from "@/lib/workflows/indexing-claim"
+import {
   restorePublishedStatusFields,
   shouldPreservePublishedIndex,
   shouldStageChunkCount,
 } from "@/lib/workflows/indexing-publish"
 
+export type { IndexingClaim } from "@/lib/workflows/indexing-claim"
+export { resolvePipelineClaim } from "@/lib/workflows/indexing-claim"
+
 export type IndexingPipelineResult = {
   /** Soft outcome (e.g. embeddings skipped) that still left the doc usable. */
   warning?: string
+}
+
+export type RunIndexingPipelineOptions = {
+  /**
+   * Pre-acquired indexing lease (e.g. claimed under a locked matter-permission
+   * transaction). When set, the pipeline skips a second unscoped claim.
+   */
+  claim?: IndexingClaim
 }
 
 export type PipelineStatus =
@@ -180,15 +197,19 @@ async function publishRun(
  * retrievalStatus=ready so the prior generation stays searchable. The preserve
  * decision is evaluated inside the UPDATE (CASE) so a concurrent publishRun
  * cannot race a pre-read into clearing live retrieval.
+ *
+ * Pass a transaction client when the claim must serialize with authorization
+ * locks (matter/member FOR UPDATE) in the same transaction.
  */
-async function claimDocumentForIndexing(
-  documentId: string
-): Promise<{ runId: string; preservePublished: boolean } | null> {
+export async function claimDocumentForIndexing(
+  documentId: string,
+  db: Prisma.TransactionClient | typeof prisma = prisma
+): Promise<IndexingClaim | null> {
   const staleBefore = new Date(Date.now() - STALE_INDEXING_MS)
   const runId = randomUUID()
 
   // Single UPDATE: lease + preserve-or-pending retrievalStatus atomically.
-  const claimed = await prisma.$executeRaw`
+  const claimed = await db.$executeRaw`
     UPDATE "Document"
     SET
       "indexingStatus" = 'parsing',
@@ -208,7 +229,7 @@ async function claimDocumentForIndexing(
   `
   if (Number(claimed) !== 1) return null
 
-  const after = await prisma.document.findFirst({
+  const after = await db.document.findFirst({
     where: { id: documentId, indexingRunId: runId },
     select: {
       publishedRunId: true,
@@ -224,7 +245,8 @@ async function claimDocumentForIndexing(
 }
 
 export async function runIndexingPipeline(
-  documentId: string
+  documentId: string,
+  options: RunIndexingPipelineOptions = {}
 ): Promise<IndexingPipelineResult> {
   const doc = await prisma.document.findUnique({
     where: { id: documentId },
@@ -241,7 +263,10 @@ export async function runIndexingPipeline(
     throw new Error(`Document ${documentId}: missing storage path or MIME type.`)
   }
 
-  const claim = await claimDocumentForIndexing(documentId)
+  const claim = resolvePipelineClaim(
+    options.claim,
+    options.claim ? null : await claimDocumentForIndexing(documentId)
+  )
   if (!claim) {
     throw new IndexingInProgressError(documentId)
   }

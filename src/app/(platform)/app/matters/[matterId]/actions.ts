@@ -10,9 +10,11 @@ import { consumeRateLimit } from "@/lib/rate-limit"
 import { destructiveMutationKey } from "@/lib/rate-limit-policy"
 import { cleanupStoragePaths } from "@/lib/storage/documents"
 import {
+  claimDocumentForIndexing,
   isIndexingInProgressError,
   isIndexingRunSupersededError,
   runIndexingPipeline,
+  type IndexingClaim,
 } from "@/lib/workflows/indexing"
 
 const REINDEX_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
@@ -53,9 +55,15 @@ async function markIndexingTriggerFailed(documentId: string) {
 }
 
 /** Run the indexing pipeline in-process (no HTTP self-fetch / URL dependency). */
-async function triggerIndexing(documentId: string): Promise<DocumentIndexState> {
+async function triggerIndexing(
+  documentId: string,
+  claim?: IndexingClaim
+): Promise<DocumentIndexState> {
   try {
-    const result = await runIndexingPipeline(documentId)
+    const result = await runIndexingPipeline(
+      documentId,
+      claim ? { claim } : {}
+    )
     if (result.warning) {
       return { success: true, warning: result.warning }
     }
@@ -110,6 +118,7 @@ export async function reindexDocument(
 
   let ownerUserId: string
   let fileName: string
+  let claim: IndexingClaim
 
   try {
     const user = await prisma.user.findUnique({
@@ -126,29 +135,76 @@ export async function reindexDocument(
       }
     }
 
+    // Fast-path deny before opening a transaction.
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) return { error: permission.error }
 
-    const document = await prisma.document.findFirst({
-      where: {
-        id: documentId,
+    // Claim the indexing lease under the same locks as matter write auth so a
+    // concurrent membership revoke/demotion cannot start a reindex after the
+    // unlocked check. Do not reset indexingStatus outside the claim — that
+    // would defeat the atomic guard for concurrent in-progress runs.
+    const authorized = await prisma.$transaction(async (tx) => {
+      const locked = await requireMatterPermissionLocked(
+        tx,
+        user.id,
         matterId,
-        matter: matterAccessWhere(user.id),
-      },
-      select: { id: true, fileName: true },
-    })
-    if (!document) return { error: "Document not found or access denied." }
+        "write"
+      )
+      if (!locked.ok) {
+        throw new Error("MATTER_FORBIDDEN")
+      }
 
-    // Do not reset indexingStatus here — that would defeat the atomic claim
-    // guard in runIndexingPipeline for concurrent in-progress runs. Claim
-    // itself resets parse/retrieval when it wins the race.
+      const document = await tx.document.findFirst({
+        where: {
+          id: documentId,
+          matterId,
+          matter: matterAccessWhere(user.id),
+        },
+        select: {
+          id: true,
+          fileName: true,
+          storagePath: true,
+          mimeType: true,
+        },
+      })
+      if (!document) {
+        throw new Error("MATTER_FORBIDDEN")
+      }
+      if (!document.storagePath || !document.mimeType) {
+        throw new Error("DOCUMENT_NOT_READY")
+      }
+
+      const claimed = await claimDocumentForIndexing(document.id, tx)
+      if (!claimed) {
+        throw new Error("INDEXING_IN_PROGRESS")
+      }
+
+      return { claim: claimed, fileName: document.fileName }
+    })
+
     ownerUserId = user.id
-    fileName = document.fileName
-  } catch {
+    fileName = authorized.fileName
+    claim = authorized.claim
+  } catch (error) {
+    if (error instanceof Error && error.message === "MATTER_FORBIDDEN") {
+      return { error: "Document not found or access denied." }
+    }
+    if (error instanceof Error && error.message === "INDEXING_IN_PROGRESS") {
+      return {
+        error:
+          "Indexing is already in progress for this document. Try again after it finishes or stalls.",
+      }
+    }
+    if (error instanceof Error && error.message === "DOCUMENT_NOT_READY") {
+      return {
+        error:
+          "Document is missing storage path or type and cannot be indexed.",
+      }
+    }
     return { error: "Data layer unreachable. Please try again." }
   }
 
-  const result = await triggerIndexing(documentId)
+  const result = await triggerIndexing(documentId, claim)
 
   await recordAuditEvent({
     userId: ownerUserId,
