@@ -224,8 +224,9 @@ export default async function DocumentViewerPage({
     } else if (!stillAllowed || !stillAllowed.ok) {
       missing = true
     } else {
-      canWrite = roleHasPermission(stillAllowed.access.role, "write")
-      canDelete = roleHasPermission(stillAllowed.access.role, "delete")
+      const role = stillAllowed.access.role
+      canWrite = role ? roleHasPermission(role, "write") : false
+      canDelete = role ? roleHasPermission(role, "delete") : false
 
       // Short-lived preview URL; only after locked reauth succeeds.
       let signedUrl: string | null = null
