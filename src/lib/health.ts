@@ -20,6 +20,9 @@ export {
 
 import type { HealthProbe } from "@/lib/health-probes"
 
+/** Match Clerk/Supabase probe budgets so a hung Postgres cannot stall readiness. */
+export const DATABASE_PROBE_TIMEOUT_MS = 2_500
+
 export type HealthReport = {
   status: "ok" | "degraded"
   checkedAt: string
@@ -43,33 +46,57 @@ function configuredProbe(
     : { status: "missing", configured: false, detail: missingDetail }
 }
 
-export async function getHealthReport(): Promise<HealthReport> {
-  let database: HealthProbe = {
-    status: "missing",
-    configured: Boolean(process.env.DATABASE_URL),
-    detail: process.env.DATABASE_URL
-      ? "Configured but unreachable."
-      : "DATABASE_URL is not set.",
-  }
-
-  if (process.env.DATABASE_URL) {
-    try {
-      await prisma.$queryRaw`SELECT 1`
-      database = {
-        status: "ok",
-        configured: true,
-        detail: "Postgres reachable.",
-      }
-    } catch {
-      database = {
-        status: "degraded",
-        configured: true,
-        detail: "Postgres configured but query probe failed.",
-      }
+export async function probeDatabase(
+  args: {
+    databaseUrl?: string | null
+    query?: () => Promise<unknown>
+    timeoutMs?: number
+  } = {}
+): Promise<HealthProbe> {
+  const databaseUrl = args.databaseUrl ?? process.env.DATABASE_URL
+  if (!databaseUrl) {
+    return {
+      status: "missing",
+      configured: false,
+      detail: "DATABASE_URL is not set.",
     }
   }
 
-  const [clerk, storage] = await Promise.all([
+  const timeoutMs = args.timeoutMs ?? DATABASE_PROBE_TIMEOUT_MS
+  const query = args.query ?? (() => prisma.$queryRaw`SELECT 1`)
+
+  try {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        query(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("timed out")), timeoutMs)
+        }),
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+    return {
+      status: "ok",
+      configured: true,
+      detail: "Postgres reachable.",
+    }
+  } catch (error) {
+    const timedOut = error instanceof Error && error.message === "timed out"
+    return {
+      status: "degraded",
+      configured: true,
+      detail: timedOut
+        ? "Postgres configured but query probe timed out."
+        : "Postgres configured but query probe failed.",
+    }
+  }
+}
+
+export async function getHealthReport(): Promise<HealthReport> {
+  const [database, clerk, storage] = await Promise.all([
+    probeDatabase(),
     probeClerk({
       publishableKey: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
       secretKey: process.env.CLERK_SECRET_KEY,

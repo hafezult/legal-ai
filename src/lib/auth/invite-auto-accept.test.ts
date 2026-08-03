@@ -22,6 +22,23 @@ describe("shouldAcceptPendingInvites", () => {
       true
     )
   })
+
+  it("honors the invite-route skip header even when opt-in is true", () => {
+    assert.equal(
+      shouldAcceptPendingInvites({
+        acceptPendingInvites: true,
+        skipHeader: "1",
+      }),
+      false
+    )
+    assert.equal(
+      shouldAcceptPendingInvites({
+        acceptPendingInvites: true,
+        skipHeader: null,
+      }),
+      true
+    )
+  })
 })
 
 describe("shouldSkipInviteAutoAccept", () => {

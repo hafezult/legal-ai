@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { getHealthReport, type HealthReport } from "@/lib/health"
+import { createReadyReportCache } from "@/lib/health-ready-cache"
 import { canRevealHealthDetails } from "@/lib/indexing/secret"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import { clientKeyFromRequest } from "@/lib/request-ip"
@@ -11,25 +12,10 @@ export const runtime = "nodejs"
 const READY_RATE_LIMIT = { limit: 60, windowMs: 60_000 }
 const READY_CACHE_TTL_MS = 5_000
 
-type CachedReport = {
-  expiresAt: number
-  report: HealthReport
-}
-
-let cachedReport: CachedReport | null = null
+const readyReportCache = createReadyReportCache<HealthReport>(READY_CACHE_TTL_MS)
 
 async function loadHealthReport(): Promise<HealthReport> {
-  const now = Date.now()
-  if (cachedReport && cachedReport.expiresAt > now) {
-    return cachedReport.report
-  }
-
-  const report = await getHealthReport()
-  cachedReport = {
-    expiresAt: now + READY_CACHE_TTL_MS,
-    report,
-  }
-  return report
+  return readyReportCache.load(() => getHealthReport())
 }
 
 /**

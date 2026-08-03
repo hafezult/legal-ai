@@ -11,8 +11,12 @@ export const SKIP_INVITE_AUTO_ACCEPT_HEADER = "x-aether-skip-invite-auto-accept"
 
 export function shouldAcceptPendingInvites(options?: {
   acceptPendingInvites?: boolean
+  /** Middleware stamp from `/app/invites/*` — always wins over opt-in. */
+  skipHeader?: string | null
 }): boolean {
-  return options?.acceptPendingInvites === true
+  if (options?.acceptPendingInvites !== true) return false
+  if (shouldSkipInviteAutoAccept(options.skipHeader ?? null)) return false
+  return true
 }
 
 export function shouldSkipInviteAutoAccept(headerValue: string | null): boolean {

@@ -1,10 +1,14 @@
 import { currentUser } from "@clerk/nextjs/server"
+import { headers } from "next/headers"
 
 import {
   selectVerifiedClerkEmail,
   unverifiedClerkEmailPlaceholder,
 } from "@/lib/auth/clerk-email"
-import { shouldAcceptPendingInvites } from "@/lib/auth/invite-auto-accept"
+import {
+  SKIP_INVITE_AUTO_ACCEPT_HEADER,
+  shouldAcceptPendingInvites,
+} from "@/lib/auth/invite-auto-accept"
 import {
   acceptPendingOrganizationInvites,
   ensurePersonalOrganization,
@@ -84,8 +88,17 @@ export async function ensureAppUser(options: EnsureAppUserOptions = {}) {
   await ensurePersonalOrganization(user)
 
   // Invite matching must use the currently verified Clerk email, never a
-  // collision-fallback / placeholder persisted on the User row.
-  if (shouldAcceptPendingInvites(options) && verifiedEmail) {
+  // collision-fallback / placeholder persisted on the User row. Middleware
+  // stamps SKIP_INVITE_AUTO_ACCEPT_HEADER on `/app/invites/*` so even an
+  // accidental acceptPendingInvites: true cannot silently join before Decline.
+  const skipHeader = (await headers()).get(SKIP_INVITE_AUTO_ACCEPT_HEADER)
+  if (
+    shouldAcceptPendingInvites({
+      acceptPendingInvites: options.acceptPendingInvites,
+      skipHeader,
+    }) &&
+    verifiedEmail
+  ) {
     try {
       await acceptPendingOrganizationInvites({
         id: user.id,
