@@ -70,47 +70,48 @@ export default async function MemoryPage() {
       canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
       const documentWhere = { matter: matterWhere }
+      // Load the registry page first, then aggregate only for those matter IDs
+      // so per-matter message/chunk counts stay deterministic under caps.
+      const matterRows = await prisma.matter.findMany({
+        where: matterWhere,
+        orderBy: { updatedAt: "desc" },
+        take: MEMORY_MATTERS_LIMIT,
+        select: {
+          id: true,
+          title: true,
+          clientName: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              documents: true,
+              researchSessions: true,
+              conversations: true,
+              draftDocuments: true,
+            },
+          },
+        },
+      })
+      const displayedMatterIds = matterRows.map((matter) => matter.id)
       const [
-        matterRows,
         messageTotal,
         conversationMessageRows,
         sourceTotal,
         retrievalReadyTotal,
         publishedDocs,
       ] = await Promise.all([
-        prisma.matter.findMany({
-          where: matterWhere,
-          orderBy: { updatedAt: "desc" },
-          take: MEMORY_MATTERS_LIMIT,
-          select: {
-            id: true,
-            title: true,
-            clientName: true,
-            updatedAt: true,
-            _count: {
-              select: {
-                documents: true,
-                researchSessions: true,
-                conversations: true,
-                draftDocuments: true,
-              },
-            },
-          },
-        }),
         // Workspace total for the summary strip.
         prisma.conversationMessage.count({
           where: { conversation: { matter: matterWhere } },
         }),
-        // Per-matter message totals without nesting conversation graphs on
-        // every matter row (one flat conversation projection instead).
-        prisma.conversation.findMany({
-          where: { matter: matterWhere },
-          take: MEMORY_MATTERS_LIMIT * 40,
-          select: {
-            matterId: true,
-            _count: { select: { messages: true } },
-          },
-        }),
+        displayedMatterIds.length > 0
+          ? prisma.conversation.findMany({
+              where: { matterId: { in: displayedMatterIds } },
+              select: {
+                matterId: true,
+                _count: { select: { messages: true } },
+              },
+            })
+          : Promise.resolve([]),
         prisma.document.count({ where: documentWhere }),
         prisma.document.count({
           where: {
@@ -118,16 +119,16 @@ export default async function MemoryPage() {
             ...documentRetrievalReadyWhere(),
           },
         }),
-        // Published-generation chunk sums without nesting every source row on
-        // each matter (bounded to the same matter set via access filter).
-        prisma.document.groupBy({
-          by: ["matterId"],
-          where: {
-            ...documentWhere,
-            publishedRunId: { not: null },
-          },
-          _sum: { chunkCount: true },
-        }),
+        displayedMatterIds.length > 0
+          ? prisma.document.groupBy({
+              by: ["matterId"],
+              where: {
+                matterId: { in: displayedMatterIds },
+                publishedRunId: { not: null },
+              },
+              _sum: { chunkCount: true },
+            })
+          : Promise.resolve([]),
       ])
       const messagesByMatter = new Map<string, number>()
       for (const row of conversationMessageRows) {

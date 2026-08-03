@@ -26,6 +26,8 @@ import { MAX_RESEARCH_QUERY_CHARS } from "@/lib/research/limits"
 const RESEARCH_RATE_LIMIT = { limit: 12, windowMs: 60_000 } as const
 const RESEARCH_DELETE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const RESEARCH_RESTORE_RATE_LIMIT = { limit: 40, windowMs: 60_000 } as const
+/** Wall-clock budget under page maxDuration (300s) for embed + grounded chat. */
+const RESEARCH_ACTION_DEADLINE_MS = 270_000
 
 function rateLimitMessage(action: string, retryAfterMs: number): string {
   const seconds = Math.ceil(retryAfterMs / 1000)
@@ -70,24 +72,45 @@ export type ResearchOutput = {
 
 async function generateGroundedResponse(
   query: string,
-  chunks: ResearchChunk[]
+  chunks: ResearchChunk[],
+  remainingBudgetMs?: number
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
     return "AI analysis unavailable — OPENAI_API_KEY not configured. Retrieved excerpts are displayed above."
   }
 
-  const { createOpenAIClient } = await import("@/lib/ai/openai-client")
-  const client = await createOpenAIClient()
+  const {
+    OPENAI_REQUEST_TIMEOUT_MS,
+    createOpenAIClient,
+    openAICallBudgetFromDeadline,
+  } = await import("@/lib/ai/openai-client")
 
-  const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0.1,
-    max_tokens: 1800,
-    messages: [
+  const budget =
+    remainingBudgetMs === undefined
+      ? { timeout: OPENAI_REQUEST_TIMEOUT_MS, maxRetries: 1 as const }
+      : openAICallBudgetFromDeadline(remainingBudgetMs)
+  if (!budget) {
+    throw new Error("Insufficient budget remaining for grounded research response.")
+  }
+
+  const client = await createOpenAIClient(budget)
+  const controller = new AbortController()
+  const abortTimer =
+    remainingBudgetMs === undefined
+      ? null
+      : setTimeout(() => controller.abort(), remainingBudgetMs)
+
+  try {
+    const response = await client.chat.completions.create(
       {
-        role: "system",
-        content: `You are a legal research assistant specialising in English and Welsh law, assisting barristers and solicitors in chambers and litigation teams.
+        model: "gpt-4o-mini",
+        temperature: 0.1,
+        max_tokens: 1800,
+        messages: [
+          {
+            role: "system",
+            content: `You are a legal research assistant specialising in English and Welsh law, assisting barristers and solicitors in chambers and litigation teams.
 
 Rules you must follow without exception:
 1. Answer ONLY from the retrieved source excerpts provided. Do not draw on external legal knowledge.
@@ -98,15 +121,20 @@ Rules you must follow without exception:
 6. Structure your response with clear paragraphs. Use headings where appropriate.
 7. Apply UK legal terminology throughout (claimant/defendant, barrister, counsel, chambers, disclosure, privilege, etc.).
 8. ${groundedSystemRulesAppendix()}`,
+          },
+          {
+            role: "user",
+            content: buildResearchUserPrompt(query, chunks),
+          },
+        ],
       },
-      {
-        role: "user",
-        content: buildResearchUserPrompt(query, chunks),
-      },
-    ],
-  })
+      { signal: controller.signal }
+    )
 
-  return response.choices[0]?.message?.content ?? "No response generated."
+    return response.choices[0]?.message?.content ?? "No response generated."
+  } finally {
+    if (abortTimer) clearTimeout(abortTimer)
+  }
 }
 
 // ── Main research action ──────────────────────────────────────────────────
@@ -208,10 +236,17 @@ export async function runResearch(
     }
   }
 
+  const actionStartedAt = Date.now()
+  const remainingBudgetMs = () =>
+    Math.max(0, RESEARCH_ACTION_DEADLINE_MS - (Date.now() - actionStartedAt))
+
   // Semantic retrieval
   let chunks: ResearchChunk[] = []
   try {
-    const raw = await semanticSearch(query, matterId, { topK: 6 })
+    const raw = await semanticSearch(query, matterId, {
+      topK: 6,
+      deadlineMs: remainingBudgetMs(),
+    })
     chunks = raw.map((c) => ({
       id: c.id,
       content: c.content,
@@ -249,7 +284,7 @@ export async function runResearch(
   let answer = ""
   let generationError: string | undefined
   try {
-    answer = await generateGroundedResponse(query, chunks)
+    answer = await generateGroundedResponse(query, chunks, remainingBudgetMs())
   } catch (err) {
     if (err instanceof Error) {
       console.error("[runResearch] generation", err.message.slice(0, 240))

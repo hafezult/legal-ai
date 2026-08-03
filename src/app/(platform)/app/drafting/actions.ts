@@ -30,6 +30,8 @@ import { indexedChunkCount, semanticSearch } from "@/lib/retrieval/search"
 const DRAFT_RATE_LIMIT = { limit: 12, windowMs: 60_000 } as const
 const DRAFT_DELETE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
 const DRAFT_RESTORE_RATE_LIMIT = { limit: 40, windowMs: 60_000 } as const
+/** Wall-clock budget under page maxDuration (300s) for embed + grounded chat. */
+const DRAFT_ACTION_DEADLINE_MS = 270_000
 
 function rateLimitMessage(action: string, retryAfterMs: number): string {
   const seconds = Math.ceil(retryAfterMs / 1000)
@@ -108,34 +110,60 @@ Produce a clause analysis note with: Clause focus, Operative effect, Risks/ambig
 async function generateGroundedDraft(
   draftType: DraftType,
   instruction: string,
-  chunks: DraftSourceChunk[]
+  chunks: DraftSourceChunk[],
+  remainingBudgetMs?: number
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
     return "Draft generation unavailable — OPENAI_API_KEY not configured. Retrieved source excerpts are listed above for manual drafting."
   }
 
-  const { createOpenAIClient } = await import("@/lib/ai/openai-client")
-  const client = await createOpenAIClient()
+  const {
+    OPENAI_REQUEST_TIMEOUT_MS,
+    createOpenAIClient,
+    openAICallBudgetFromDeadline,
+  } = await import("@/lib/ai/openai-client")
 
-  const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0.15,
-    max_tokens: 2200,
-    messages: [
-      { role: "system", content: systemPromptFor(draftType) },
+  const budget =
+    remainingBudgetMs === undefined
+      ? { timeout: OPENAI_REQUEST_TIMEOUT_MS, maxRetries: 1 as const }
+      : openAICallBudgetFromDeadline(remainingBudgetMs)
+  if (!budget) {
+    throw new Error("Insufficient budget remaining for grounded draft generation.")
+  }
+
+  const client = await createOpenAIClient(budget)
+  const controller = new AbortController()
+  const abortTimer =
+    remainingBudgetMs === undefined
+      ? null
+      : setTimeout(() => controller.abort(), remainingBudgetMs)
+
+  try {
+    const response = await client.chat.completions.create(
       {
-        role: "user",
-        content: buildDraftUserPrompt(
-          DRAFT_TYPE_LABELS[draftType],
-          instruction,
-          chunks
-        ),
+        model: "gpt-4o-mini",
+        temperature: 0.15,
+        max_tokens: 2200,
+        messages: [
+          { role: "system", content: systemPromptFor(draftType) },
+          {
+            role: "user",
+            content: buildDraftUserPrompt(
+              DRAFT_TYPE_LABELS[draftType],
+              instruction,
+              chunks
+            ),
+          },
+        ],
       },
-    ],
-  })
+      { signal: controller.signal }
+    )
 
-  return response.choices[0]?.message?.content ?? "No draft generated."
+    return response.choices[0]?.message?.content ?? "No draft generated."
+  } finally {
+    if (abortTimer) clearTimeout(abortTimer)
+  }
 }
 
 export async function generateDraft(
@@ -242,9 +270,16 @@ export async function generateDraft(
     }
   }
 
+  const actionStartedAt = Date.now()
+  const remainingBudgetMs = () =>
+    Math.max(0, DRAFT_ACTION_DEADLINE_MS - (Date.now() - actionStartedAt))
+
   let chunks: DraftSourceChunk[] = []
   try {
-    const raw = await semanticSearch(instruction, matterId, { topK: 8 })
+    const raw = await semanticSearch(instruction, matterId, {
+      topK: 8,
+      deadlineMs: remainingBudgetMs(),
+    })
     chunks = raw.map((chunk) => ({
       id: chunk.id,
       content: chunk.content,
@@ -269,7 +304,12 @@ export async function generateDraft(
   let content = ""
   let generationError: string | undefined
   try {
-    content = await generateGroundedDraft(draftType, instruction.trim(), chunks)
+    content = await generateGroundedDraft(
+      draftType,
+      instruction.trim(),
+      chunks,
+      remainingBudgetMs()
+    )
   } catch (err) {
     if (err instanceof Error) {
       console.error("[generateDraft] generation", err.message.slice(0, 240))

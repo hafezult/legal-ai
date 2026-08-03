@@ -95,9 +95,13 @@ export function canStartEmbeddingRequest(
 
 export async function generateEmbedding(
   text: string,
-  config: Partial<EmbeddingConfig> = {}
+  config: Partial<EmbeddingConfig> = {},
+  options: {
+    /** Wall-clock budget so query embeds fail before serverless maxDuration. */
+    deadlineMs?: number
+  } = {}
 ): Promise<number[]> {
-  const [embedding] = await generateBatchEmbeddings([text], config)
+  const [embedding] = await generateBatchEmbeddings([text], config, options)
   return embedding
 }
 

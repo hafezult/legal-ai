@@ -20,6 +20,8 @@ export type SearchOptions = {
   topK?: number
   distanceThreshold?: number
   documentIds?: string[]
+  /** Wall-clock budget for the query embedding call (ms from search start). */
+  deadlineMs?: number
 }
 
 /**
@@ -31,7 +33,11 @@ export async function semanticSearch(
   matterId: string,
   options: SearchOptions = {}
 ): Promise<RetrievedChunk[]> {
-  const embedding = await generateEmbedding(query)
+  const embedding = await generateEmbedding(
+    query,
+    {},
+    { deadlineMs: options.deadlineMs }
+  )
   return retrieveByEmbedding(embedding, matterId, options)
 }
 

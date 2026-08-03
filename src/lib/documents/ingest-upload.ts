@@ -134,6 +134,16 @@ export async function ingestUploadedDocument(args: {
     fileName: safeFileName,
   })
 
+  // Refuse early when the matter is already mid-delete so we do not upload an
+  // object that will never receive a durable document row.
+  const matterGate = await prisma.matter.findUnique({
+    where: { id: matterId },
+    select: { id: true, status: true },
+  })
+  if (!matterGate || matterGate.status === "deleting") {
+    return { error: "Matter not found or is being deleted." }
+  }
+
   const { error: storageErr } = await uploadToStorage(
     storagePath,
     buffer,
@@ -149,20 +159,32 @@ export async function ingestUploadedDocument(args: {
 
   let documentId: string
   try {
-    const created = await prisma.document.create({
-      data: {
-        matterId,
-        fileName: safeFileName,
-        storagePath,
-        mimeType: documentType.mimeType,
-        fileSize: file.size,
-        uploadStatus: "uploaded",
-        indexingStatus: "pending",
-        retrievalStatus: "pending",
-      },
+    // Re-check under a matter row lock so registration cannot race deleteMatter
+    // path collection / cascade after the object was uploaded.
+    const created = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Matter" WHERE id = ${matterId} FOR UPDATE`
+      const matter = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { id: true, status: true },
+      })
+      if (!matter || matter.status === "deleting") {
+        throw new Error("MATTER_UNAVAILABLE")
+      }
+      return tx.document.create({
+        data: {
+          matterId,
+          fileName: safeFileName,
+          storagePath,
+          mimeType: documentType.mimeType,
+          fileSize: file.size,
+          uploadStatus: "uploaded",
+          indexingStatus: "pending",
+          retrievalStatus: "pending",
+        },
+      })
     })
     documentId = created.id
-  } catch {
+  } catch (error) {
     const cleanup = await cleanupStoragePaths([storagePath])
     if (!cleanup.ok) {
       return {
@@ -170,6 +192,9 @@ export async function ingestUploadedDocument(args: {
           "Document registration failed, and storage cleanup also failed. Contact an admin to remove the orphaned upload.",
         unavailable: true,
       }
+    }
+    if (error instanceof Error && error.message === "MATTER_UNAVAILABLE") {
+      return { error: "Matter not found or is being deleted." }
     }
     return {
       error: "Document registration failed. Storage entry removed.",

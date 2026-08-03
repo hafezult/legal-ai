@@ -32,17 +32,41 @@ export async function removeManyFromStorage(paths: string[]) {
 
   const client = getSupabaseAdmin()
   const removed: { name: string }[] = []
+  const failed: string[] = []
+  let firstError: { message: string } | null = null
 
+  // Continue independent batches after a failure so one bad path cannot leave
+  // every subsequent object unattempted after the DB references are gone.
   for (let i = 0; i < uniquePaths.length; i += STORAGE_REMOVE_BATCH_SIZE) {
     const batch = uniquePaths.slice(i, i + STORAGE_REMOVE_BATCH_SIZE)
-    const { data, error } = await client.storage
-      .from(STORAGE_BUCKET)
-      .remove(batch)
-    if (error) return { data: removed, error }
-    if (data?.length) removed.push(...data)
+    try {
+      const { data, error } = await client.storage
+        .from(STORAGE_BUCKET)
+        .remove(batch)
+      if (error) {
+        failed.push(...batch)
+        firstError ??= { message: error.message }
+        continue
+      }
+      if (data?.length) removed.push(...data)
+    } catch (error) {
+      failed.push(...batch)
+      firstError ??= {
+        message:
+          error instanceof Error ? error.message : "Storage remove failed",
+      }
+    }
   }
 
-  return { data: removed, error: null }
+  if (failed.length > 0) {
+    return {
+      data: removed,
+      error: firstError ?? { message: "Storage remove failed" },
+      failedPaths: failed,
+    }
+  }
+
+  return { data: removed, error: null, failedPaths: [] as string[] }
 }
 
 /**
@@ -57,14 +81,16 @@ export async function cleanupStoragePaths(
   if (uniquePaths.length === 0) return { ok: true, paths: [] }
 
   try {
-    const { error } = await removeManyFromStorage(uniquePaths)
+    const { error, failedPaths } = await removeManyFromStorage(uniquePaths)
     if (error) {
+      const unresolved =
+        failedPaths.length > 0 ? failedPaths : uniquePaths
       console.error(
         "[storage] cleanup failed:",
         error.message,
-        uniquePaths.join(", ")
+        unresolved.join(", ")
       )
-      return { ok: false, paths: uniquePaths, error: error.message }
+      return { ok: false, paths: unresolved, error: error.message }
     }
     return { ok: true, paths: uniquePaths }
   } catch (error) {

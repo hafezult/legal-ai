@@ -442,34 +442,48 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
     if (!matter) return { error: "Matter not found or access denied." }
 
     deletedTitle = matter.title
-
-    // Page storage paths so large matters do not load every document row at once.
-    // cleanupStoragePaths batches Supabase removes separately.
-    const PATH_PAGE = 200
-    let pathCursor: string | undefined
-    for (;;) {
-      const page = await prisma.document.findMany({
-        where: { matterId: matter.id },
-        select: { id: true, storagePath: true },
-        orderBy: { id: "asc" },
-        take: PATH_PAGE,
-        ...(pathCursor
-          ? { skip: 1, cursor: { id: pathCursor } }
-          : {}),
-      })
-      if (page.length === 0) break
-      for (const document of page) {
-        if (document.storagePath) storagePaths.push(document.storagePath)
-      }
-      pathCursor = page[page.length - 1]?.id
-      if (page.length < PATH_PAGE) break
-    }
-
     const organizationId = permission.access.organizationId
 
-    // Delete first, then audit without matterId FK (SetNull would still fail
-    // if we pointed at the deleted row). Keep organizationId for org trails.
-    await prisma.matter.delete({ where: { id: matter.id } })
+    // Lock the matter, mark deleting, page paths, then cascade-delete inside one
+    // transaction so concurrent uploads cannot register after the path scan.
+    const PATH_PAGE = 200
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Matter" WHERE id = ${matter.id} FOR UPDATE`
+
+      const marked = await tx.matter.updateMany({
+        where: {
+          id: matter.id,
+          status: { not: "deleting" },
+        },
+        data: { status: "deleting" },
+      })
+      if (marked.count !== 1) {
+        throw new Error("MATTER_ALREADY_DELETING")
+      }
+
+      let pathCursor: string | undefined
+      for (;;) {
+        const page = await tx.document.findMany({
+          where: { matterId: matter.id },
+          select: { id: true, storagePath: true },
+          orderBy: { id: "asc" },
+          take: PATH_PAGE,
+          ...(pathCursor
+            ? { skip: 1, cursor: { id: pathCursor } }
+            : {}),
+        })
+        if (page.length === 0) break
+        for (const document of page) {
+          if (document.storagePath) storagePaths.push(document.storagePath)
+        }
+        pathCursor = page[page.length - 1]?.id
+        if (page.length < PATH_PAGE) break
+      }
+
+      // Delete first, then audit without matterId FK (SetNull would still fail
+      // if we pointed at the deleted row). Keep organizationId for org trails.
+      await tx.matter.delete({ where: { id: matter.id } })
+    })
 
     await recordAuditEvent({
       userId: user.id,
@@ -485,7 +499,10 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
         deletedMatterId: matter.id,
       },
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "MATTER_ALREADY_DELETING") {
+      return { error: "This matter is already being deleted. Refresh and try again." }
+    }
     return { error: "Unable to delete matter. Please try again." }
   }
 

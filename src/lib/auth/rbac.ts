@@ -415,6 +415,7 @@ export async function acceptPendingOrganizationInvites(user: {
       id: true,
       organizationId: true,
       role: true,
+      tokenHash: true,
       organization: { select: { name: true } },
     },
   })
@@ -429,6 +430,7 @@ export async function acceptPendingOrganizationInvites(user: {
       organizationId: invite.organizationId,
       userId: user.id,
       role,
+      tokenHash: invite.tokenHash,
       acceptedAt: now,
     })
     if (!claimed.ok) continue
@@ -461,6 +463,8 @@ async function claimOrganizationInviteAcceptance(args: {
   organizationId: string
   userId: string
   role: OrgRole
+  /** Must match the token that authorized this accept (blocks rotated links). */
+  tokenHash: string
   acceptedAt: Date
   switchActive?: boolean
 }): Promise<
@@ -472,6 +476,7 @@ async function claimOrganizationInviteAcceptance(args: {
       const claimed = await tx.organizationInvite.updateMany({
         where: {
           id: args.inviteId,
+          tokenHash: args.tokenHash,
           acceptedAt: null,
           expiresAt: { gt: args.acceptedAt },
         },
@@ -701,12 +706,14 @@ export async function acceptOrganizationInviteByToken(
     return { ok: false, error: "Invite not found or link is invalid." }
   }
 
+  const tokenHash = hashInviteToken(token)
   const invite = await prisma.organizationInvite.findUnique({
-    where: { tokenHash: hashInviteToken(token) },
+    where: { tokenHash },
     select: {
       id: true,
       email: true,
       role: true,
+      tokenHash: true,
       acceptedAt: true,
       expiresAt: true,
       organizationId: true,
@@ -743,6 +750,7 @@ export async function acceptOrganizationInviteByToken(
     organizationId: invite.organizationId,
     userId: user.id,
     role,
+    tokenHash: invite.tokenHash,
     acceptedAt: new Date(),
     switchActive: true,
   })
@@ -823,13 +831,34 @@ export async function transferOrganizationOwnership(
   }
 
   try {
-    // Demote the current owner only while they still hold that role, then
-    // promote the target. Concurrent transfers race on the demote step so
-    // exactly one transfer can succeed and the org never ends with two owners.
+    // Lock the organization + actor user so transfer cannot race org delete /
+    // last-owned checks, then demote/promote under conditional updates so the
+    // org never ends with zero or two owners.
     await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actorUserId} FOR UPDATE`
+
+      const actorStillOwner = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: { organizationId, userId: actorUserId },
+        },
+        select: { id: true, role: true },
+      })
+      if (!actorStillOwner || actorStillOwner.role !== "owner") {
+        throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
+      }
+
+      const targetStillMember = await tx.organizationMember.findFirst({
+        where: { id: targetMemberId, organizationId },
+        select: { id: true, userId: true, role: true },
+      })
+      if (!targetStillMember || targetStillMember.userId === actorUserId) {
+        throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
+      }
+
       const demoted = await tx.organizationMember.updateMany({
         where: {
-          id: actorMembership.id,
+          id: actorStillOwner.id,
           organizationId,
           role: "owner",
         },
@@ -839,10 +868,17 @@ export async function transferOrganizationOwnership(
         throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
       }
 
-      await tx.organizationMember.update({
-        where: { id: target.id },
+      const promoted = await tx.organizationMember.updateMany({
+        where: {
+          id: targetStillMember.id,
+          organizationId,
+          role: { not: "owner" },
+        },
         data: { role: "owner" },
       })
+      if (promoted.count !== 1) {
+        throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
+      }
     })
   } catch (error) {
     if (
@@ -911,8 +947,9 @@ export async function deleteOwnedOrganization(
 
   try {
     await prisma.$transaction(async (tx) => {
-      // Serialize "keep one owned workspace" checks so concurrent deletes of
-      // the actor's final two orgs cannot both observe ownedCount=2 and wipe both.
+      // Serialize against concurrent ownership transfer and "keep one owned
+      // workspace" checks so delete cannot race a transfer mid-flight.
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
       await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actorUserId} FOR UPDATE`
 
       const ownedCount = await tx.organizationMember.count({

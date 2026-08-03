@@ -200,8 +200,19 @@ export async function leaveOrganization(
 
     // Membership delete + active-workspace fallback must be atomic so a failed
     // activeOrganizationId update cannot report error after the leave applied.
+    // Conditional delete refuses if the actor was promoted to owner concurrently.
     await prisma.$transaction(async (tx) => {
-      await tx.organizationMember.delete({ where: { id: membership.id } })
+      const left = await tx.organizationMember.deleteMany({
+        where: {
+          id: membership.id,
+          organizationId,
+          userId: actor.user.id,
+          role: { not: "owner" },
+        },
+      })
+      if (left.count !== 1) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
 
       const remaining = await tx.organizationMember.findMany({
         where: { userId: actor.user.id },
@@ -229,7 +240,16 @@ export async function leaveOrganization(
       organizationId,
       summary: `Left organization “${membership.organization.name}”`,
     })
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "CONCURRENT_MEMBERSHIP_CHANGE"
+    ) {
+      return {
+        error:
+          "Membership changed concurrently (you may now be the owner). Refresh and try again.",
+      }
+    }
     return { error: "Unable to leave organization. Please try again." }
   }
 
@@ -741,7 +761,7 @@ export async function refreshOrganizationInviteLink(
         acceptedAt: null,
         expiresAt: { gt: new Date() },
       },
-      select: { id: true, email: true, role: true },
+      select: { id: true, email: true, role: true, tokenHash: true },
     })
     if (!invite) return { error: "Invite not found or already accepted." }
     if (
@@ -754,19 +774,30 @@ export async function refreshOrganizationInviteLink(
     }
 
     const token = generateInviteToken()
-    const rotated = await prisma.organizationInvite.updateMany({
-      where: {
-        id: invite.id,
-        organizationId,
-        acceptedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      data: {
-        tokenHash: hashInviteToken(token),
-        // Refreshing a pending link also renews the acceptance window so a
-        // near-expiry invite does not stay short-lived after rotation.
-        expiresAt: inviteExpiryDate(),
-      },
+    const emailNormalized = invite.email.trim().toLowerCase()
+    // CAS on the prior tokenHash so concurrent refresh/accept cannot both win,
+    // and serialize with issuance via the same org+email advisory lock.
+    const rotated = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        SELECT pg_advisory_xact_lock(
+          hashtext(${`org-invite:${organizationId}:${emailNormalized}`})
+        )
+      `
+      return tx.organizationInvite.updateMany({
+        where: {
+          id: invite.id,
+          organizationId,
+          tokenHash: invite.tokenHash,
+          acceptedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        data: {
+          tokenHash: hashInviteToken(token),
+          // Refreshing a pending link also renews the acceptance window so a
+          // near-expiry invite does not stay short-lived after rotation.
+          expiresAt: inviteExpiryDate(),
+        },
+      })
     })
     if (rotated.count !== 1) {
       return { error: "Invite not found or already accepted." }
@@ -897,10 +928,20 @@ export async function updateOrganizationMemberRole(
       return { error: "Admins cannot change their own role." }
     }
 
-    await prisma.organizationMember.update({
-      where: { id: member.id },
+    // Conditional update refuses concurrent ownership promotion / removal.
+    const updated = await prisma.organizationMember.updateMany({
+      where: {
+        id: member.id,
+        organizationId,
+        role: { not: "owner" },
+      },
       data: { role },
     })
+    if (updated.count !== 1) {
+      return {
+        error: "Member role changed concurrently. Refresh and try again.",
+      }
+    }
 
     await recordAuditEvent({
       userId: actor.user.id,
@@ -960,8 +1001,20 @@ export async function removeOrganizationMember(
 
     // Membership delete + cleared active workspace must be atomic so a failed
     // activeOrganizationId update cannot report error after the removal applied.
+    // Conditional delete refuses if the target was promoted to owner concurrently.
     await prisma.$transaction(async (tx) => {
-      await tx.organizationMember.delete({ where: { id: member.id } })
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+
+      const removed = await tx.organizationMember.deleteMany({
+        where: {
+          id: member.id,
+          organizationId,
+          role: { not: "owner" },
+        },
+      })
+      if (removed.count !== 1) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
 
       const removedUser = await tx.user.findUnique({
         where: { id: member.userId },
@@ -995,7 +1048,15 @@ export async function removeOrganizationMember(
       summary: `Removed ${member.user.email} from the organization`,
       metadata: { previousRole: member.role },
     })
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "CONCURRENT_MEMBERSHIP_CHANGE"
+    ) {
+      return {
+        error: "Member role changed concurrently. Refresh and try again.",
+      }
+    }
     return { error: "Unable to remove member. Please try again." }
   }
 
