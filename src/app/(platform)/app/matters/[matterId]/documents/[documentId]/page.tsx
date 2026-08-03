@@ -3,7 +3,11 @@ import { notFound } from "next/navigation"
 
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
-import { matterAccessWhere, getMatterAccess, roleHasPermission } from "@/lib/auth/rbac"
+import {
+  matterAccessWhere,
+  requireMatterPermissionLocked,
+  roleHasPermission,
+} from "@/lib/auth/rbac"
 import { isParsedTextTruncated } from "@/lib/documents/parsed-text"
 import { extractAuthorities } from "@/lib/legal/authorities"
 import { prisma } from "@/lib/prisma"
@@ -75,6 +79,9 @@ export default async function DocumentViewerPage({
   let data: WorkstationData | null = null
   let loadFailed = false
   let missing = false
+  let permissionLoadFailed = false
+  let canWrite = false
+  let canDelete = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
@@ -200,75 +207,95 @@ export default async function DocumentViewerPage({
       ? extractAuthorities(authoritySource)
       : []
 
-    // Signed URL (2 hours)
-    let signedUrl: string | null = null
-    if (doc.storagePath) {
-      try {
-        // Short-lived preview URL; reload the workstation page to refresh.
-        const { data: urlData } = await createSignedUrl(doc.storagePath, 900)
-        signedUrl = urlData?.signedUrl ?? null
-      } catch {
-        /* storage unavailable */
-      }
+    // Final locked read reauth before minting a signed URL or returning
+    // parsed/chunk text so a mid-render revocation cannot fail open.
+    let stillAllowed
+    try {
+      stillAllowed = await prisma.$transaction(async (tx) =>
+        requireMatterPermissionLocked(tx, user.id, matterId, "read")
+      )
+    } catch {
+      permissionLoadFailed = true
+      stillAllowed = null
     }
 
-    // Serialise (no Date objects allowed across RSC boundary)
-    data = {
-      doc: {
-        id: doc.id,
-        fileName: doc.fileName,
-        mimeType: doc.mimeType,
-        fileSize: doc.fileSize,
-        pageCount: doc.pageCount,
-        chunkCount: rawChunks.length,
-        extractionConf: doc.extractionConf,
-        uploadStatus: doc.uploadStatus,
-        indexingStatus: doc.indexingStatus,
-        retrievalStatus: doc.retrievalStatus,
-        publishedRunId: doc.publishedRunId,
-        parseStatus: doc.parseStatus,
-        parsedText: doc.parsedText,
-        uploadedAt: doc.uploadedAt.toISOString(),
-        updatedAt: doc.updatedAt.toISOString(),
-        matterId: doc.matterId,
-        matterTitle: doc.matter.title,
-        matterClient: doc.matter.clientName,
-      },
-      chunks: rawChunks.map((c) => ({
-        id: c.id,
-        chunkIndex: c.chunkIndex,
-        content: c.content,
-        tokenCount: c.tokenCount,
-        pageRef: c.pageRef,
-        headingPath: c.headingPath,
-        hasEmbedding: embeddedIds.has(c.id),
-        createdAt: c.createdAt.toISOString(),
-      })),
-      sessions: rawSessions.map((s) => ({
-        id: s.id,
-        query: s.query,
-        chunkIds: s.chunkIds,
-        createdAt: s.createdAt.toISOString(),
-        snapshotExcerpts: snapshotEntriesForDocument(s.citationSnapshot, {
+    if (permissionLoadFailed) {
+      // handled below
+    } else if (!stillAllowed || !stillAllowed.ok) {
+      missing = true
+    } else {
+      canWrite = roleHasPermission(stillAllowed.access.role, "write")
+      canDelete = roleHasPermission(stillAllowed.access.role, "delete")
+
+      // Short-lived preview URL; only after locked reauth succeeds.
+      let signedUrl: string | null = null
+      if (doc.storagePath) {
+        try {
+          const { data: urlData } = await createSignedUrl(doc.storagePath, 900)
+          signedUrl = urlData?.signedUrl ?? null
+        } catch {
+          /* storage unavailable */
+        }
+      }
+
+      // Serialise (no Date objects allowed across RSC boundary)
+      data = {
+        doc: {
           id: doc.id,
           fileName: doc.fileName,
-        }).map((entry) => ({
-          id: entry.id,
-          content: entry.content,
-          pageRef: entry.pageRef,
-          headingPath: entry.headingPath,
+          mimeType: doc.mimeType,
+          fileSize: doc.fileSize,
+          pageCount: doc.pageCount,
+          chunkCount: rawChunks.length,
+          extractionConf: doc.extractionConf,
+          uploadStatus: doc.uploadStatus,
+          indexingStatus: doc.indexingStatus,
+          retrievalStatus: doc.retrievalStatus,
+          publishedRunId: doc.publishedRunId,
+          parseStatus: doc.parseStatus,
+          parsedText: doc.parsedText,
+          uploadedAt: doc.uploadedAt.toISOString(),
+          updatedAt: doc.updatedAt.toISOString(),
+          matterId: doc.matterId,
+          matterTitle: doc.matter.title,
+          matterClient: doc.matter.clientName,
+        },
+        chunks: rawChunks.map((c) => ({
+          id: c.id,
+          chunkIndex: c.chunkIndex,
+          content: c.content,
+          tokenCount: c.tokenCount,
+          pageRef: c.pageRef,
+          headingPath: c.headingPath,
+          hasEmbedding: embeddedIds.has(c.id),
+          createdAt: c.createdAt.toISOString(),
         })),
-      })),
-      sessionsLoadFailed,
-      embeddingsLoadFailed,
-      authorities: authorities.map((a) => ({
-        citation: a.citation,
-        type: a.type,
-        normalized: a.normalized,
-      })),
-      embeddedCount: embeddedIds.size,
-      signedUrl,
-      parsedTextTruncated: isParsedTextTruncated(doc.parsedText),
+        sessions: rawSessions.map((s) => ({
+          id: s.id,
+          query: s.query,
+          chunkIds: s.chunkIds,
+          createdAt: s.createdAt.toISOString(),
+          snapshotExcerpts: snapshotEntriesForDocument(s.citationSnapshot, {
+            id: doc.id,
+            fileName: doc.fileName,
+          }).map((entry) => ({
+            id: entry.id,
+            content: entry.content,
+            pageRef: entry.pageRef,
+            headingPath: entry.headingPath,
+          })),
+        })),
+        sessionsLoadFailed,
+        embeddingsLoadFailed,
+        authorities: authorities.map((a) => ({
+          citation: a.citation,
+          type: a.type,
+          normalized: a.normalized,
+        })),
+        embeddedCount: embeddedIds.size,
+        signedUrl,
+        parsedTextTruncated: isParsedTextTruncated(doc.parsedText),
+      }
     }
     }
     }
@@ -286,36 +313,17 @@ export default async function DocumentViewerPage({
     )
   }
 
-  if (missing || !data) notFound()
-
-  let canWrite = false
-  let canDelete = false
-  let permissionLoadFailed = false
-  try {
-    const user = await prisma.user.findUnique({
-      where: { clerkId },
-      select: { id: true },
-    })
-    if (user) {
-      const access = await getMatterAccess(user.id, matterId)
-      if (access?.role) {
-        canWrite = roleHasPermission(access.role, "write")
-        canDelete = roleHasPermission(access.role, "delete")
-      }
-    }
-  } catch {
-    permissionLoadFailed = true
-  }
-
   if (permissionLoadFailed) {
     return (
       <WorkspaceLoadError
         title="Document permissions unavailable"
-        description="Aether could not verify write access for this source. Retry shortly, or verify Settings readiness if the outage continues."
+        description="Aether could not verify read access for this source. Retry shortly, or verify Settings readiness if the outage continues."
         homeHref={`/app/matters/${matterId}`}
       />
     )
   }
+
+  if (missing || !data) notFound()
 
   const boundReindex = reindexDocument.bind(null, matterId, documentId)
   const boundDelete = deleteDocument.bind(null, matterId, documentId)

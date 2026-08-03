@@ -351,6 +351,9 @@ export async function generateDraft(
 
   let draftId = ""
   let persistenceError: string | undefined
+  // Only return generated/retrieved content after locked reauth succeeds.
+  // If the persistence transaction throws before that point, fail closed.
+  let lockedReauthConfirmed = false
   try {
     // Re-authorize under matter + membership locks immediately before writes —
     // retrieval/generation can take minutes, during which membership may have
@@ -365,6 +368,7 @@ export async function generateDraft(
       if (!stillAllowed.ok) {
         return { ok: false as const }
       }
+      lockedReauthConfirmed = true
 
       const draft = await tx.draftDocument.create({
         data: {
@@ -420,6 +424,25 @@ export async function generateDraft(
       metadata: { draftType, chunkCount: chunks.length },
     })
   } catch {
+    if (!lockedReauthConfirmed) {
+      return redactDraftOnRevocation(
+        {
+          draftId: "",
+          matterId,
+          matterTitle: matter.title,
+          title,
+          draftType,
+          instruction: instruction.trim(),
+          content,
+          chunks,
+          retrievalCount: chunks.length,
+          indexedChunks,
+          embeddingConfigured: true,
+          error: undefined,
+        },
+        DRAFT_PERSIST_REVOKED_MESSAGE
+      )
+    }
     persistenceError =
       "Draft generated, but it could not be saved to matter history."
   }
@@ -525,6 +548,20 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
       return emptyResult(
         "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
       )
+    }
+
+    // Final locked reauth immediately before returning saved draft content /
+    // provenance excerpts so a mid-restore revocation cannot fail open.
+    let stillAllowed
+    try {
+      stillAllowed = await prisma.$transaction(async (tx) =>
+        requireMatterPermissionLocked(tx, user.id, draft.matterId, "read")
+      )
+    } catch {
+      return emptyResult("Unable to verify workspace permissions.")
+    }
+    if (!stillAllowed.ok) {
+      return emptyResult(DRAFT_ACCESS_REVOKED_MESSAGE)
     }
 
     return {

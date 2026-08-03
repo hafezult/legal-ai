@@ -324,6 +324,9 @@ export async function runResearch(
   // Persist research session and open a matter conversation thread
   let sessionId = ""
   let persistenceError: string | undefined
+  // Only return generated/retrieved content after locked reauth succeeds.
+  // If the persistence transaction throws before that point, fail closed.
+  let lockedReauthConfirmed = false
   try {
     // Re-authorize under matter + membership locks immediately before writes —
     // retrieval/generation can take minutes, during which membership may have
@@ -339,6 +342,7 @@ export async function runResearch(
       if (!stillAllowed.ok) {
         return { ok: false as const }
       }
+      lockedReauthConfirmed = true
 
       const session = await tx.researchSession.create({
         data: {
@@ -409,6 +413,24 @@ export async function runResearch(
       metadata: { chunkCount: chunks.length, queryLength: query.length },
     })
   } catch {
+    if (!lockedReauthConfirmed) {
+      return redactResearchOnRevocation(
+        {
+          query,
+          matterId,
+          matterTitle: matter.title,
+          answer,
+          chunks,
+          authorities,
+          sessionId: "",
+          retrievalCount: chunks.length,
+          indexedChunks,
+          embeddingConfigured: true,
+          error: undefined,
+        },
+        RESEARCH_PERSIST_REVOKED_MESSAGE
+      )
+    }
     persistenceError =
       "Research completed, but the session could not be saved to matter history."
   }
@@ -521,6 +543,20 @@ export async function restoreResearchSession(
       return emptyResult(
         "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
       )
+    }
+
+    // Final locked reauth immediately before returning saved AI content /
+    // provenance excerpts so a mid-restore revocation cannot fail open.
+    let stillAllowed
+    try {
+      stillAllowed = await prisma.$transaction(async (tx) =>
+        requireMatterPermissionLocked(tx, user.id, session.matterId, "read")
+      )
+    } catch {
+      return emptyResult("Unable to verify workspace permissions.")
+    }
+    if (!stillAllowed.ok) {
+      return emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE)
     }
 
     return {
