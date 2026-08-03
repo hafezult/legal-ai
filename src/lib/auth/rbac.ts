@@ -12,6 +12,10 @@ import {
 } from "@/lib/auth/matter-access"
 import { prisma } from "@/lib/prisma"
 import {
+  lockedMatterRoleAllows,
+  resolveMatterRoleFromLockedMembership,
+} from "@/lib/auth/matter-permission-lock"
+import {
   ORG_ROLES,
   isOrgRole,
   roleAtLeast,
@@ -210,7 +214,7 @@ export async function requireMatterPermissionLocked(
   }
 
   const isCreator = matter.userId === userId
-  let membership: OrgRole | null = null
+  let membershipRole: string | null | undefined
 
   if (matter.organizationId) {
     const lockedMembers = await tx.$queryRaw<Array<{ role: string }>>`
@@ -219,18 +223,16 @@ export async function requireMatterPermissionLocked(
         AND "userId" = ${userId}
       FOR UPDATE
     `
-    const membershipRole = lockedMembers[0]?.role
-    membership =
-      membershipRole && isOrgRole(membershipRole) ? membershipRole : null
+    membershipRole = lockedMembers[0]?.role ?? null
   }
 
-  const role: OrgRole | null = matter.organizationId
-    ? membership
-    : isCreator
-      ? "owner"
-      : membership
+  const role = resolveMatterRoleFromLockedMembership({
+    organizationId: matter.organizationId,
+    isCreator,
+    membershipRole,
+  })
 
-  if (!role || !roleHasPermission(role, permission)) {
+  if (!lockedMatterRoleAllows(role, permission) || !role) {
     return {
       ok: false,
       error: `Insufficient organization role for “${permission}”.`,
