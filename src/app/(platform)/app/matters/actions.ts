@@ -10,6 +10,7 @@ import {
   getActiveOrganization,
   matterAccessWhere,
   requireMatterPermission,
+  requireMatterPermissionLocked,
   requireWorkProductDelete,
   roleHasPermission,
 } from "@/lib/auth/rbac"
@@ -444,11 +445,20 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
     deletedTitle = matter.title
     const organizationId = permission.access.organizationId
 
-    // Lock the matter, mark deleting, page paths, then cascade-delete inside one
-    // transaction so concurrent uploads cannot register after the path scan.
+    // Lock the matter, re-check delete permission, mark deleting, page paths,
+    // then cascade-delete inside one transaction so concurrent uploads cannot
+    // register after the path scan and revoked actors cannot finish deletes.
     const PATH_PAGE = 200
     await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Matter" WHERE id = ${matter.id} FOR UPDATE`
+      const locked = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matter.id,
+        "delete"
+      )
+      if (!locked.ok) {
+        throw new Error("MATTER_FORBIDDEN")
+      }
 
       const marked = await tx.matter.updateMany({
         where: {
@@ -502,6 +512,9 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
   } catch (error) {
     if (error instanceof Error && error.message === "MATTER_ALREADY_DELETING") {
       return { error: "This matter is already being deleted. Refresh and try again." }
+    }
+    if (error instanceof Error && error.message === "MATTER_FORBIDDEN") {
+      return { error: "Matter not found or access denied." }
     }
     return { error: "Unable to delete matter. Please try again." }
   }

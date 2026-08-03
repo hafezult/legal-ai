@@ -59,6 +59,10 @@ export default async function MemoryPage() {
   let documentCount = 0
   let chunkCount = 0
   let retrievalReadyCount = 0
+  let matterCount = 0
+  let researchSessionCount = 0
+  let conversationCount = 0
+  let draftCount = 0
   let loadFailed = false
 
   try {
@@ -72,6 +76,7 @@ export default async function MemoryPage() {
       const documentWhere = { matter: matterWhere }
       // Load the registry page first, then aggregate only for those matter IDs
       // so per-matter message/chunk counts stay deterministic under caps.
+      // Summary strip uses separate workspace-scoped totals (not page-capped).
       const matterRows = await prisma.matter.findMany({
         where: matterWhere,
         orderBy: { updatedAt: "desc" },
@@ -93,12 +98,18 @@ export default async function MemoryPage() {
       })
       const displayedMatterIds = matterRows.map((matter) => matter.id)
       const [
+        workspaceMatterTotal,
         messageTotal,
         conversationMessageRows,
         sourceTotal,
         retrievalReadyTotal,
         publishedDocs,
+        workspacePublishedChunks,
+        workspaceResearchTotal,
+        workspaceConversationTotal,
+        workspaceDraftTotal,
       ] = await Promise.all([
+        prisma.matter.count({ where: matterWhere }),
         // Workspace total for the summary strip.
         prisma.conversationMessage.count({
           where: { conversation: { matter: matterWhere } },
@@ -129,6 +140,16 @@ export default async function MemoryPage() {
               _sum: { chunkCount: true },
             })
           : Promise.resolve([]),
+        prisma.document.aggregate({
+          where: {
+            ...documentWhere,
+            publishedRunId: { not: null },
+          },
+          _sum: { chunkCount: true },
+        }),
+        prisma.researchSession.count({ where: { matter: matterWhere } }),
+        prisma.conversation.count({ where: { matter: matterWhere } }),
+        prisma.draftDocument.count({ where: { matter: matterWhere } }),
       ])
       const messagesByMatter = new Map<string, number>()
       for (const row of conversationMessageRows) {
@@ -155,30 +176,18 @@ export default async function MemoryPage() {
           draftDocuments: matter._count.draftDocuments,
         },
       }))
+      matterCount = workspaceMatterTotal
       messageCount = messageTotal
       documentCount = sourceTotal
       retrievalReadyCount = retrievalReadyTotal
-      chunkCount = publishedDocs.reduce(
-        (sum, row) => sum + (row._sum.chunkCount ?? 0),
-        0
-      )
+      chunkCount = workspacePublishedChunks._sum.chunkCount ?? 0
+      researchSessionCount = workspaceResearchTotal
+      conversationCount = workspaceConversationTotal
+      draftCount = workspaceDraftTotal
     }
   } catch {
     loadFailed = true
   }
-
-  const researchSessionCount = matters.reduce(
-    (sum, matter) => sum + matter._count.researchSessions,
-    0
-  )
-  const conversationCount = matters.reduce(
-    (sum, matter) => sum + matter._count.conversations,
-    0
-  )
-  const draftCount = matters.reduce(
-    (sum, matter) => sum + matter._count.draftDocuments,
-    0
-  )
 
   return (
     <div className="space-y-8">
@@ -202,7 +211,7 @@ export default async function MemoryPage() {
         <>
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-7">
         {[
-          { label: "Matters", value: matters.length },
+          { label: "Matters", value: matterCount },
           { label: "Sources", value: documentCount },
           { label: "Chunks", value: chunkCount },
           { label: "Research sessions", value: researchSessionCount },

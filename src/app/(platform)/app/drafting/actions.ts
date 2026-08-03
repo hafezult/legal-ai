@@ -323,35 +323,43 @@ export async function generateDraft(
   let draftId = ""
   let persistenceError: string | undefined
   try {
-    const draft = await prisma.draftDocument.create({
-      data: {
+    // Re-authorize immediately before writes — retrieval/generation can take
+    // minutes, during which membership may have been revoked.
+    const stillAllowed = await requireMatterPermission(user.id, matterId, "write")
+    if (!stillAllowed.ok) {
+      persistenceError =
+        "Draft generated, but access was revoked before it could be saved."
+    } else {
+      const draft = await prisma.draftDocument.create({
+        data: {
+          userId: user.id,
+          matterId,
+          title,
+          draftType,
+          instruction: instruction.trim(),
+          content,
+          chunkIds: chunks.map((chunk) => chunk.id),
+          citationSnapshot: buildCitationSnapshot(chunks),
+          status: generationError ? "failed" : "ready",
+        },
+      })
+      draftId = draft.id
+
+      await recordAuditEvent({
         userId: user.id,
+        action: "draft.generate",
+        entityType: "draft_document",
+        entityId: draft.id,
         matterId,
-        title,
-        draftType,
-        instruction: instruction.trim(),
-        content,
-        chunkIds: chunks.map((chunk) => chunk.id),
-        citationSnapshot: buildCitationSnapshot(chunks),
-        status: generationError ? "failed" : "ready",
-      },
-    })
-    draftId = draft.id
+        summary: `Generated ${draftType} draft on “${matter.title}”`,
+        metadata: { draftType, chunkCount: chunks.length },
+      })
 
-    await recordAuditEvent({
-      userId: user.id,
-      action: "draft.generate",
-      entityType: "draft_document",
-      entityId: draft.id,
-      matterId,
-      summary: `Generated ${draftType} draft on “${matter.title}”`,
-      metadata: { draftType, chunkCount: chunks.length },
-    })
-
-    await prisma.matter.update({
-      where: { id: matterId },
-      data: { updatedAt: new Date() },
-    })
+      await prisma.matter.update({
+        where: { id: matterId },
+        data: { updatedAt: new Date() },
+      })
+    }
   } catch {
     persistenceError =
       "Draft generated, but it could not be saved to matter history."

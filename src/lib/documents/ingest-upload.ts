@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
+import { requireMatterPermissionLocked } from "@/lib/auth/rbac"
 import {
   ALLOWED_DOCUMENT_MIME,
   detectAllowedDocument,
@@ -159,10 +160,18 @@ export async function ingestUploadedDocument(args: {
 
   let documentId: string
   try {
-    // Re-check under a matter row lock so registration cannot race deleteMatter
-    // path collection / cascade after the object was uploaded.
+    // Re-check write permission under a matter row lock so registration cannot
+    // race deleteMatter / membership revocation after the object was uploaded.
     const created = await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Matter" WHERE id = ${matterId} FOR UPDATE`
+      const permission = await requireMatterPermissionLocked(
+        tx,
+        ownerUserId,
+        matterId,
+        "write"
+      )
+      if (!permission.ok) {
+        throw new Error("MATTER_FORBIDDEN")
+      }
       const matter = await tx.matter.findUnique({
         where: { id: matterId },
         select: { id: true, status: true },
@@ -192,6 +201,9 @@ export async function ingestUploadedDocument(args: {
           "Document registration failed, and storage cleanup also failed. Contact an admin to remove the orphaned upload.",
         unavailable: true,
       }
+    }
+    if (error instanceof Error && error.message === "MATTER_FORBIDDEN") {
+      return { error: "Matter not found or access denied." }
     }
     if (error instanceof Error && error.message === "MATTER_UNAVAILABLE") {
       return { error: "Matter not found or is being deleted." }

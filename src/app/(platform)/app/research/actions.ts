@@ -298,27 +298,35 @@ export async function runResearch(
   let sessionId = ""
   let persistenceError: string | undefined
   try {
-    const session = await prisma.researchSession.create({
-      data: {
-        userId: user.id,
-        matterId,
-        query,
-        response: answer,
-        chunkIds: chunks.map((c) => c.id),
-        citationSnapshot: buildCitationSnapshot(chunks),
-      },
-    })
-    sessionId = session.id
+    // Re-authorize immediately before writes — retrieval/generation can take
+    // minutes, during which membership may have been revoked.
+    const stillAllowed = await requireMatterPermission(user.id, matterId, "write")
+    if (!stillAllowed.ok) {
+      persistenceError =
+        "Research completed, but access was revoked before the session could be saved."
+    } else {
+      const session = await prisma.researchSession.create({
+        data: {
+          userId: user.id,
+          matterId,
+          query,
+          response: answer,
+          chunkIds: chunks.map((c) => c.id),
+          citationSnapshot: buildCitationSnapshot(chunks),
+        },
+      })
+      sessionId = session.id
 
-    await recordAuditEvent({
-      userId: user.id,
-      action: "research.run",
-      entityType: "research_session",
-      entityId: session.id,
-      matterId,
-      summary: `Ran research query on “${matter.title}”`,
-      metadata: { chunkCount: chunks.length, queryLength: query.length },
-    })
+      await recordAuditEvent({
+        userId: user.id,
+        action: "research.run",
+        entityType: "research_session",
+        entityId: session.id,
+        matterId,
+        summary: `Ran research query on “${matter.title}”`,
+        metadata: { chunkCount: chunks.length, queryLength: query.length },
+      })
+    }
   } catch {
     persistenceError =
       "Research completed, but the session could not be saved to matter history."
@@ -326,30 +334,37 @@ export async function runResearch(
 
   if (sessionId) {
     try {
-      const conversationTitle = query.replace(/\s+/g, " ").trim()
-      if (conversationTitle) {
-        await prisma.conversation.create({
-          data: {
-            matterId,
-            createdByUserId: user.id,
-            title:
-              conversationTitle.length > 120
-                ? `${conversationTitle.slice(0, 117)}…`
-                : conversationTitle,
-            messages: {
-              create: [
-                { role: "user", content: query },
-                ...(answer
-                  ? [{ role: "assistant", content: answer }]
-                  : []),
-              ],
+      const stillAllowed = await requireMatterPermission(user.id, matterId, "write")
+      if (!stillAllowed.ok) {
+        persistenceError =
+          persistenceError ??
+          "Research session saved, but access was revoked before the conversation thread could be created."
+      } else {
+        const conversationTitle = query.replace(/\s+/g, " ").trim()
+        if (conversationTitle) {
+          await prisma.conversation.create({
+            data: {
+              matterId,
+              createdByUserId: user.id,
+              title:
+                conversationTitle.length > 120
+                  ? `${conversationTitle.slice(0, 117)}…`
+                  : conversationTitle,
+              messages: {
+                create: [
+                  { role: "user", content: query },
+                  ...(answer
+                    ? [{ role: "assistant", content: answer }]
+                    : []),
+                ],
+              },
             },
-          },
-        })
-        await prisma.matter.update({
-          where: { id: matterId },
-          data: { updatedAt: new Date() },
-        })
+          })
+          await prisma.matter.update({
+            where: { id: matterId },
+            data: { updatedAt: new Date() },
+          })
+        }
       }
     } catch {
       persistenceError =

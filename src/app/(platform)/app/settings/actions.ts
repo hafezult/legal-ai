@@ -430,10 +430,30 @@ export async function renameOrganization(
     const admin = await requireOrgAdmin(actor.user.id, organizationId)
     if ("error" in admin) return { error: admin.error }
 
-    await prisma.organization.update({
-      where: { id: organizationId },
-      data: { name: trimmed },
+    // Re-check admin under an org lock so a concurrent demotion cannot rename.
+    const renamed = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+      const actorMembership = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: { organizationId, userId: actor.user.id },
+        },
+        select: { role: true },
+      })
+      if (
+        !actorMembership ||
+        !isOrgRole(actorMembership.role) ||
+        !roleAtLeast(actorMembership.role, "admin")
+      ) {
+        return { ok: false as const, error: "Admin role required to manage members." }
+      }
+
+      await tx.organization.update({
+        where: { id: organizationId },
+        data: { name: trimmed },
+      })
+      return { ok: true as const }
     })
+    if (!renamed.ok) return { error: renamed.error }
 
     await recordAuditEvent({
       userId: actor.user.id,
@@ -860,7 +880,18 @@ export async function revokeOrganizationInvite(
       }
     }
 
-    await prisma.organizationInvite.delete({ where: { id: invite.id } })
+    // Conditional delete — refuse if the invite was accepted concurrently so
+    // revoke cannot report success after membership was already granted.
+    const revoked = await prisma.organizationInvite.deleteMany({
+      where: {
+        id: invite.id,
+        organizationId,
+        acceptedAt: null,
+      },
+    })
+    if (revoked.count !== 1) {
+      return { error: "That invite was already accepted or revoked." }
+    }
 
     await recordAuditEvent({
       userId: actor.user.id,
@@ -928,14 +959,54 @@ export async function updateOrganizationMemberRole(
       return { error: "Admins cannot change their own role." }
     }
 
-    // Conditional update refuses concurrent ownership promotion / removal.
-    const updated = await prisma.organizationMember.updateMany({
-      where: {
-        id: member.id,
-        organizationId,
-        role: { not: "owner" },
-      },
-      data: { role },
+    // Lock org, re-read actor/target roles, CAS on exact prior target role so
+    // concurrent promotions/demotions cannot be overwritten with stale auth.
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+
+      const actorMembership = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: { organizationId, userId: actor.user.id },
+        },
+        select: { role: true },
+      })
+      if (
+        !actorMembership ||
+        !isOrgRole(actorMembership.role) ||
+        !roleAtLeast(actorMembership.role, "admin")
+      ) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+      if (!roleStrictlyAbove(actorMembership.role, role)) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+      if (
+        member.userId === actor.user.id &&
+        actorMembership.role !== "owner"
+      ) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+
+      const target = await tx.organizationMember.findFirst({
+        where: { id: member.id, organizationId },
+        select: { id: true, role: true },
+      })
+      if (
+        !target ||
+        !isOrgRole(target.role) ||
+        !roleStrictlyAbove(actorMembership.role, target.role)
+      ) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+
+      return tx.organizationMember.updateMany({
+        where: {
+          id: member.id,
+          organizationId,
+          role: target.role,
+        },
+        data: { role },
+      })
     })
     if (updated.count !== 1) {
       return {
@@ -952,7 +1023,15 @@ export async function updateOrganizationMemberRole(
       summary: `Updated ${member.user.email} role to ${role}`,
       metadata: { role, previousRole: member.role },
     })
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "CONCURRENT_MEMBERSHIP_CHANGE"
+    ) {
+      return {
+        error: "Member role changed concurrently. Refresh and try again.",
+      }
+    }
     return { error: "Unable to update member role. Please try again." }
   }
 
@@ -1001,15 +1080,42 @@ export async function removeOrganizationMember(
 
     // Membership delete + cleared active workspace must be atomic so a failed
     // activeOrganizationId update cannot report error after the removal applied.
-    // Conditional delete refuses if the target was promoted to owner concurrently.
+    // Re-check actor admin + CAS on exact prior target role under org lock.
     await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+
+      const actorMembership = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: { organizationId, userId: actor.user.id },
+        },
+        select: { role: true },
+      })
+      if (
+        !actorMembership ||
+        !isOrgRole(actorMembership.role) ||
+        !roleAtLeast(actorMembership.role, "admin")
+      ) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+
+      const target = await tx.organizationMember.findFirst({
+        where: { id: member.id, organizationId },
+        select: { id: true, role: true, userId: true },
+      })
+      if (
+        !target ||
+        target.userId === actor.user.id ||
+        !isOrgRole(target.role) ||
+        !roleStrictlyAbove(actorMembership.role, target.role)
+      ) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
 
       const removed = await tx.organizationMember.deleteMany({
         where: {
           id: member.id,
           organizationId,
-          role: { not: "owner" },
+          role: target.role,
         },
       })
       if (removed.count !== 1) {

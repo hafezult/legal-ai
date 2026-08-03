@@ -61,8 +61,14 @@ export async function purgeExpiredOrganizationInvites(
   })
   if (expired.length === 0) return 0
 
+  // Re-apply expiry + unaccepted predicates so a concurrent refresh/accept
+  // that renews an invite cannot be deleted by a stale purge selection.
   const result = await prisma.organizationInvite.deleteMany({
-    where: { id: { in: expired.map((row) => row.id) } },
+    where: {
+      id: { in: expired.map((row) => row.id) },
+      acceptedAt: null,
+      expiresAt: { lt: now },
+    },
   })
   return result.count
 }
@@ -163,6 +169,82 @@ export async function requireMatterPermission(
     return { ok: true, access }
   } catch {
     return { ok: false, error: PERMISSION_VERIFY_UNAVAILABLE_ERROR }
+  }
+}
+
+type MatterPermissionTx = {
+  $queryRaw: typeof prisma.$queryRaw
+  matter: {
+    findFirst: typeof prisma.matter.findFirst
+  }
+}
+
+/**
+ * Lock a matter row and re-resolve permission inside the caller's transaction
+ * so long-running or check-then-act mutations cannot complete after revocation.
+ */
+export async function requireMatterPermissionLocked(
+  tx: MatterPermissionTx,
+  userId: string,
+  matterId: string,
+  permission: OrgPermission
+): Promise<
+  | { ok: true; access: MatterAccess }
+  | { ok: false; error: string }
+> {
+  await tx.$queryRaw`SELECT id FROM "Matter" WHERE id = ${matterId} FOR UPDATE`
+
+  const matter = await tx.matter.findFirst({
+    where: {
+      id: matterId,
+      ...matterAccessWhere(userId),
+    },
+    select: {
+      id: true,
+      userId: true,
+      organizationId: true,
+      status: true,
+      organization: {
+        select: {
+          members: {
+            where: { userId },
+            select: { role: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  })
+
+  if (!matter) {
+    return { ok: false, error: "Matter not found or access denied." }
+  }
+
+  const isCreator = matter.userId === userId
+  const membershipRole = matter.organization?.members[0]?.role
+  const membership: OrgRole | null =
+    membershipRole && isOrgRole(membershipRole) ? membershipRole : null
+  const role: OrgRole | null = matter.organizationId
+    ? membership
+    : isCreator
+      ? "owner"
+      : membership
+
+  if (!role || !roleHasPermission(role, permission)) {
+    return {
+      ok: false,
+      error: `Insufficient organization role for “${permission}”.`,
+    }
+  }
+
+  return {
+    ok: true,
+    access: {
+      matterId: matter.id,
+      organizationId: matter.organizationId,
+      isCreator,
+      role,
+    },
   }
 }
 
@@ -638,11 +720,13 @@ export async function rejectOrganizationInviteByToken(
     return { ok: false, error: "Invite not found or link is invalid." }
   }
 
+  const tokenHash = hashInviteToken(token)
   const invite = await prisma.organizationInvite.findUnique({
-    where: { tokenHash: hashInviteToken(token) },
+    where: { tokenHash },
     select: {
       id: true,
       email: true,
+      tokenHash: true,
       acceptedAt: true,
       expiresAt: true,
       organizationId: true,
@@ -670,10 +754,12 @@ export async function rejectOrganizationInviteByToken(
     return { ok: false, error: "This invite has expired." }
   }
 
-  // Conditional delete — only pending, unexpired invites for this id.
+  // Conditional delete — CAS on tokenHash so a rotated invite cannot be
+  // deleted by a stale decline link.
   const deleted = await prisma.organizationInvite.deleteMany({
     where: {
       id: invite.id,
+      tokenHash,
       acceptedAt: null,
       expiresAt: { gt: new Date() },
     },

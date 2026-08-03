@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import { requireClerkId } from "@/lib/auth/require-actor"
-import { matterAccessWhere, requireMatterPermission } from "@/lib/auth/rbac"
+import { matterAccessWhere, requireMatterPermission, requireMatterPermissionLocked } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import { destructiveMutationKey } from "@/lib/rate-limit-policy"
@@ -214,7 +214,33 @@ export async function deleteDocument(
 
     storagePath = document.storagePath
 
-    await prisma.document.delete({ where: { id: document.id } })
+    // Re-check delete permission under a matter lock so a revoked actor cannot
+    // finish a destructive delete after the initial authorization check.
+    await prisma.$transaction(async (tx) => {
+      const locked = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matterId,
+        "delete"
+      )
+      if (!locked.ok) {
+        throw new Error("MATTER_FORBIDDEN")
+      }
+
+      const stillPresent = await tx.document.findFirst({
+        where: {
+          id: document.id,
+          matterId,
+          matter: matterAccessWhere(user.id),
+        },
+        select: { id: true },
+      })
+      if (!stillPresent) {
+        throw new Error("MATTER_FORBIDDEN")
+      }
+
+      await tx.document.delete({ where: { id: document.id } })
+    })
 
     await recordAuditEvent({
       userId: user.id,
@@ -224,7 +250,10 @@ export async function deleteDocument(
       matterId,
       summary: `Deleted document “${document.fileName}”`,
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "MATTER_FORBIDDEN") {
+      return { error: "Document not found or access denied." }
+    }
     return { error: "Data layer unreachable. Please try again." }
   }
 
