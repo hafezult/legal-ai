@@ -7,7 +7,6 @@ import {
   isEmbeddingDeadlineExceeded,
   remainingEmbeddingBudgetMs,
 } from "./embeddings.ts"
-import { OPENAI_REQUEST_TIMEOUT_MS } from "./openai-client.ts"
 
 describe("isEmbeddingDeadlineExceeded", () => {
   it("is false when deadline is unset, zero, or negative", () => {
@@ -40,9 +39,12 @@ describe("canStartEmbeddingRequest", () => {
   })
 
   it("requires at least one full OpenAI request budget", () => {
-    assert.equal(EMBEDDING_MIN_REQUEST_BUDGET_MS, OPENAI_REQUEST_TIMEOUT_MS)
-    assert.equal(canStartEmbeddingRequest(OPENAI_REQUEST_TIMEOUT_MS), true)
-    assert.equal(canStartEmbeddingRequest(OPENAI_REQUEST_TIMEOUT_MS - 1), false)
+    assert.equal(EMBEDDING_MIN_REQUEST_BUDGET_MS, 90_000)
+    assert.equal(canStartEmbeddingRequest(EMBEDDING_MIN_REQUEST_BUDGET_MS), true)
+    assert.equal(
+      canStartEmbeddingRequest(EMBEDDING_MIN_REQUEST_BUDGET_MS - 1),
+      false
+    )
     assert.equal(canStartEmbeddingRequest(0), false)
   })
 })

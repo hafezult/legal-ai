@@ -1,10 +1,5 @@
 // Embedding layer — OpenAI embeddings for pgvector retrieval
 
-import {
-  OPENAI_REQUEST_TIMEOUT_MS,
-  openAICallBudgetFromDeadline,
-} from "@/lib/ai/openai-client"
-
 export type EmbeddingProvider = "openai"
 
 export type EmbeddingConfig = {
@@ -19,8 +14,11 @@ export const DEFAULT_CONFIG: EmbeddingConfig = {
   dimensions: 1536,
 }
 
-/** Minimum remaining budget required to start one embedding request. */
-export const EMBEDDING_MIN_REQUEST_BUDGET_MS = OPENAI_REQUEST_TIMEOUT_MS
+/**
+ * Minimum remaining budget required to start one embedding request.
+ * Keep aligned with OPENAI_REQUEST_TIMEOUT_MS in openai-client.ts.
+ */
+export const EMBEDDING_MIN_REQUEST_BUDGET_MS = 90_000
 
 // ── OpenAI ────────────────────────────────────────────────────────────────
 
@@ -33,6 +31,8 @@ async function openAIEmbed(
     signal?: AbortSignal
   }
 ): Promise<number[][]> {
+  // Dynamic import keeps unit tests for pure deadline helpers free of path
+  // alias / extension resolution under node --experimental-strip-types.
   const { createOpenAIClient } = await import("@/lib/ai/openai-client")
   const client = await createOpenAIClient({
     timeout: options.timeout,
@@ -114,6 +114,10 @@ export async function generateBatchEmbeddings(
   const BATCH = 100 // OpenAI max batch size
   const results: number[][] = []
   const startedAt = Date.now()
+  const {
+    OPENAI_REQUEST_TIMEOUT_MS,
+    openAICallBudgetFromDeadline,
+  } = await import("@/lib/ai/openai-client")
 
   for (let i = 0; i < texts.length; i += BATCH) {
     const nowMs = Date.now()
@@ -141,7 +145,7 @@ export async function generateBatchEmbeddings(
       case "openai": {
         const budget =
           remainingMs === undefined
-            ? { timeout: OPENAI_REQUEST_TIMEOUT_MS, maxRetries: 1 }
+            ? { timeout: OPENAI_REQUEST_TIMEOUT_MS, maxRetries: 1 as const }
             : openAICallBudgetFromDeadline(remainingMs)
         if (!budget) {
           throw new Error(
