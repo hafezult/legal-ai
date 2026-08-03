@@ -7,7 +7,8 @@ import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   matterAccessWhere,
   requireMatterPermission,
-  requireWorkProductDelete,
+  requireMatterPermissionLocked,
+  requireWorkProductDeleteLocked,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
@@ -298,14 +299,22 @@ export async function runResearch(
   let sessionId = ""
   let persistenceError: string | undefined
   try {
-    // Re-authorize immediately before writes — retrieval/generation can take
-    // minutes, during which membership may have been revoked.
-    const stillAllowed = await requireMatterPermission(user.id, matterId, "write")
-    if (!stillAllowed.ok) {
-      persistenceError =
-        "Research completed, but access was revoked before the session could be saved."
-    } else {
-      const session = await prisma.researchSession.create({
+    // Re-authorize under matter + membership locks immediately before writes —
+    // retrieval/generation can take minutes, during which membership may have
+    // been revoked. Session + conversation share one transaction so the second
+    // write cannot succeed after a mid-flight demotion.
+    const persisted = await prisma.$transaction(async (tx) => {
+      const stillAllowed = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matterId,
+        "write"
+      )
+      if (!stillAllowed.ok) {
+        return { ok: false as const }
+      }
+
+      const session = await tx.researchSession.create({
         data: {
           userId: user.id,
           matterId,
@@ -315,13 +324,44 @@ export async function runResearch(
           citationSnapshot: buildCitationSnapshot(chunks),
         },
       })
-      sessionId = session.id
 
+      const conversationTitle = query.replace(/\s+/g, " ").trim()
+      if (conversationTitle) {
+        await tx.conversation.create({
+          data: {
+            matterId,
+            createdByUserId: user.id,
+            title:
+              conversationTitle.length > 120
+                ? `${conversationTitle.slice(0, 117)}…`
+                : conversationTitle,
+            messages: {
+              create: [
+                { role: "user", content: query },
+                ...(answer ? [{ role: "assistant", content: answer }] : []),
+              ],
+            },
+          },
+        })
+        await tx.matter.update({
+          where: { id: matterId },
+          data: { updatedAt: new Date() },
+        })
+      }
+
+      return { ok: true as const, sessionId: session.id }
+    })
+
+    if (!persisted.ok) {
+      persistenceError =
+        "Research completed, but access was revoked before the session could be saved."
+    } else {
+      sessionId = persisted.sessionId
       await recordAuditEvent({
         userId: user.id,
         action: "research.run",
         entityType: "research_session",
-        entityId: session.id,
+        entityId: persisted.sessionId,
         matterId,
         summary: `Ran research query on “${matter.title}”`,
         metadata: { chunkCount: chunks.length, queryLength: query.length },
@@ -330,47 +370,6 @@ export async function runResearch(
   } catch {
     persistenceError =
       "Research completed, but the session could not be saved to matter history."
-  }
-
-  if (sessionId) {
-    try {
-      const stillAllowed = await requireMatterPermission(user.id, matterId, "write")
-      if (!stillAllowed.ok) {
-        persistenceError =
-          persistenceError ??
-          "Research session saved, but access was revoked before the conversation thread could be created."
-      } else {
-        const conversationTitle = query.replace(/\s+/g, " ").trim()
-        if (conversationTitle) {
-          await prisma.conversation.create({
-            data: {
-              matterId,
-              createdByUserId: user.id,
-              title:
-                conversationTitle.length > 120
-                  ? `${conversationTitle.slice(0, 117)}…`
-                  : conversationTitle,
-              messages: {
-                create: [
-                  { role: "user", content: query },
-                  ...(answer
-                    ? [{ role: "assistant", content: answer }]
-                    : []),
-                ],
-              },
-            },
-          })
-          await prisma.matter.update({
-            where: { id: matterId },
-            data: { updatedAt: new Date() },
-          })
-        }
-      }
-    } catch {
-      persistenceError =
-        persistenceError ??
-        "Research session saved, but the matter conversation thread could not be created."
-    }
   }
 
   revalidatePath(`/app/matters/${matterId}`)
@@ -541,15 +540,30 @@ export async function deleteResearchSession(
     })
     if (!researchSession) return { error: "Research session not found or access denied." }
 
-    const permission = await requireWorkProductDelete(
-      user.id,
-      researchSession.matterId,
-      researchSession.userId
-    )
-    if (!permission.ok) return { error: permission.error }
-
     matterId = researchSession.matterId
-    await prisma.researchSession.delete({ where: { id: researchSession.id } })
+    await prisma.$transaction(async (tx) => {
+      const permission = await requireWorkProductDeleteLocked(
+        tx,
+        user.id,
+        researchSession.matterId,
+        researchSession.userId
+      )
+      if (!permission.ok) {
+        throw new Error(`PERMISSION:${permission.error}`)
+      }
+
+      const deleted = await tx.researchSession.deleteMany({
+        where: {
+          id: researchSession.id,
+          matterId: researchSession.matterId,
+        },
+      })
+      if (deleted.count !== 1) {
+        throw new Error(
+          "PERMISSION:Research session not found or access denied."
+        )
+      }
+    })
 
     await recordAuditEvent({
       userId: user.id,
@@ -559,7 +573,10 @@ export async function deleteResearchSession(
       matterId: researchSession.matterId,
       summary: "Deleted research session",
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
+      return { error: error.message.slice("PERMISSION:".length) }
+    }
     return { error: "Data layer unreachable. Please try again." }
   }
 

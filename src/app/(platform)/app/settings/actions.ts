@@ -567,6 +567,39 @@ export async function addOrganizationMember(
           )
         `
 
+        // Re-check admin + assignable rank under org lock so a concurrent
+        // demotion cannot mint invites after losing invite authority.
+        await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+        const actorMembership = await tx.organizationMember.findUnique({
+          where: {
+            organizationId_userId: { organizationId, userId: actor.user.id },
+          },
+          select: { role: true },
+        })
+        if (
+          !actorMembership ||
+          !isOrgRole(actorMembership.role) ||
+          !roleAtLeast(actorMembership.role, "admin") ||
+          !roleStrictlyAbove(actorMembership.role, role)
+        ) {
+          throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+        }
+
+        if (target) {
+          const existing = await tx.organizationMember.findUnique({
+            where: {
+              organizationId_userId: {
+                organizationId,
+                userId: target.id,
+              },
+            },
+            select: { id: true },
+          })
+          if (existing) {
+            throw new Error("ALREADY_MEMBER")
+          }
+        }
+
         const lockedPending = await tx.organizationInvite.findFirst({
           where: {
             organizationId,
@@ -609,6 +642,17 @@ export async function addOrganizationMember(
         return {
           error:
             "An invite is already pending for that email. Revoke it before sending another.",
+        }
+      }
+      if (error instanceof Error && error.message === "ALREADY_MEMBER") {
+        return { error: "That user is already a member of this organization." }
+      }
+      if (
+        error instanceof Error &&
+        error.message === "CONCURRENT_MEMBERSHIP_CHANGE"
+      ) {
+        return {
+          error: "Organization role changed concurrently. Refresh and try again.",
         }
       }
       throw error
@@ -797,12 +841,47 @@ export async function refreshOrganizationInviteLink(
     const emailNormalized = invite.email.trim().toLowerCase()
     // CAS on the prior tokenHash so concurrent refresh/accept cannot both win,
     // and serialize with issuance via the same org+email advisory lock.
+    // Re-check admin + invite role under org lock against concurrent demotion.
     const rotated = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`
         SELECT pg_advisory_xact_lock(
           hashtext(${`org-invite:${organizationId}:${emailNormalized}`})
         )
       `
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+
+      const actorMembership = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: { organizationId, userId: actor.user.id },
+        },
+        select: { role: true },
+      })
+      if (
+        !actorMembership ||
+        !isOrgRole(actorMembership.role) ||
+        !roleAtLeast(actorMembership.role, "admin")
+      ) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+
+      const lockedInvite = await tx.organizationInvite.findFirst({
+        where: {
+          id: invite.id,
+          organizationId,
+          tokenHash: invite.tokenHash,
+          acceptedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        select: { id: true, role: true },
+      })
+      if (
+        !lockedInvite ||
+        !isOrgRole(lockedInvite.role) ||
+        !roleStrictlyAbove(actorMembership.role, lockedInvite.role)
+      ) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+
       return tx.organizationInvite.updateMany({
         where: {
           id: invite.id,
@@ -839,7 +918,15 @@ export async function refreshOrganizationInviteLink(
       success: true,
       inviteUrl: buildInviteAcceptUrl(token),
     }
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "CONCURRENT_MEMBERSHIP_CHANGE"
+    ) {
+      return {
+        error: "Organization role changed concurrently. Refresh and try again.",
+      }
+    }
     return { error: "Unable to refresh invite link. Please try again." }
   }
 }
@@ -880,14 +967,49 @@ export async function revokeOrganizationInvite(
       }
     }
 
-    // Conditional delete — refuse if the invite was accepted concurrently so
-    // revoke cannot report success after membership was already granted.
-    const revoked = await prisma.organizationInvite.deleteMany({
-      where: {
-        id: invite.id,
-        organizationId,
-        acceptedAt: null,
-      },
+    // Conditional delete under org lock — re-check admin + invite role, and
+    // refuse if the invite was accepted concurrently so revoke cannot report
+    // success after membership was already granted.
+    const revoked = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+
+      const actorMembership = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: { organizationId, userId: actor.user.id },
+        },
+        select: { role: true },
+      })
+      if (
+        !actorMembership ||
+        !isOrgRole(actorMembership.role) ||
+        !roleAtLeast(actorMembership.role, "admin")
+      ) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+
+      const lockedInvite = await tx.organizationInvite.findFirst({
+        where: {
+          id: invite.id,
+          organizationId,
+          acceptedAt: null,
+        },
+        select: { id: true, role: true },
+      })
+      if (
+        !lockedInvite ||
+        !isOrgRole(lockedInvite.role) ||
+        !roleStrictlyAbove(actorMembership.role, lockedInvite.role)
+      ) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+
+      return tx.organizationInvite.deleteMany({
+        where: {
+          id: invite.id,
+          organizationId,
+          acceptedAt: null,
+        },
+      })
     })
     if (revoked.count !== 1) {
       return { error: "That invite was already accepted or revoked." }
@@ -903,7 +1025,15 @@ export async function revokeOrganizationInvite(
     })
 
     maybePurgeExpiredOrganizationInvites()
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "CONCURRENT_MEMBERSHIP_CHANGE"
+    ) {
+      return {
+        error: "Organization role changed concurrently. Refresh and try again.",
+      }
+    }
     return { error: "Unable to revoke invite. Please try again." }
   }
 

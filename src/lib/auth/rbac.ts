@@ -176,6 +176,10 @@ export async function requireMatterPermission(
 /**
  * Lock a matter row and re-resolve permission inside the caller's transaction
  * so long-running or check-then-act mutations cannot complete after revocation.
+ *
+ * For organization matters, also lock the actor's OrganizationMember row so a
+ * concurrent demotion/removal cannot commit between the permission read and the
+ * caller's write (Matter FOR UPDATE alone does not serialize membership changes).
  */
 export async function requireMatterPermissionLocked(
   tx: Prisma.TransactionClient,
@@ -198,15 +202,6 @@ export async function requireMatterPermissionLocked(
       userId: true,
       organizationId: true,
       status: true,
-      organization: {
-        select: {
-          members: {
-            where: { userId },
-            select: { role: true },
-            take: 1,
-          },
-        },
-      },
     },
   })
 
@@ -215,9 +210,20 @@ export async function requireMatterPermissionLocked(
   }
 
   const isCreator = matter.userId === userId
-  const membershipRole = matter.organization?.members[0]?.role
-  const membership: OrgRole | null =
-    membershipRole && isOrgRole(membershipRole) ? membershipRole : null
+  let membership: OrgRole | null = null
+
+  if (matter.organizationId) {
+    const lockedMembers = await tx.$queryRaw<Array<{ role: string }>>`
+      SELECT role FROM "OrganizationMember"
+      WHERE "organizationId" = ${matter.organizationId}
+        AND "userId" = ${userId}
+      FOR UPDATE
+    `
+    const membershipRole = lockedMembers[0]?.role
+    membership =
+      membershipRole && isOrgRole(membershipRole) ? membershipRole : null
+  }
+
   const role: OrgRole | null = matter.organizationId
     ? membership
     : isCreator
@@ -261,6 +267,26 @@ export async function requireWorkProductDelete(
     return requireMatterPermission(userId, matterId, "write")
   }
   return requireMatterPermission(userId, matterId, "delete")
+}
+
+/**
+ * Locked variant of {@link requireWorkProductDelete} for delete-then-act
+ * mutations inside a transaction (serializes against membership revocation).
+ */
+export async function requireWorkProductDeleteLocked(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  matterId: string,
+  createdByUserId: string | null | undefined
+): Promise<
+  | { ok: true; access: MatterAccess }
+  | { ok: false; error: string }
+> {
+  const isCreator = Boolean(createdByUserId && createdByUserId === userId)
+  if (isCreator) {
+    return requireMatterPermissionLocked(tx, userId, matterId, "write")
+  }
+  return requireMatterPermissionLocked(tx, userId, matterId, "delete")
 }
 
 export type OrganizationSummary = {

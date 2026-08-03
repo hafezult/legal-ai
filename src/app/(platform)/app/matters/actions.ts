@@ -8,10 +8,11 @@ import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   ensurePersonalOrganization,
   getActiveOrganization,
+  isOrgRole,
   matterAccessWhere,
   requireMatterPermission,
   requireMatterPermissionLocked,
-  requireWorkProductDelete,
+  requireWorkProductDeleteLocked,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import {
@@ -214,21 +215,47 @@ export async function createMatter(
       }
     }
     organizationId = organization.id
-    matter = await prisma.matter.create({
-      data: {
-        title: fields.title,
-        clientName: fields.clientName,
-        practiceArea,
-        jurisdiction: fields.jurisdiction,
-        riskLevel,
-        billingCode: fields.billingCode,
-        status,
-        description: fields.description,
-        userId: user.id,
-        organizationId,
-      },
+    // Lock membership before insert so a concurrent demotion cannot create
+    // matters after write permission was revoked.
+    matter = await prisma.$transaction(async (tx) => {
+      const lockedMembers = await tx.$queryRaw<Array<{ role: string }>>`
+        SELECT role FROM "OrganizationMember"
+        WHERE "organizationId" = ${organizationId}
+          AND "userId" = ${user.id}
+        FOR UPDATE
+      `
+      const membershipRole = lockedMembers[0]?.role
+      if (
+        !membershipRole ||
+        !isOrgRole(membershipRole) ||
+        !roleHasPermission(membershipRole, "write")
+      ) {
+        throw new Error("INSUFFICIENT_ROLE")
+      }
+
+      return tx.matter.create({
+        data: {
+          title: fields.title,
+          clientName: fields.clientName,
+          practiceArea,
+          jurisdiction: fields.jurisdiction,
+          riskLevel,
+          billingCode: fields.billingCode,
+          status,
+          description: fields.description,
+          userId: user.id,
+          organizationId,
+        },
+        select: { id: true },
+      })
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "INSUFFICIENT_ROLE") {
+      return {
+        error:
+          "Your organization role is read-only. Ask an admin to grant write access before creating matters.",
+      }
+    }
     return { error: "Matter initialization failed. Please try again." }
   }
 
@@ -281,27 +308,46 @@ export async function updateMatterStatus(
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) return { error: permission.error }
 
-    const matter = await prisma.matter.findUnique({
-      where: { id: matterId },
-      select: { id: true, title: true },
-    })
-    if (!matter) return { error: "Matter not found or access denied." }
+    const updated = await prisma.$transaction(async (tx) => {
+      const locked = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matterId,
+        "write"
+      )
+      if (!locked.ok) {
+        throw new Error(`PERMISSION:${locked.error}`)
+      }
 
-    await prisma.matter.update({
-      where: { id: matter.id },
-      data: { status },
+      const matter = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { id: true, title: true },
+      })
+      if (!matter) {
+        throw new Error("PERMISSION:Matter not found or access denied.")
+      }
+
+      await tx.matter.update({
+        where: { id: matter.id },
+        data: { status },
+      })
+
+      return { matter, role: locked.access.role }
     })
 
     await recordAuditEvent({
       userId: user.id,
       action: "matter.status_update",
       entityType: "matter",
-      entityId: matter.id,
-      matterId: matter.id,
-      summary: `Updated matter “${matter.title}” status to ${status.replace(/_/g, " ")}`,
-      metadata: { status, role: permission.access.role },
+      entityId: updated.matter.id,
+      matterId: updated.matter.id,
+      summary: `Updated matter “${updated.matter.title}” status to ${status.replace(/_/g, " ")}`,
+      metadata: { status, role: updated.role },
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
+      return { error: error.message.slice("PERMISSION:".length) }
+    }
     return { error: "Unable to update matter status. Please try again." }
   }
 
@@ -356,35 +402,54 @@ export async function updateMatter(
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) return { error: permission.error }
 
-    const matter = await prisma.matter.findUnique({
-      where: { id: matterId },
-      select: { id: true },
-    })
-    if (!matter) return { error: "Matter not found or access denied." }
+    const updated = await prisma.$transaction(async (tx) => {
+      const locked = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matterId,
+        "write"
+      )
+      if (!locked.ok) {
+        throw new Error(`PERMISSION:${locked.error}`)
+      }
 
-    await prisma.matter.update({
-      where: { id: matter.id },
-      data: {
-        title: fields.title,
-        clientName: fields.clientName,
-        practiceArea,
-        jurisdiction: fields.jurisdiction,
-        riskLevel,
-        billingCode: fields.billingCode,
-        description: fields.description,
-      },
+      const matter = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { id: true },
+      })
+      if (!matter) {
+        throw new Error("PERMISSION:Matter not found or access denied.")
+      }
+
+      await tx.matter.update({
+        where: { id: matter.id },
+        data: {
+          title: fields.title,
+          clientName: fields.clientName,
+          practiceArea,
+          jurisdiction: fields.jurisdiction,
+          riskLevel,
+          billingCode: fields.billingCode,
+          description: fields.description,
+        },
+      })
+
+      return { matterId: matter.id, role: locked.access.role }
     })
 
     await recordAuditEvent({
       userId: user.id,
       action: "matter.update",
       entityType: "matter",
-      entityId: matter.id,
-      matterId: matter.id,
+      entityId: updated.matterId,
+      matterId: updated.matterId,
       summary: `Updated matter “${fields.title}” metadata`,
-      metadata: { riskLevel, practiceArea, role: permission.access.role },
+      metadata: { riskLevel, practiceArea, role: updated.role },
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
+      return { error: error.message.slice("PERMISSION:".length) }
+    }
     return { error: "Unable to update matter. Please try again." }
   }
 
@@ -585,13 +650,25 @@ export async function createConversation(
     const permission = await requireMatterPermission(user.id, matterId, "write")
     if (!permission.ok) return { error: permission.error }
 
-    const conversation = await prisma.conversation.create({
-      data: {
-        matterId: permission.access.matterId,
-        title: normalizedTitle,
-        createdByUserId: user.id,
-      },
-      select: { id: true },
+    const conversation = await prisma.$transaction(async (tx) => {
+      const locked = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matterId,
+        "write"
+      )
+      if (!locked.ok) {
+        throw new Error(`PERMISSION:${locked.error}`)
+      }
+
+      return tx.conversation.create({
+        data: {
+          matterId: locked.access.matterId,
+          title: normalizedTitle,
+          createdByUserId: user.id,
+        },
+        select: { id: true, matterId: true },
+      })
     })
 
     await recordAuditEvent({
@@ -599,10 +676,13 @@ export async function createConversation(
       action: "conversation.create",
       entityType: "conversation",
       entityId: conversation.id,
-      matterId: permission.access.matterId,
+      matterId: conversation.matterId,
       summary: `Opened conversation “${normalizedTitle}”`,
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
+      return { error: error.message.slice("PERMISSION:".length) }
+    }
     return { error: "Unable to create conversation. Please try again." }
   }
 
@@ -650,15 +730,28 @@ export async function deleteConversation(
     })
     if (!conversation) return { error: "Conversation not found or access denied." }
 
-    const permission = await requireWorkProductDelete(
-      user.id,
-      conversation.matterId,
-      conversation.createdByUserId
-    )
-    if (!permission.ok) return { error: permission.error }
-
     matterId = conversation.matterId
-    await prisma.conversation.delete({ where: { id: conversation.id } })
+    await prisma.$transaction(async (tx) => {
+      const permission = await requireWorkProductDeleteLocked(
+        tx,
+        user.id,
+        conversation.matterId,
+        conversation.createdByUserId
+      )
+      if (!permission.ok) {
+        throw new Error(`PERMISSION:${permission.error}`)
+      }
+
+      const deleted = await tx.conversation.deleteMany({
+        where: {
+          id: conversation.id,
+          matterId: conversation.matterId,
+        },
+      })
+      if (deleted.count !== 1) {
+        throw new Error("PERMISSION:Conversation not found or access denied.")
+      }
+    })
 
     await recordAuditEvent({
       userId: user.id,
@@ -668,7 +761,10 @@ export async function deleteConversation(
       matterId: conversation.matterId,
       summary: `Deleted conversation “${conversation.title}”`,
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
+      return { error: error.message.slice("PERMISSION:".length) }
+    }
     return { error: "Unable to delete conversation. Please try again." }
   }
 
@@ -730,25 +826,31 @@ export async function createConversationMessage(
     })
     if (!conversation) return { error: "Conversation not found or access denied." }
 
-    const permission = await requireMatterPermission(
-      user.id,
-      conversation.matterId,
-      "write"
-    )
-    if (!permission.ok) return { error: permission.error }
-
     matterId = conversation.matterId
-    const message = await prisma.conversationMessage.create({
-      data: {
-        conversationId: conversation.id,
-        role: "note",
-        content: normalizedContent,
-      },
-      select: { id: true },
-    })
-    await prisma.matter.update({
-      where: { id: conversation.matterId },
-      data: { updatedAt: new Date() },
+    const message = await prisma.$transaction(async (tx) => {
+      const permission = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        conversation.matterId,
+        "write"
+      )
+      if (!permission.ok) {
+        throw new Error(`PERMISSION:${permission.error}`)
+      }
+
+      const created = await tx.conversationMessage.create({
+        data: {
+          conversationId: conversation.id,
+          role: "note",
+          content: normalizedContent,
+        },
+        select: { id: true },
+      })
+      await tx.matter.update({
+        where: { id: conversation.matterId },
+        data: { updatedAt: new Date() },
+      })
+      return created
     })
 
     await recordAuditEvent({
@@ -764,7 +866,10 @@ export async function createConversationMessage(
         length: normalizedContent.length,
       },
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
+      return { error: error.message.slice("PERMISSION:".length) }
+    }
     return { error: "Unable to add message. Please try again." }
   }
 

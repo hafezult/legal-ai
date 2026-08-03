@@ -12,7 +12,8 @@ import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   matterAccessWhere,
   requireMatterPermission,
-  requireWorkProductDelete,
+  requireMatterPermissionLocked,
+  requireWorkProductDeleteLocked,
 } from "@/lib/auth/rbac"
 import {
   DRAFT_TYPE_LABELS,
@@ -323,14 +324,21 @@ export async function generateDraft(
   let draftId = ""
   let persistenceError: string | undefined
   try {
-    // Re-authorize immediately before writes — retrieval/generation can take
-    // minutes, during which membership may have been revoked.
-    const stillAllowed = await requireMatterPermission(user.id, matterId, "write")
-    if (!stillAllowed.ok) {
-      persistenceError =
-        "Draft generated, but access was revoked before it could be saved."
-    } else {
-      const draft = await prisma.draftDocument.create({
+    // Re-authorize under matter + membership locks immediately before writes —
+    // retrieval/generation can take minutes, during which membership may have
+    // been revoked.
+    const persisted = await prisma.$transaction(async (tx) => {
+      const stillAllowed = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matterId,
+        "write"
+      )
+      if (!stillAllowed.ok) {
+        return { ok: false as const }
+      }
+
+      const draft = await tx.draftDocument.create({
         data: {
           userId: user.id,
           matterId,
@@ -343,21 +351,28 @@ export async function generateDraft(
           status: generationError ? "failed" : "ready",
         },
       })
-      draftId = draft.id
 
+      await tx.matter.update({
+        where: { id: matterId },
+        data: { updatedAt: new Date() },
+      })
+
+      return { ok: true as const, draftId: draft.id }
+    })
+
+    if (!persisted.ok) {
+      persistenceError =
+        "Draft generated, but access was revoked before it could be saved."
+    } else {
+      draftId = persisted.draftId
       await recordAuditEvent({
         userId: user.id,
         action: "draft.generate",
         entityType: "draft_document",
-        entityId: draft.id,
+        entityId: persisted.draftId,
         matterId,
         summary: `Generated ${draftType} draft on “${matter.title}”`,
         metadata: { draftType, chunkCount: chunks.length },
-      })
-
-      await prisma.matter.update({
-        where: { id: matterId },
-        data: { updatedAt: new Date() },
       })
     }
   } catch {
@@ -523,15 +538,28 @@ export async function deleteDraft(draftId: string): Promise<DraftDeleteState> {
     })
     if (!draft) return { error: "Draft not found or access denied." }
 
-    const permission = await requireWorkProductDelete(
-      user.id,
-      draft.matterId,
-      draft.userId
-    )
-    if (!permission.ok) return { error: permission.error }
-
     matterId = draft.matterId
-    await prisma.draftDocument.delete({ where: { id: draft.id } })
+    await prisma.$transaction(async (tx) => {
+      const permission = await requireWorkProductDeleteLocked(
+        tx,
+        user.id,
+        draft.matterId,
+        draft.userId
+      )
+      if (!permission.ok) {
+        throw new Error(`PERMISSION:${permission.error}`)
+      }
+
+      const deleted = await tx.draftDocument.deleteMany({
+        where: {
+          id: draft.id,
+          matterId: draft.matterId,
+        },
+      })
+      if (deleted.count !== 1) {
+        throw new Error("PERMISSION:Draft not found or access denied.")
+      }
+    })
 
     await recordAuditEvent({
       userId: user.id,
@@ -541,7 +569,10 @@ export async function deleteDraft(draftId: string): Promise<DraftDeleteState> {
       matterId: draft.matterId,
       summary: `Deleted draft “${draft.title.slice(0, 80)}”`,
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
+      return { error: error.message.slice("PERMISSION:".length) }
+    }
     return { error: "Data layer unreachable. Please try again." }
   }
 
