@@ -23,6 +23,11 @@ import {
   groundedSystemRulesAppendix,
 } from "@/lib/ai/prompt-envelope"
 import { MAX_RESEARCH_QUERY_CHARS } from "@/lib/research/limits"
+import {
+  redactResearchOnRevocation,
+  RESEARCH_ACCESS_REVOKED_MESSAGE,
+  RESEARCH_PERSIST_REVOKED_MESSAGE,
+} from "@/lib/research/revocation"
 
 const RESEARCH_RATE_LIMIT = { limit: 12, windowMs: 60_000 } as const
 const RESEARCH_DELETE_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const
@@ -268,6 +273,27 @@ export async function runResearch(
     }
   }
 
+  // Re-check write access before LLM generation so a mid-flight revocation
+  // does not send retrieved matter excerpts to the model or the client.
+  try {
+    const preGenerate = await requireMatterPermission(user.id, matterId, "write")
+    if (!preGenerate.ok) {
+      return {
+        ...emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE),
+        matterTitle: matter.title,
+        indexedChunks,
+        embeddingConfigured: true,
+      }
+    }
+  } catch {
+    return {
+      ...emptyResult("Data layer unreachable."),
+      matterTitle: matter.title,
+      indexedChunks,
+      embeddingConfigured: true,
+    }
+  }
+
   // Extract authorities from retrieved excerpts
   const combinedText = chunks.map((c) => c.content).join("\n\n")
   const rawAuthorities = extractAuthorities(combinedText)
@@ -353,20 +379,35 @@ export async function runResearch(
     })
 
     if (!persisted.ok) {
-      persistenceError =
-        "Research completed, but access was revoked before the session could be saved."
-    } else {
-      sessionId = persisted.sessionId
-      await recordAuditEvent({
-        userId: user.id,
-        action: "research.run",
-        entityType: "research_session",
-        entityId: persisted.sessionId,
-        matterId,
-        summary: `Ran research query on “${matter.title}”`,
-        metadata: { chunkCount: chunks.length, queryLength: query.length },
-      })
+      // Fail closed: do not return retrieved/generated matter content after
+      // write access was revoked under the locked persistence check.
+      return redactResearchOnRevocation(
+        {
+          query,
+          matterId,
+          matterTitle: matter.title,
+          answer,
+          chunks,
+          authorities,
+          sessionId: "",
+          retrievalCount: chunks.length,
+          indexedChunks,
+          embeddingConfigured: true,
+          error: undefined,
+        },
+        RESEARCH_PERSIST_REVOKED_MESSAGE
+      )
     }
+    sessionId = persisted.sessionId
+    await recordAuditEvent({
+      userId: user.id,
+      action: "research.run",
+      entityType: "research_session",
+      entityId: persisted.sessionId,
+      matterId,
+      summary: `Ran research query on “${matter.title}”`,
+      metadata: { chunkCount: chunks.length, queryLength: query.length },
+    })
   } catch {
     persistenceError =
       "Research completed, but the session could not be saved to matter history."

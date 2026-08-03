@@ -215,9 +215,18 @@ export async function createMatter(
       }
     }
     organizationId = organization.id
-    // Lock membership before insert so a concurrent demotion cannot create
-    // matters after write permission was revoked.
+    // Lock Organization before membership so lock order matches org delete /
+    // ownership mutations (org → member) and avoids deadlocks. Then lock
+    // membership before insert so a concurrent demotion cannot create matters
+    // after write permission was revoked.
     matter = await prisma.$transaction(async (tx) => {
+      const lockedOrgs = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE
+      `
+      if (!lockedOrgs[0]) {
+        throw new Error("ORGANIZATION_MISSING")
+      }
+
       const lockedMembers = await tx.$queryRaw<Array<{ role: string }>>`
         SELECT role FROM "OrganizationMember"
         WHERE "organizationId" = ${organizationId}
@@ -254,6 +263,12 @@ export async function createMatter(
       return {
         error:
           "Your organization role is read-only. Ask an admin to grant write access before creating matters.",
+      }
+    }
+    if (error instanceof Error && error.message === "ORGANIZATION_MISSING") {
+      return {
+        error:
+          "The active organization is no longer available. Open Settings to confirm your workspace, then retry.",
       }
     }
     return { error: "Matter initialization failed. Please try again." }

@@ -16,6 +16,11 @@ import {
   requireWorkProductDeleteLocked,
 } from "@/lib/auth/rbac"
 import {
+  DRAFT_ACCESS_REVOKED_MESSAGE,
+  DRAFT_PERSIST_REVOKED_MESSAGE,
+  redactDraftOnRevocation,
+} from "@/lib/drafting/revocation"
+import {
   DRAFT_TYPE_LABELS,
   DRAFT_TYPES,
   MAX_DRAFT_INSTRUCTION_CHARS,
@@ -302,6 +307,29 @@ export async function generateDraft(
     }
   }
 
+  // Re-check write access before LLM generation so a mid-flight revocation
+  // does not send retrieved matter excerpts to the model or the client.
+  try {
+    const preGenerate = await requireMatterPermission(user.id, matterId, "write")
+    if (!preGenerate.ok) {
+      return {
+        ...emptyResult(DRAFT_ACCESS_REVOKED_MESSAGE),
+        matterTitle: matter.title,
+        draftType,
+        indexedChunks,
+        embeddingConfigured: true,
+      }
+    }
+  } catch {
+    return {
+      ...emptyResult("Data layer unreachable."),
+      matterTitle: matter.title,
+      draftType,
+      indexedChunks,
+      embeddingConfigured: true,
+    }
+  }
+
   let content = ""
   let generationError: string | undefined
   try {
@@ -361,20 +389,36 @@ export async function generateDraft(
     })
 
     if (!persisted.ok) {
-      persistenceError =
-        "Draft generated, but access was revoked before it could be saved."
-    } else {
-      draftId = persisted.draftId
-      await recordAuditEvent({
-        userId: user.id,
-        action: "draft.generate",
-        entityType: "draft_document",
-        entityId: persisted.draftId,
-        matterId,
-        summary: `Generated ${draftType} draft on “${matter.title}”`,
-        metadata: { draftType, chunkCount: chunks.length },
-      })
+      // Fail closed: do not return retrieved/generated matter content after
+      // write access was revoked under the locked persistence check.
+      return redactDraftOnRevocation(
+        {
+          draftId: "",
+          matterId,
+          matterTitle: matter.title,
+          title,
+          draftType,
+          instruction: instruction.trim(),
+          content,
+          chunks,
+          retrievalCount: chunks.length,
+          indexedChunks,
+          embeddingConfigured: true,
+          error: undefined,
+        },
+        DRAFT_PERSIST_REVOKED_MESSAGE
+      )
     }
+    draftId = persisted.draftId
+    await recordAuditEvent({
+      userId: user.id,
+      action: "draft.generate",
+      entityType: "draft_document",
+      entityId: persisted.draftId,
+      matterId,
+      summary: `Generated ${draftType} draft on “${matter.title}”`,
+      metadata: { draftType, chunkCount: chunks.length },
+    })
   } catch {
     persistenceError =
       "Draft generated, but it could not be saved to matter history."

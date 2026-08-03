@@ -97,7 +97,7 @@ npm audit --audit-level=high
 npm run build
 ```
 
-For build-only validation without live service credentials, use syntactically valid dummy values for Clerk/Supabase/Postgres and leave `OPENAI_API_KEY` empty. Semantic retrieval requires a real OpenAI key and re-indexed documents. CI runs `prisma migrate deploy` against a `pgvector/pgvector:pg16` service so schema + extension migrations are exercised before lint/typecheck/tests/build, and pins `actions/checkout` / `actions/setup-node` to full commit SHAs. With the pinned Next.js 16.2.11 release and dependency overrides (`brace-expansion@5.0.8`, `minimatch@10.2.5`, nested Next `postcss@8.5.23`), `npm audit --audit-level=high` is clean.
+For build-only validation without live service credentials, use syntactically valid dummy values for Clerk/Supabase/Postgres and leave `OPENAI_API_KEY` empty. Semantic retrieval requires a real OpenAI key and re-indexed documents. CI runs `prisma migrate deploy` against a `pgvector/pgvector:pg16` service so schema + extension migrations are exercised before lint/typecheck/tests/build, and pins `actions/checkout` / `actions/setup-node` to full commit SHAs. With the pinned Next.js 16.2.11 release and dependency overrides (`brace-expansion@5.0.9`, `minimatch@10.2.6`, `typescript-eslint@8.66.0`, nested Next `postcss@8.5.25`), `npm audit --audit-level=high` is clean.
 
 ## Database notes
 
