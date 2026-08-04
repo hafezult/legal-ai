@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto"
+
 import { resolveAppBaseUrl } from "@/lib/app-url"
 import { recordAuditEvent } from "@/lib/audit"
 import { hashInviteToken, isInviteTokenShape } from "@/lib/auth/invite-token"
@@ -545,6 +547,23 @@ export async function ensurePersonalOrganization(user: {
 
   const createOwnedWorkspace = async (workspaceSlug: string) =>
     prisma.$transaction(async (tx) => {
+      // Serialize concurrent ensureAppUser / personal-org recovery on the User
+      // row so two callers cannot dual-provision owned workspaces.
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`
+
+      const existingOwned = await tx.organizationMember.findFirst({
+        where: { userId: user.id, role: "owner" },
+        select: { organizationId: true },
+      })
+      if (existingOwned) {
+        // Only repair a missing active workspace — never clobber a valid switch.
+        await tx.user.updateMany({
+          where: { id: user.id, activeOrganizationId: null },
+          data: { activeOrganizationId: existingOwned.organizationId },
+        })
+        return existingOwned.organizationId
+      }
+
       const organization = await tx.organization.create({
         data: {
           name,
@@ -559,7 +578,6 @@ export async function ensurePersonalOrganization(user: {
         select: { id: true },
       })
 
-      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`
       await tx.user.update({
         where: { id: user.id },
         data: { activeOrganizationId: organization.id },
@@ -582,13 +600,33 @@ export async function ensurePersonalOrganization(user: {
       }
 
       // Deterministic slug can remain occupied after transferring the last
-      // owned workspace. Provision a unique replacement instead of failing
-      // every subsequent ensureAppUser call.
-      const uniqueSlug = `${slugBase}-${user.id.slice(-6)}-${Date.now().toString(36)}`.slice(
-        0,
-        48
-      )
-      return await createOwnedWorkspace(uniqueSlug)
+      // owned workspace. Provision a unique replacement with nested P2002
+      // retry instead of failing every subsequent ensureAppUser call.
+      const maxUniqueAttempts = 3
+      for (let attempt = 0; attempt < maxUniqueAttempts; attempt++) {
+        const uniqueSlug =
+          `${slugBase}-${user.id.slice(-6)}-${randomBytes(4).toString("hex")}`.slice(
+            0,
+            48
+          )
+        try {
+          return await createOwnedWorkspace(uniqueSlug)
+        } catch (retryError) {
+          if (!isPrismaUniqueViolation(retryError)) throw retryError
+          const recovered = await prisma.organizationMember.findFirst({
+            where: { userId: user.id, role: "owner" },
+            select: { organizationId: true },
+          })
+          if (recovered) {
+            await activateOwnedOrganizationIfUnset(
+              user.id,
+              recovered.organizationId
+            )
+            return recovered.organizationId
+          }
+        }
+      }
+      throw error
     }
     throw error
   }

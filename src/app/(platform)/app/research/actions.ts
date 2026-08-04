@@ -516,42 +516,15 @@ export async function restoreResearchSession(
     const permission = await requireMatterPermission(user.id, session.matterId, "read")
     if (!permission.ok) return emptyResult(permission.error)
 
-    const chunks = await loadProvenanceChunks(
-      session.matterId,
-      session.chunkIds,
-      session.citationSnapshot
-    )
-    const combinedText = chunks.map((chunk) => chunk.content).join("\n\n")
-    const grouped = groupAuthorities(extractAuthorities(combinedText))
-    const authorities: ResearchAuthorities = {
-      cases: grouped.cases.map((a) => a.normalized),
-      statutes: grouped.statutes.map((a) => a.normalized),
-      cpr: grouped.cpr.map((a) => a.normalized),
-      practiceDirs: grouped.practiceDirs.map((a) => a.normalized),
-      statutory: grouped.statutory.map((a) => a.normalized),
-    }
-    let indexedChunks = 0
-    try {
-      indexedChunks = await indexedChunkCount(session.matterId)
-    } catch (err) {
-      if (err instanceof Error) {
-        console.error(
-          "[restoreResearchSession] indexedChunkCount",
-          err.message.slice(0, 240)
-        )
-      }
-      return emptyResult(
-        "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
-      )
-    }
-
-    // Final locked reauth + re-read before returning saved AI content so a
-    // mid-restore revoke/delete cannot fail open with a stale body.
+    // Final locked reauth + re-read of body and provenance so a mid-restore
+    // revoke/delete cannot fail open with stale answers or source excerpts.
     let restored: {
       id: string
       query: string
       response: string | null
       matterTitle: string
+      chunks: ResearchChunk[]
+      authorities: ResearchAuthorities
     }
     try {
       const lockedRead = await prisma.$transaction(async (tx) => {
@@ -573,6 +546,8 @@ export async function restoreResearchSession(
             id: true,
             query: true,
             response: true,
+            chunkIds: true,
+            citationSnapshot: true,
             matter: { select: { title: true } },
           },
         })
@@ -582,6 +557,21 @@ export async function restoreResearchSession(
             error: "Research session not found or access denied.",
           }
         }
+        const chunks = await loadProvenanceChunks(
+          session.matterId,
+          fresh.chunkIds,
+          fresh.citationSnapshot,
+          tx
+        )
+        const combinedText = chunks.map((chunk) => chunk.content).join("\n\n")
+        const grouped = groupAuthorities(extractAuthorities(combinedText))
+        const authorities: ResearchAuthorities = {
+          cases: grouped.cases.map((a) => a.normalized),
+          statutes: grouped.statutes.map((a) => a.normalized),
+          cpr: grouped.cpr.map((a) => a.normalized),
+          practiceDirs: grouped.practiceDirs.map((a) => a.normalized),
+          statutory: grouped.statutory.map((a) => a.normalized),
+        }
         return {
           ok: true as const,
           value: {
@@ -589,6 +579,8 @@ export async function restoreResearchSession(
             query: fresh.query,
             response: fresh.response,
             matterTitle: fresh.matter.title,
+            chunks,
+            authorities,
           },
         }
       })
@@ -598,15 +590,30 @@ export async function restoreResearchSession(
       return emptyResult("Unable to verify workspace permissions.")
     }
 
+    let indexedChunks = 0
+    try {
+      indexedChunks = await indexedChunkCount(session.matterId)
+    } catch (err) {
+      if (err instanceof Error) {
+        console.error(
+          "[restoreResearchSession] indexedChunkCount",
+          err.message.slice(0, 240)
+        )
+      }
+      return emptyResult(
+        "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
+      )
+    }
+
     return {
       query: restored.query,
       matterId: session.matterId,
       matterTitle: restored.matterTitle,
       answer: restored.response ?? "",
-      chunks,
-      authorities,
+      chunks: restored.chunks,
+      authorities: restored.authorities,
       sessionId: restored.id,
-      retrievalCount: chunks.length,
+      retrievalCount: restored.chunks.length,
       indexedChunks,
       embeddingConfigured: isEmbeddingConfigured(),
     }

@@ -530,28 +530,9 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
     if (!permission.ok) return emptyResult(permission.error)
 
     const draftType: DraftType = isDraftType(draft.draftType) ? draft.draftType : "advice"
-    const chunks = await loadProvenanceChunks(
-      draft.matterId,
-      draft.chunkIds,
-      draft.citationSnapshot
-    )
-    let indexedChunks = 0
-    try {
-      indexedChunks = await indexedChunkCount(draft.matterId)
-    } catch (err) {
-      if (err instanceof Error) {
-        console.error(
-          "[restoreDraft] indexedChunkCount",
-          err.message.slice(0, 240)
-        )
-      }
-      return emptyResult(
-        "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
-      )
-    }
 
-    // Final locked reauth + re-read before returning saved draft content so a
-    // mid-restore revoke/delete cannot fail open with a stale body.
+    // Final locked reauth + re-read of body and provenance so a mid-restore
+    // revoke/delete cannot fail open with stale draft text or source excerpts.
     let restored: {
       id: string
       title: string
@@ -559,6 +540,7 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
       instruction: string
       content: string | null
       matterTitle: string
+      chunks: DraftSourceChunk[]
     }
     try {
       const lockedRead = await prisma.$transaction(async (tx) => {
@@ -582,6 +564,8 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
             draftType: true,
             instruction: true,
             content: true,
+            chunkIds: true,
+            citationSnapshot: true,
             matter: { select: { title: true } },
           },
         })
@@ -591,6 +575,12 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
             error: "Draft not found or access denied.",
           }
         }
+        const chunks = await loadProvenanceChunks(
+          draft.matterId,
+          fresh.chunkIds,
+          fresh.citationSnapshot,
+          tx
+        )
         return {
           ok: true as const,
           value: {
@@ -600,6 +590,7 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
             instruction: fresh.instruction,
             content: fresh.content,
             matterTitle: fresh.matter.title,
+            chunks,
           },
         }
       })
@@ -607,6 +598,21 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
       restored = lockedRead.value
     } catch {
       return emptyResult("Unable to verify workspace permissions.")
+    }
+
+    let indexedChunks = 0
+    try {
+      indexedChunks = await indexedChunkCount(draft.matterId)
+    } catch (err) {
+      if (err instanceof Error) {
+        console.error(
+          "[restoreDraft] indexedChunkCount",
+          err.message.slice(0, 240)
+        )
+      }
+      return emptyResult(
+        "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
+      )
     }
 
     const restoredType: DraftType = isDraftType(restored.draftType)
@@ -621,8 +627,8 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
       draftType: restoredType,
       instruction: restored.instruction,
       content: restored.content ?? "",
-      chunks,
-      retrievalCount: chunks.length,
+      chunks: restored.chunks,
+      retrievalCount: restored.chunks.length,
       indexedChunks,
       embeddingConfigured: isEmbeddingConfigured(),
     }
