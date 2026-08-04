@@ -41,9 +41,8 @@ type Matter = {
 
 type RecentDraft = {
   id: string
-  title: string
   draftType: string
-  /** Presence flag only — instruction/body loaded via locked restore. */
+  /** Presence flag only — instruction/title/body loaded via locked restore. */
   hasContent: boolean
   chunkCount: number
   createdAt: Date | string
@@ -493,7 +492,7 @@ export function DraftingClient({
                             source{draft.chunkCount !== 1 ? "s" : ""}
                           </p>
                         </div>
-                        <p className="mt-2 text-sm text-white/62">{draft.title}</p>
+                        <p className="mt-2 text-sm text-white/62">Saved draft</p>
                         <p className="mt-1.5 text-xs text-white/28">
                           {draft.hasContent
                             ? "Draft content saved — open to restore under current access."

@@ -55,7 +55,6 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
   }[] = []
   let recentDrafts: {
     id: string
-    title: string
     draftType: string
     hasContent: boolean
     chunkCount: number
@@ -106,9 +105,9 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
             take: initialMatterId ? 24 : 8,
             select: {
               id: true,
-              title: true,
+              // draftType/metadata only — titles embed instruction excerpts;
+              // instruction/body/title return via locked restore.
               draftType: true,
-              // Presence only — instruction/body return via locked restore.
               content: true,
               chunkIds: true,
               createdAt: true,
@@ -131,7 +130,6 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
                 },
                 select: {
                   id: true,
-                  title: true,
                   draftType: true,
                   content: true,
                   chunkIds: true,
@@ -198,9 +196,9 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
         )
         return {
           id: draft.id,
-          title: draft.title,
           draftType: draft.draftType,
-          // Never ship saved instructions/bodies in list props — restore under lock.
+          // Never ship saved instructions/titles/bodies in list props —
+          // titles embed instruction excerpts; restore under lock.
           hasContent: Boolean(draft.content?.trim()),
           chunkCount: draft.chunkIds.length,
           createdAt: draft.createdAt,
