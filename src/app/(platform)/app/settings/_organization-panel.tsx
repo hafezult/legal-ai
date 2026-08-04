@@ -709,9 +709,9 @@ export function OrganizationAccessPanel({
               Delete organization
             </p>
             <p className="mt-1.5 text-[11px] leading-relaxed text-white/28">
-              Removes the workspace, memberships, and invites. Matter records stay
-              with their creators and are detached from this organization. You must
-              keep at least one owned workspace.
+              Removes the workspace, memberships, and invites. All matters in this
+              organization transfer to you as owner before detach so former members
+              cannot regain access. You must keep at least one owned workspace.
             </p>
             {canDeleteOrg ? (
               <div className="mt-3 flex flex-wrap gap-2">

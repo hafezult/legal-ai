@@ -1315,7 +1315,9 @@ export async function transferOrganizationOwnership(
 
 /**
  * Delete an organization owned by the actor.
- * Matters keep their creator ownership with organizationId cleared (SetNull).
+ * Before Organization delete SetNulls Matter.organizationId, every org matter
+ * is reassigned to the deleting owner so former creators cannot regain access
+ * through the legacy personal-matter path (`userId` + `organizationId: null`).
  * Requires confirmationName to match the organization name.
  */
 export async function deleteOwnedOrganization(
@@ -1392,10 +1394,12 @@ export async function deleteOwnedOrganization(
         WHERE "organizationId" = ${organizationId}
         FOR UPDATE
       `
-      // Org delete SetNulls Matter.organizationId. Preserve an access path for
-      // creator-less org matters by assigning the deleting owner as creator.
+      // Org delete SetNulls Matter.organizationId. Transfer every org matter to
+      // the deleting owner first — not only creator-less rows — so a removed
+      // former creator cannot regain confidential matter access via the legacy
+      // personal-matter predicate after detach.
       await tx.matter.updateMany({
-        where: { organizationId, userId: null },
+        where: { organizationId },
         data: { userId: actorUserId },
       })
       await tx.organization.delete({ where: { id: organizationId } })

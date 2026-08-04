@@ -15,6 +15,21 @@ describe("matterAccessWhere", () => {
       ],
     })
   })
+
+  it("treats detached org matters as personal for whichever userId remains", () => {
+    // After Organization delete, Matter.organizationId is SetNull. If a former
+    // creator's userId were left intact, matterAccessWhere would restore their
+    // access — deleteOwnedOrganization must reassign every org matter to the
+    // deleting owner before detach so this predicate cannot revive removed
+    // creators.
+    const where = matterAccessWhere("former-creator")
+    assert.deepEqual(where.OR[0], {
+      userId: "former-creator",
+      organizationId: null,
+    })
+    const whereOwner = matterAccessWhere("deleting-owner")
+    assert.notDeepEqual(whereOwner.OR[0], where.OR[0])
+  })
 })
 
 describe("matterAccessWhereForActiveOrg", () => {
