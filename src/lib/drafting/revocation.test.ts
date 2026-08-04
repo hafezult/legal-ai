@@ -8,10 +8,11 @@ import {
 } from "./revocation.ts"
 
 describe("redactDraftOnRevocation", () => {
-  it("clears draft identity, content, and source chunks on revocation", () => {
+  it("clears draft identity, instruction, content, and source chunks on revocation", () => {
     const redacted = redactDraftOnRevocation({
       draftId: "draft_1",
       title: "Advice note",
+      instruction: "Summarize privileged client facts",
       content: "Confidential draft body",
       chunks: [{ id: "c1", content: "secret excerpt" }],
       retrievalCount: 2,
@@ -20,6 +21,7 @@ describe("redactDraftOnRevocation", () => {
 
     assert.equal(redacted.draftId, "")
     assert.equal(redacted.title, "")
+    assert.equal(redacted.instruction, "")
     assert.equal(redacted.content, "")
     assert.deepEqual(redacted.chunks, [])
     assert.equal(redacted.retrievalCount, 0)

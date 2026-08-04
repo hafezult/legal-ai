@@ -9,6 +9,8 @@ export const DRAFT_PERSIST_REVOKED_MESSAGE =
 export type DraftSensitivePayload = {
   draftId: string
   title: string
+  /** Cleared on revoke so mid-flight returns do not echo the prompt. */
+  instruction?: string
   content: string
   chunks: unknown[]
   retrievalCount: number
@@ -27,6 +29,7 @@ export function redactDraftOnRevocation<T extends DraftSensitivePayload>(
     ...output,
     draftId: "",
     title: "",
+    instruction: "",
     content: "",
     chunks: [],
     retrievalCount: 0,

@@ -7,6 +7,8 @@ export const RESEARCH_PERSIST_REVOKED_MESSAGE =
   "Access was revoked before the research session could be saved. Results were discarded."
 
 export type ResearchSensitivePayload = {
+  /** Cleared on revoke so mid-flight returns do not echo the prompt. */
+  query?: string
   answer: string
   chunks: unknown[]
   authorities: {
@@ -31,6 +33,7 @@ export function redactResearchOnRevocation<T extends ResearchSensitivePayload>(
 ): T {
   return {
     ...output,
+    query: "",
     answer: "",
     chunks: [],
     authorities: {
