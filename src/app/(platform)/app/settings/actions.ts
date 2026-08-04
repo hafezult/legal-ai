@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import { selectVerifiedClerkEmails } from "@/lib/auth/clerk-email"
+import { decideInviteUrlPublish } from "@/lib/auth/invite-url-publish"
 import { requireActor } from "@/lib/auth/require-actor"
 import {
   generateInviteToken,
@@ -126,12 +127,14 @@ async function requireOrgAdmin(userId: string, organizationId: string) {
 
 /**
  * Final locked publish check before returning a raw invite acceptance URL.
- * Email/audit/revalidate can race a concurrent demotion after mint/rotate.
+ * Email/audit/revalidate can race a concurrent demotion or peer revoke after
+ * mint/rotate — authority alone must not publish a now-dead token.
  */
 async function actorCanPublishInviteUrl(
   userId: string,
   organizationId: string,
-  inviteRole: OrgRole
+  inviteRole: OrgRole,
+  inviteTokenHash: string
 ): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
@@ -141,7 +144,23 @@ async function actorCanPublishInviteUrl(
       },
       select: { role: true },
     })
-    return inviterCanAuthorizeInviteRole(actorMembership?.role, inviteRole)
+    const liveInvite = await tx.organizationInvite.findFirst({
+      where: {
+        organizationId,
+        tokenHash: inviteTokenHash,
+        acceptedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      select: { role: true },
+    })
+    return decideInviteUrlPublish({
+      actorCanAuthorize: inviterCanAuthorizeInviteRole(
+        actorMembership?.role,
+        inviteRole
+      ),
+      inviteStillPending: Boolean(liveInvite),
+      inviteRoleMatches: liveInvite?.role === inviteRole,
+    })
   })
 }
 
@@ -742,13 +761,14 @@ export async function addOrganizationMember(
     revalidatePath("/app/settings")
 
     // Final locked publish reauth after email/audit/revalidation so a concurrent
-    // demotion cannot receive a fresh invite capability URL after losing authority.
+    // demotion or peer revoke cannot receive a fresh invite capability URL.
     let canPublishUrl = false
     try {
       canPublishUrl = await actorCanPublishInviteUrl(
         actor.user.id,
         organizationId,
-        role
+        role,
+        tokenHash
       )
     } catch {
       return {
@@ -760,10 +780,11 @@ export async function addOrganizationMember(
         success: true,
         inviteCreated: true,
         inviteEmailSent: emailResult.sent,
-        // Intentionally omit inviteUrl — demoted actors must not copy the link.
+        // Intentionally omit inviteUrl — demoted actors / revoked invites
+        // must not copy a capability link from this response.
         inviteEmailWarning: emailResult.sent
-          ? "Invite was emailed, but your role changed before the link could be shown."
-          : "Invite was created, but your role changed before the link could be shown. Ask another admin to refresh the invite.",
+          ? "Invite was emailed, but your access or the invite changed before the link could be shown."
+          : "Invite was created, but your access or the invite changed before the link could be shown. Ask another admin to refresh the invite.",
       }
     }
 
@@ -994,19 +1015,21 @@ export async function refreshOrganizationInviteLink(
     revalidatePath("/app/settings")
 
     // Final locked publish reauth after audit/revalidation so a concurrent
-    // demotion cannot receive the rotated invite capability URL.
+    // demotion or peer revoke cannot receive the rotated invite capability URL.
     const inviteRole = invite.role
     if (!isOrgRole(inviteRole)) {
       return {
         error: "Organization role changed concurrently. Refresh and try again.",
       }
     }
+    const rotatedTokenHash = hashInviteToken(token)
     let canPublishUrl = false
     try {
       canPublishUrl = await actorCanPublishInviteUrl(
         actor.user.id,
         organizationId,
-        inviteRole
+        inviteRole,
+        rotatedTokenHash
       )
     } catch {
       return {

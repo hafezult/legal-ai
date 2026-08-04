@@ -6,6 +6,7 @@ import {
   getActiveOrganization,
   isOrgRole,
   listVerifiedUserOrganizationsWithActive,
+  loadVerifiedOrganizationAccessDetail,
   requireOrganizationMembershipLocked,
   roleAtLeast,
   roleHasPermission,
@@ -264,45 +265,10 @@ export default async function SettingsPage() {
       })
 
       if (active) {
-        const [memberRows, inviteRows] = await Promise.all([
-          prisma.organizationMember.findMany({
-            where: { organizationId: active.id },
-            orderBy: [{ role: "asc" }, { createdAt: "asc" }],
-            take: 200,
-            select: {
-              id: true,
-              role: true,
-              userId: true,
-              user: { select: { email: true, name: true } },
-            },
-          }),
-          // Raw invite tokens are never stored or serialized; admins mint a
-          // fresh link via refreshOrganizationInviteLink when copying.
-          // Fetch pending invites whenever the provisional role looked
-          // privileged; final locked reauth below may discard them.
-          canManageMembers
-            ? prisma.organizationInvite.findMany({
-                where: {
-                  organizationId: active.id,
-                  acceptedAt: null,
-                  expiresAt: { gt: new Date() },
-                },
-                orderBy: { createdAt: "desc" },
-                take: 100,
-                select: {
-                  id: true,
-                  email: true,
-                  role: true,
-                  expiresAt: true,
-                },
-              })
-            : Promise.resolve([]),
-        ])
-
-        // Final transactional roster + active-org membership before publishing
-        // any Settings payload (switcher names/roles, member emails, invites,
-        // activity, health). Replaces a single-org reauth that left the
-        // switcher roster unlocked after gather awaits.
+        // Final transactional switcher roster first, then a locked access-detail
+        // read for the active org. Member/invite rows must not come from the
+        // earlier unlocked gather — concurrent revoke/demotion/removal can
+        // otherwise leave stale emails and roles on the page.
         const verified = await listVerifiedUserOrganizationsWithActive(user.id)
         organizations = verified.organizations.map((org) => ({
           id: org.id,
@@ -312,8 +278,7 @@ export default async function SettingsPage() {
         const finalOrg = verified.organizations.find(
           (org) => org.id === active.id
         )
-        // Only publish detail gathered for this active org when it is still
-        // the verified active workspace (or at least still a verified member).
+        // Only publish detail when this org is still the verified active workspace.
         if (
           !finalOrg ||
           verified.activeOrganizationId !== active.id
@@ -324,50 +289,64 @@ export default async function SettingsPage() {
           canViewHealthDetails = false
           activity = []
         } else {
-          activeRole = finalOrg.role
-          canManageMembers = roleHasPermission(activeRole, "manage_members")
-          canViewHealthDetails = roleAtLeast(activeRole, "admin")
-          health = canViewHealthDetails ? pendingHealth : null
-          if (!canManageMembers) {
-            activity = activity.filter(
-              (event) =>
-                !(memberAdminActions as readonly string[]).includes(event.action)
-            )
-          }
-
-          organization = {
-            id: finalOrg.id,
-            name: finalOrg.name,
-            role: activeRole,
-            members: memberRows.map((member) => {
-              const isSelf = member.userId === user.id
-              return {
-                id: member.id,
-                role: member.role,
-                userId: member.userId,
-                // Member emails are admin/owner-only; others see names/roles (+ self).
-                email:
-                  canManageMembers || isSelf
-                    ? member.user.email
-                    : "",
-                name: member.user.name,
-                isSelf,
-              }
-            }),
-            invites: canManageMembers
-              ? inviteRows
-                  .filter(
-                    (invite) =>
-                      isOrgRole(invite.role) &&
-                      roleStrictlyAbove(activeRole, invite.role)
+          const access = await loadVerifiedOrganizationAccessDetail(
+            user.id,
+            active.id
+          )
+          if (!access.ok) {
+            organization = null
+            health = null
+            canManageMembers = false
+            canViewHealthDetails = false
+            activity = []
+          } else {
+            activeRole = access.role
+            canManageMembers = roleHasPermission(activeRole, "manage_members")
+            canViewHealthDetails = roleAtLeast(activeRole, "admin")
+            health = canViewHealthDetails ? pendingHealth : null
+            if (!canManageMembers) {
+              activity = activity.filter(
+                (event) =>
+                  !(memberAdminActions as readonly string[]).includes(
+                    event.action
                   )
-                  .map((invite) => ({
-                    id: invite.id,
-                    email: invite.email,
-                    role: invite.role,
-                    expiresAt: invite.expiresAt.toISOString(),
-                  }))
-              : [],
+              )
+            }
+
+            organization = {
+              id: finalOrg.id,
+              name: access.name,
+              role: activeRole,
+              members: access.members.map((member) => {
+                const isSelf = member.userId === user.id
+                return {
+                  id: member.id,
+                  role: member.role,
+                  userId: member.userId,
+                  // Member emails are admin/owner-only; others see names/roles (+ self).
+                  email:
+                    canManageMembers || isSelf ? member.user.email : "",
+                  name: member.user.name,
+                  isSelf,
+                }
+              }),
+              // Raw invite tokens are never stored or serialized; admins mint a
+              // fresh link via refreshOrganizationInviteLink when copying.
+              invites: canManageMembers
+                ? access.invites
+                    .filter(
+                      (invite) =>
+                        isOrgRole(invite.role) &&
+                        roleStrictlyAbove(activeRole, invite.role)
+                    )
+                    .map((invite) => ({
+                      id: invite.id,
+                      email: invite.email,
+                      role: invite.role,
+                      expiresAt: invite.expiresAt.toISOString(),
+                    }))
+                : [],
+            }
           }
         }
       } else {

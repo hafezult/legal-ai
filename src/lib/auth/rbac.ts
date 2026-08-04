@@ -429,6 +429,99 @@ export async function listVerifiedUserOrganizationsWithActive(
   }
 }
 
+export type OrganizationAccessMemberRow = {
+  id: string
+  role: string
+  userId: string
+  user: { email: string; name: string | null }
+}
+
+export type OrganizationAccessInviteRow = {
+  id: string
+  email: string
+  role: string
+  expiresAt: Date
+}
+
+/**
+ * Final locked Settings access roster for one organization.
+ *
+ * Locks Organization then the actor membership, then reads member/invite rows
+ * under those locks. Call after switcher verification and serialize from this
+ * snapshot only — never from an earlier unlocked gather.
+ */
+export async function loadVerifiedOrganizationAccessDetail(
+  userId: string,
+  organizationId: string
+): Promise<
+  | {
+      ok: true
+      role: OrgRole
+      name: string
+      members: OrganizationAccessMemberRow[]
+      invites: OrganizationAccessInviteRow[]
+    }
+  | { ok: false }
+> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const membership = await requireOrganizationMembershipLocked(
+        tx,
+        userId,
+        organizationId
+      )
+      if (!membership.ok) return { ok: false as const }
+
+      const organization = await tx.organization.findUnique({
+        where: { id: organizationId },
+        select: { name: true },
+      })
+      if (!organization) return { ok: false as const }
+
+      const members = await tx.organizationMember.findMany({
+        where: { organizationId },
+        orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+        take: 200,
+        select: {
+          id: true,
+          role: true,
+          userId: true,
+          user: { select: { email: true, name: true } },
+        },
+      })
+
+      const canManage = roleHasPermission(membership.role, "manage_members")
+      const invites = canManage
+        ? await tx.organizationInvite.findMany({
+            where: {
+              organizationId,
+              acceptedAt: null,
+              expiresAt: { gt: new Date() },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 100,
+            select: {
+              id: true,
+              email: true,
+              role: true,
+              expiresAt: true,
+            },
+          })
+        : []
+
+      return {
+        ok: true as const,
+        role: membership.role,
+        name: organization.name,
+        members,
+        invites,
+      }
+    })
+  } catch {
+    return { ok: false }
+  }
+}
+
 /** Primary organization for a user (prefer owned workspace). */
 export async function getPrimaryOrganization(
   userId: string
@@ -752,7 +845,6 @@ export async function acceptPendingOrganizationInvites(user: {
       organizationId: true,
       role: true,
       tokenHash: true,
-      organization: { select: { name: true } },
     },
   })
 
@@ -779,7 +871,7 @@ export async function acceptPendingOrganizationInvites(user: {
       entityType: "organization_invite",
       entityId: invite.organizationId,
       organizationId: invite.organizationId,
-      summary: `Accepted invite to “${invite.organization.name}” as ${claimed.effectiveRole}`,
+      summary: `Accepted invite to “${claimed.organizationName}” as ${claimed.effectiveRole}`,
       metadata: { role: claimed.effectiveRole, via: "auto_email_match" },
     })
   }
@@ -849,7 +941,7 @@ async function claimOrganizationInviteAcceptance(args: {
   acceptedAt: Date
   switchActive?: boolean
 }): Promise<
-  | { ok: true; effectiveRole: OrgRole }
+  | { ok: true; effectiveRole: OrgRole; organizationName: string }
   | { ok: false; reason: "conflict" | "unavailable" | "stale_authority" }
 > {
   try {
@@ -970,7 +1062,21 @@ async function claimOrganizationInviteAcceptance(args: {
         })
       }
 
-      return { ok: true as const, effectiveRole }
+      // Publish/audit org name from under the same org lock — never the
+      // pre-claim snapshot, which can race a concurrent rename.
+      const organization = await tx.organization.findUnique({
+        where: { id: args.organizationId },
+        select: { name: true },
+      })
+      if (!organization) {
+        return { ok: false as const, reason: "unavailable" as const }
+      }
+
+      return {
+        ok: true as const,
+        effectiveRole,
+        organizationName: organization.name,
+      }
     })
   } catch {
     return { ok: false, reason: "unavailable" }
@@ -1092,7 +1198,6 @@ export async function rejectOrganizationInviteByToken(
       acceptedAt: true,
       expiresAt: true,
       organizationId: true,
-      organization: { select: { name: true } },
     },
   })
 
@@ -1116,27 +1221,46 @@ export async function rejectOrganizationInviteByToken(
     return { ok: false, error: "This invite has expired." }
   }
 
-  // Conditional delete — CAS on tokenHash so a rotated invite cannot be
-  // deleted by a stale decline link.
-  const deleted = await prisma.organizationInvite.deleteMany({
-    where: {
-      id: invite.id,
-      tokenHash,
-      acceptedAt: null,
-      expiresAt: { gt: new Date() },
-    },
-  })
-  if (deleted.count !== 1) {
-    return {
-      ok: false,
-      error: "This invite was already accepted, declined, or expired.",
-    }
-  }
+  // Conditional delete under the org lock, then publish the org name from that
+  // same locked read so a concurrent rename cannot leak a stale label.
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${invite.organizationId} FOR UPDATE`
 
-  return {
-    ok: true,
-    organizationId: invite.organizationId,
-    organizationName: invite.organization.name,
+      const deleted = await tx.organizationInvite.deleteMany({
+        where: {
+          id: invite.id,
+          tokenHash,
+          acceptedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+      })
+      if (deleted.count !== 1) {
+        return {
+          ok: false as const,
+          error: "This invite was already accepted, declined, or expired.",
+        }
+      }
+
+      const organization = await tx.organization.findUnique({
+        where: { id: invite.organizationId },
+        select: { name: true },
+      })
+      if (!organization) {
+        return {
+          ok: false as const,
+          error: "Unable to decline invite. Please try again.",
+        }
+      }
+
+      return {
+        ok: true as const,
+        organizationId: invite.organizationId,
+        organizationName: organization.name,
+      }
+    })
+  } catch {
+    return { ok: false, error: "Unable to decline invite. Please try again." }
   }
 }
 
@@ -1165,7 +1289,6 @@ export async function acceptOrganizationInviteByToken(
       acceptedAt: true,
       expiresAt: true,
       organizationId: true,
-      organization: { select: { name: true } },
     },
   })
 
@@ -1225,7 +1348,7 @@ export async function acceptOrganizationInviteByToken(
   return {
     ok: true,
     organizationId: invite.organizationId,
-    organizationName: invite.organization.name,
+    organizationName: claimed.organizationName,
     role: claimed.effectiveRole,
   }
 }
