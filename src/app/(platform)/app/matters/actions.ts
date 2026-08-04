@@ -265,7 +265,11 @@ export async function createMatter(
           "Your organization role is read-only. Ask an admin to grant write access before creating matters.",
       }
     }
-    if (error instanceof Error && error.message === "ORGANIZATION_MISSING") {
+    if (
+      error instanceof Error &&
+      (error.message === "ORGANIZATION_MISSING" ||
+        error.message === "ACTIVE_ORG_UNAVAILABLE")
+    ) {
       return {
         error:
           "The active organization is no longer available. Open Settings to confirm your workspace, then retry.",
