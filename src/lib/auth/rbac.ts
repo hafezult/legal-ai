@@ -1383,6 +1383,13 @@ export async function deleteOwnedOrganization(
         throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
       }
 
+      // Lock users who still point at this org before clearing active workspace
+      // so a concurrent setActiveOrganization cannot race the bulk null-out.
+      await tx.$queryRaw`
+        SELECT id FROM "User"
+        WHERE "activeOrganizationId" = ${organizationId}
+        FOR UPDATE
+      `
       await tx.user.updateMany({
         where: { activeOrganizationId: organizationId },
         data: { activeOrganizationId: null },

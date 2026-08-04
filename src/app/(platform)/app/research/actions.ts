@@ -215,16 +215,34 @@ export async function runResearch(
 
   const embeddingConfigured = isEmbeddingConfigured()
   let indexedChunks = 0
+  let indexedCountError: string | null = null
   try {
     indexedChunks = await indexedChunkCount(matterId)
   } catch (err) {
     if (err instanceof Error) {
       console.error("[runResearch] indexedChunkCount", err.message.slice(0, 240))
     }
+    indexedCountError =
+      "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
+  }
+
+  // Locked reauth after unlocked indexedChunkCount (and before any early
+  // matterTitle publish or corpus retrieval) so a mid-flight revoke cannot
+  // echo the matter label after access is lost.
+  try {
+    const postCount = await prisma.$transaction(async (tx) =>
+      requireMatterPermissionLocked(tx, user.id, matterId, "write")
+    )
+    if (!postCount.ok) {
+      return emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE)
+    }
+  } catch {
+    return emptyResult("Data layer unreachable.")
+  }
+
+  if (indexedCountError) {
     return {
-      ...emptyResult(
-        "Unable to verify indexed sources. Retry shortly or check Settings readiness probes."
-      ),
+      ...emptyResult(indexedCountError),
       matterTitle: matter.title,
       embeddingConfigured,
     }
@@ -257,26 +275,6 @@ export async function runResearch(
   const remainingBudgetMs = () =>
     Math.max(0, RESEARCH_ACTION_DEADLINE_MS - (Date.now() - actionStartedAt))
 
-  // Re-authorize under lock immediately before retrieving corpus excerpts.
-  try {
-    const preRetrieve = await prisma.$transaction(async (tx) =>
-      requireMatterPermissionLocked(tx, user.id, matterId, "write")
-    )
-    if (!preRetrieve.ok) {
-      return {
-        ...emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE),
-        indexedChunks,
-        embeddingConfigured: true,
-      }
-    }
-  } catch {
-    return {
-      ...emptyResult("Data layer unreachable."),
-      indexedChunks,
-      embeddingConfigured: true,
-    }
-  }
-
   // Semantic retrieval
   let chunks: ResearchChunk[] = []
   try {
@@ -296,6 +294,16 @@ export async function runResearch(
   } catch (err) {
     if (err instanceof Error) {
       console.error("[runResearch] retrieval", err.message.slice(0, 240))
+    }
+    try {
+      const postRetrieve = await prisma.$transaction(async (tx) =>
+        requireMatterPermissionLocked(tx, user.id, matterId, "write")
+      )
+      if (!postRetrieve.ok) {
+        return emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE)
+      }
+    } catch {
+      return emptyResult("Data layer unreachable.")
     }
     return {
       ...emptyResult("Retrieval failed. Verify embeddings and try again."),

@@ -20,46 +20,63 @@ export default async function AppLayout({
     // auto-join (and never switch activeOrganizationId) on general navigation.
     const user = await ensureAppUser({ acceptPendingInvites: false })
     if (user) {
-      organizations = await listUserOrganizations(user.id)
+      const roster = await listUserOrganizations(user.id)
       // Provisioning always creates a personal org — an empty roster after
       // ensureAppUser means sync failed and must not look like a valid shell.
-      if (organizations.length === 0) {
+      if (roster.length === 0) {
         shellLoadFailed = true
       } else {
-        const row = await prisma.user.findUnique({
-          where: { id: user.id },
-          select: { activeOrganizationId: true },
-        })
-        activeOrganizationId =
-          row?.activeOrganizationId &&
-          organizations.some((org) => org.id === row.activeOrganizationId)
-            ? row.activeOrganizationId
-            : organizations[0]?.id ?? null
-
-        // Final locked reauth for the active workspace before publishing
-        // switcher labels/role so a concurrent removal cannot leave a stale
-        // selected org in the shell. Other roster rows remain best-effort.
-        if (activeOrganizationId) {
-          const finalMembership = await requireActiveOrganizationReadMembership(
+        // Locked reauth for every switcher row before publish so concurrent
+        // removals cannot leave stale org names/roles in the shell roster.
+        const verified: { id: string; name: string; role: string }[] = []
+        for (const org of roster) {
+          const membership = await requireActiveOrganizationReadMembership(
             user.id,
-            activeOrganizationId
+            org.id
           )
-          if (!finalMembership.ok) {
-            organizations = organizations.filter(
-              (org) => org.id !== activeOrganizationId
-            )
-            activeOrganizationId = organizations[0]?.id ?? null
-            if (!activeOrganizationId) {
-              shellLoadFailed = true
+          if (!membership.ok || !membership.role) continue
+          verified.push({
+            id: org.id,
+            name: org.name,
+            role: membership.role,
+          })
+        }
+        organizations = verified
+        if (organizations.length === 0) {
+          shellLoadFailed = true
+        } else {
+          const row = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { activeOrganizationId: true },
+          })
+          let selected =
+            row?.activeOrganizationId &&
+            organizations.some((org) => org.id === row.activeOrganizationId)
+              ? row.activeOrganizationId
+              : organizations[0]?.id ?? null
+
+          // Final locked reauth for the selected workspace immediately before
+          // serialize (after roster verification and active-id read). Retry the
+          // next verified row if the selection was revoked mid-flight.
+          while (selected) {
+            const finalMembership =
+              await requireActiveOrganizationReadMembership(user.id, selected)
+            if (finalMembership.ok) {
+              if (finalMembership.role) {
+                const lockedRole = finalMembership.role
+                organizations = organizations.map((org) =>
+                  org.id === selected ? { ...org, role: lockedRole } : org
+                )
+              }
+              break
             }
-          } else if (finalMembership.role) {
-            const lockedRole = finalMembership.role
-            organizations = organizations.map((org) =>
-              org.id === activeOrganizationId
-                ? { ...org, role: lockedRole }
-                : org
-            )
+            organizations = organizations.filter((org) => org.id !== selected)
+            selected = organizations[0]?.id ?? null
           }
+          if (!selected) {
+            shellLoadFailed = true
+          }
+          activeOrganizationId = selected
         }
       }
     }
