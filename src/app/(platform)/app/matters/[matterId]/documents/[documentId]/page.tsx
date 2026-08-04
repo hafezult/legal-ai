@@ -3,10 +3,12 @@ import { notFound } from "next/navigation"
 
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
+import { decideDocumentWorkstationPublish } from "@/lib/auth/document-workstation-publish"
 import {
   matterAccessWhere,
   requireMatterPermissionLocked,
   roleHasPermission,
+  type OrgRole,
 } from "@/lib/auth/rbac"
 import { isParsedTextTruncated } from "@/lib/documents/parsed-text"
 import { extractAuthorities } from "@/lib/legal/authorities"
@@ -263,11 +265,50 @@ export default async function DocumentViewerPage({
 
           // Final locked reauth after post-lock embedding probes so a concurrent
           // removal cannot receive bodies or a content URL after revoke.
-          let publishAllowed
+          // Membership alone is insufficient — require the document row still
+          // present (parity with the content proxy) and refresh matter labels
+          // under the same lock before serialize.
+          let publishAllowed: {
+            role: OrgRole
+            matterTitle: string
+            matterClient: string | null
+          } | null = null
           try {
-            publishAllowed = await prisma.$transaction(async (tx) =>
-              requireMatterPermissionLocked(tx, user.id, matterId, "read")
-            )
+            publishAllowed = await prisma.$transaction(async (tx) => {
+              const permission = await requireMatterPermissionLocked(
+                tx,
+                user.id,
+                matterId,
+                "read"
+              )
+              if (!permission.ok || !permission.access.role) return null
+
+              const stillPresent = await tx.document.findFirst({
+                where: {
+                  id: documentId,
+                  matterId,
+                  matter: matterAccessWhere(user.id),
+                },
+                select: {
+                  id: true,
+                  matter: { select: { title: true, clientName: true } },
+                },
+              })
+              const decided = decideDocumentWorkstationPublish({
+                permissionOk: true,
+                hasPublishRole: true,
+                documentPresent: Boolean(stillPresent),
+                lockedTitle: stillPresent?.matter.title,
+                lockedClientName: stillPresent?.matter.clientName,
+              })
+              if (!decided.ok) return null
+
+              return {
+                role: permission.access.role,
+                matterTitle: decided.matterTitle,
+                matterClient: decided.matterClient,
+              }
+            })
           } catch {
             permissionLoadFailed = true
             publishAllowed = null
@@ -275,10 +316,10 @@ export default async function DocumentViewerPage({
 
           if (permissionLoadFailed) {
             // handled below
-          } else if (!publishAllowed || !publishAllowed.ok || !publishAllowed.access.role) {
+          } else if (!publishAllowed) {
             missing = true
           } else {
-            const publishRole = publishAllowed.access.role
+            const publishRole = publishAllowed.role
             canWrite = roleHasPermission(publishRole, "write")
             canDelete = roleHasPermission(publishRole, "delete")
 
@@ -301,8 +342,8 @@ export default async function DocumentViewerPage({
                 uploadedAt: lockedDoc.uploadedAt.toISOString(),
                 updatedAt: lockedDoc.updatedAt.toISOString(),
                 matterId: lockedDoc.matterId,
-                matterTitle: lockedDoc.matter.title,
-                matterClient: lockedDoc.matter.clientName,
+                matterTitle: publishAllowed.matterTitle,
+                matterClient: publishAllowed.matterClient,
               },
               chunks: rawChunks.map((c) => ({
                 id: c.id,

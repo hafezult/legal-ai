@@ -10,6 +10,7 @@ import {
   requireMatterPermissionLocked,
   requireWorkProductDeleteLocked,
 } from "@/lib/auth/rbac"
+import { decideWorkProductRestorePublish } from "@/lib/auth/work-product-restore-publish"
 import { prisma } from "@/lib/prisma"
 import { extractAuthorities, groupAuthorities } from "@/lib/legal/authorities"
 import { consumeRateLimit } from "@/lib/rate-limit"
@@ -746,13 +747,50 @@ export async function restoreResearchSession(
 
     // Final locked reauth after the post-lock indexed count so a concurrent
     // removal cannot receive restored bodies/provenance after revoke.
+    // Membership alone is insufficient — require the session row still live
+    // and refresh the matter title under the same lock (parity with generate).
+    let publishTitle: string
     try {
-      const publishAllowed = await prisma.$transaction(async (tx) =>
-        requireMatterPermissionLocked(tx, user.id, session.matterId, "read")
-      )
+      const publishAllowed = await prisma.$transaction(async (tx) => {
+        const permission = await requireMatterPermissionLocked(
+          tx,
+          user.id,
+          session.matterId,
+          "read"
+        )
+        if (!permission.ok) {
+          return {
+            ok: false as const,
+            error: RESEARCH_ACCESS_REVOKED_MESSAGE,
+          }
+        }
+        const stillPresent = await tx.researchSession.findFirst({
+          where: {
+            id: session.id,
+            matterId: session.matterId,
+          },
+          select: {
+            id: true,
+            matter: { select: { title: true } },
+          },
+        })
+        const decided = decideWorkProductRestorePublish({
+          permissionOk: true,
+          workProductPresent: Boolean(stillPresent),
+          lockedTitle: stillPresent?.matter.title,
+        })
+        if (!decided.ok) {
+          return {
+            ok: false as const,
+            error: "Research session not found or access denied.",
+          }
+        }
+        return { ok: true as const, title: decided.title }
+      })
       if (!publishAllowed.ok) {
-        return emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE)
+        return emptyResult(publishAllowed.error)
       }
+      publishTitle = publishAllowed.title
     } catch {
       return emptyResult("Unable to verify workspace permissions.")
     }
@@ -760,7 +798,7 @@ export async function restoreResearchSession(
     return {
       query: restored.query,
       matterId: session.matterId,
-      matterTitle: restored.matterTitle,
+      matterTitle: publishTitle,
       answer: restored.response ?? "",
       chunks: restored.chunks,
       authorities: restored.authorities,
