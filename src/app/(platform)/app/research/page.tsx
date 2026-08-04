@@ -158,12 +158,16 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
       // Presence + deep-link restore before final membership reauth so the
       // lock check stays immediately before list serialize (restore has its
       // own matter lock; a concurrent remove must not keep matter titles).
+      // Only restore when focusedSession matched the active-org matterWhere —
+      // restoreResearchSession uses any-org matterAccessWhere, so restoring by
+      // raw session id would publish bodies from another org after that org's
+      // membership is revoked while the active-org reauth still passes.
       const presence = await researchSessionPresenceByIds([
         ...sessionRows.map((session) => session.id),
         ...(focusedSession ? [focusedSession.id] : []),
       ])
-      const pendingRestore = initialSessionId
-        ? await restoreResearchSession(initialSessionId)
+      const pendingRestore = focusedSession
+        ? await restoreResearchSession(focusedSession.id)
         : null
 
       const finalMembership = await requireActiveOrganizationReadMembership(
@@ -243,7 +247,16 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
           mapped.unshift(mapSession(focusedSession))
         }
         recentSessions = mapped
-        initialResults = pendingRestore
+        // Publish restored bodies only when they still bind to the active-org
+        // focused session row (no awaits after finalMembership above).
+        // Error payloads keep matterId null — still surface those to the client.
+        initialResults =
+          pendingRestore &&
+          focusedSession &&
+          (Boolean(pendingRestore.error) ||
+            pendingRestore.matterId === focusedSession.matterId)
+            ? pendingRestore
+            : null
       }
     }
   } catch {

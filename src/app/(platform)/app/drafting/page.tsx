@@ -161,12 +161,16 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
       // Presence + deep-link restore before final membership reauth so the
       // lock check stays immediately before list serialize (restore has its
       // own matter lock; a concurrent remove must not keep matter titles).
+      // Only restore when focusedDraft matched the active-org matterWhere —
+      // restoreDraft uses any-org matterAccessWhere, so restoring by raw draft
+      // id would publish bodies from another org after that org's membership
+      // is revoked while the active-org reauth still passes.
       const presence = await draftDocumentPresenceByIds([
         ...draftRows.map((draft) => draft.id),
         ...(focusedDraft ? [focusedDraft.id] : []),
       ])
-      const pendingRestore = initialDraftId
-        ? await restoreDraft(initialDraftId)
+      const pendingRestore = focusedDraft
+        ? await restoreDraft(focusedDraft.id)
         : null
 
       const finalMembership = await requireActiveOrganizationReadMembership(
@@ -248,7 +252,16 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
           mapped.unshift(mapDraft(focusedDraft))
         }
         recentDrafts = mapped
-        initialResults = pendingRestore
+        // Publish restored bodies only when they still bind to the active-org
+        // focused draft row (no awaits after finalMembership above).
+        // Error payloads keep matterId null — still surface those to the client.
+        initialResults =
+          pendingRestore &&
+          focusedDraft &&
+          (Boolean(pendingRestore.error) ||
+            pendingRestore.matterId === focusedDraft.matterId)
+            ? pendingRestore
+            : null
       }
     }
   } catch {
