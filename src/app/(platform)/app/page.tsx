@@ -61,9 +61,8 @@ export default async function DashboardPage() {
   let loadFailed = false
   let recentSessions: {
     id: string
-    query: string
     hasResponse: boolean
-    chunkIds: string[]
+    chunkCount: number
     createdAt: Date
     matter: { id: string; title: string }
   }[] = []
@@ -116,7 +115,7 @@ export default async function DashboardPage() {
             take: 5,
             select: {
               id: true,
-              query: true,
+              // Presence/count only — query/body return via locked restore.
               response: true,
               chunkIds: true,
               createdAt: true,
@@ -140,12 +139,11 @@ export default async function DashboardPage() {
       matterCount = countedMatters
       retrievalReadyCount = countedRetrievalReady
       researchSessionCount = countedResearchSessions
-      // Never ship saved AI bodies in dashboard list props.
+      // Never ship saved queries/AI bodies in dashboard list props.
       recentSessions = sessionRows.map((row) => ({
         id: row.id,
-        query: row.query,
         hasResponse: Boolean(row.response?.trim()),
-        chunkIds: row.chunkIds,
+        chunkCount: row.chunkIds.length,
         createdAt: row.createdAt,
         matter: row.matter,
       }))
@@ -339,11 +337,13 @@ export default async function DashboardPage() {
                     href={`/app/research?matter=${session.matter.id}&session=${session.id}`}
                     className="block rounded-lg border border-white/[0.05] bg-white/[0.015] px-3 py-2.5 transition-colors hover:border-white/[0.1] hover:bg-white/[0.03]"
                   >
-                    <p className="line-clamp-1 text-sm text-white/62">{session.query}</p>
+                    <p className="line-clamp-1 text-sm text-white/62">
+                      {session.matter.title}
+                    </p>
                     <p className="mt-1 text-[11px] text-white/28">
-                      {session.matter.title} · {fmtShortDate(session.createdAt)}
-                      {session.chunkIds.length > 0
-                        ? ` · ${session.chunkIds.length} chunk${session.chunkIds.length !== 1 ? "s" : ""}`
+                      Research session · {fmtShortDate(session.createdAt)}
+                      {session.chunkCount > 0
+                        ? ` · ${session.chunkCount} chunk${session.chunkCount !== 1 ? "s" : ""}`
                         : ""}
                       {session.hasResponse ? " · response saved" : ""}
                     </p>

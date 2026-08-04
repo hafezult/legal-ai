@@ -68,10 +68,9 @@ type Matter = {
 
 type RecentSession = {
   id: string
-  query: string
-  /** Presence flag only — body loaded via locked restore. */
+  /** Presence flag only — query/body loaded via locked restore. */
   hasResponse: boolean
-  chunkIds: string[]
+  chunkCount: number
   createdAt: Date | string
   matterId: string
   matterTitle: string
@@ -86,11 +85,6 @@ function fmtShortDate(value: Date | string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date)
-}
-
-function excerpt(text: string, length = 140) {
-  const compact = text.replace(/\s+/g, " ").trim()
-  return compact.length > length ? `${compact.slice(0, length)}…` : compact
 }
 
 function emptyAuthorities(): ResearchOutput["authorities"] {
@@ -217,10 +211,9 @@ export function ResearchClient({
   const restoreSession = useCallback(
     (session: RecentSession) => {
       setSelectedMatter(session.matterId)
-      setQuery(session.query)
       setLocalError(null)
       setExportNotice(null)
-      // Do not seed saved AI bodies from list props — wait for locked restore.
+      // Do not seed saved queries/bodies from list props — wait for locked restore.
       setResults(null)
 
       startRestoreTransition(async () => {
@@ -231,6 +224,7 @@ export function ResearchClient({
             setLocalError(output.error)
             return
           }
+          setQuery(output.query)
           setResults(output)
         } catch {
           setResults(null)
@@ -506,11 +500,11 @@ export function ResearchClient({
                             {session.matterTitle}
                           </p>
                           <p className="text-[10px] text-white/22">
-                            {fmtShortDate(session.createdAt)} · {session.chunkIds.length}{" "}
-                            chunk{session.chunkIds.length !== 1 ? "s" : ""}
+                            {fmtShortDate(session.createdAt)} · {session.chunkCount}{" "}
+                            chunk{session.chunkCount !== 1 ? "s" : ""}
                           </p>
                         </div>
-                        <p className="mt-2 text-sm text-white/62">{excerpt(session.query)}</p>
+                        <p className="mt-2 text-sm text-white/62">Saved research session</p>
                         <p className="mt-1.5 text-xs text-white/28">
                           {session.hasResponse
                             ? "Grounded response saved — open to restore under current access."

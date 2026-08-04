@@ -55,9 +55,8 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
   }[] = []
   let recentSessions: {
     id: string
-    query: string
     hasResponse: boolean
-    chunkIds: string[]
+    chunkCount: number
     createdAt: Date
     matterId: string
     matterTitle: string
@@ -105,8 +104,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
             take: initialMatterId ? 24 : 8,
             select: {
               id: true,
-              query: true,
-              // Presence only — full response returns via locked restore.
+              // Presence only — query/response return via locked restore.
               response: true,
               chunkIds: true,
               createdAt: true,
@@ -129,7 +127,6 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
                 },
                 select: {
                   id: true,
-                  query: true,
                   response: true,
                   chunkIds: true,
                   createdAt: true,
@@ -196,10 +193,9 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
         )
         return {
           id: session.id,
-          query: session.query,
-          // Never ship saved AI bodies in list props — restore under lock.
+          // Never ship saved queries/bodies in list props — restore under lock.
           hasResponse: Boolean(session.response?.trim()),
-          chunkIds: session.chunkIds,
+          chunkCount: session.chunkIds.length,
           createdAt: session.createdAt,
           matterId: session.matterId,
           matterTitle: session.matter.title,

@@ -57,9 +57,8 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
     id: string
     title: string
     draftType: string
-    instruction: string
     hasContent: boolean
-    chunkIds: string[]
+    chunkCount: number
     createdAt: Date
     matterId: string
     matterTitle: string
@@ -109,7 +108,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
               id: true,
               title: true,
               draftType: true,
-              instruction: true,
+              // Presence only — instruction/body return via locked restore.
               content: true,
               chunkIds: true,
               createdAt: true,
@@ -134,7 +133,6 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
                   id: true,
                   title: true,
                   draftType: true,
-                  instruction: true,
                   content: true,
                   chunkIds: true,
                   createdAt: true,
@@ -202,10 +200,9 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
           id: draft.id,
           title: draft.title,
           draftType: draft.draftType,
-          instruction: draft.instruction,
-          // Never ship saved draft bodies in list props — restore under lock.
+          // Never ship saved instructions/bodies in list props — restore under lock.
           hasContent: Boolean(draft.content?.trim()),
-          chunkIds: draft.chunkIds,
+          chunkCount: draft.chunkIds.length,
           createdAt: draft.createdAt,
           matterId: draft.matterId,
           matterTitle: draft.matter.title,

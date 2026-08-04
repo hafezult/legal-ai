@@ -43,10 +43,9 @@ type RecentDraft = {
   id: string
   title: string
   draftType: string
-  instruction: string
-  /** Presence flag only — body loaded via locked restore. */
+  /** Presence flag only — instruction/body loaded via locked restore. */
   hasContent: boolean
-  chunkIds: string[]
+  chunkCount: number
   createdAt: Date | string
   matterId: string
   matterTitle: string
@@ -61,11 +60,6 @@ function fmtShortDate(value: Date | string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date)
-}
-
-function excerpt(text: string, length = 140) {
-  const compact = text.replace(/\s+/g, " ").trim()
-  return compact.length > length ? `${compact.slice(0, length)}…` : compact
 }
 
 function relevanceLabel(distance: number): string {
@@ -191,11 +185,10 @@ export function DraftingClient({
       ? (draft.draftType as DraftType)
       : "advice"
     setSelectedMatter(draft.matterId)
-    setInstruction(draft.instruction)
     setDraftType(typed)
     setLocalError(null)
     setExportNotice(null)
-    // Do not seed saved draft bodies from list props — wait for locked restore.
+    // Do not seed saved instructions/bodies from list props — wait for locked restore.
     setResults(null)
 
     startRestoreTransition(async () => {
@@ -206,6 +199,7 @@ export function DraftingClient({
           setLocalError(output.error)
           return
         }
+        setInstruction(output.instruction)
         setResults(output)
       } catch {
         setResults(null)
@@ -495,13 +489,11 @@ export function DraftingClient({
                             {draft.matterTitle} · {draftTypeLabel(draft.draftType)}
                           </p>
                           <p className="text-[10px] text-white/22">
-                            {fmtShortDate(draft.createdAt)} · {draft.chunkIds.length}{" "}
-                            source{draft.chunkIds.length !== 1 ? "s" : ""}
+                            {fmtShortDate(draft.createdAt)} · {draft.chunkCount}{" "}
+                            source{draft.chunkCount !== 1 ? "s" : ""}
                           </p>
                         </div>
-                        <p className="mt-2 text-sm text-white/62">
-                          {excerpt(draft.instruction)}
-                        </p>
+                        <p className="mt-2 text-sm text-white/62">{draft.title}</p>
                         <p className="mt-1.5 text-xs text-white/28">
                           {draft.hasContent
                             ? "Draft content saved — open to restore under current access."
