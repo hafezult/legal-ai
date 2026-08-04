@@ -7,7 +7,6 @@ import {
   isOrgRole,
   matterAccessWhereForActiveOrg,
   requireActiveOrganizationReadMembership,
-  requireOrganizationMembershipLocked,
   roleAtLeast,
 } from "@/lib/auth/rbac"
 import { documentRetrievalReadyWhere } from "@/lib/documents/status"
@@ -78,6 +77,7 @@ export default async function DashboardPage() {
   }[] = []
   let retrievalReadyCount = 0
   let canViewHealthDetails = false
+  let health: Awaited<ReturnType<typeof getHealthReport>> | null = null
 
   try {
     const user = await prisma.user.findUnique({
@@ -136,11 +136,18 @@ export default async function DashboardPage() {
             },
           }),
         ])
-      // Presence before final membership reauth so the lock check stays
-      // immediately before serialize (matches matters/documents/memory).
+      // Presence + admin health probes before final membership reauth so the
+      // lock check stays immediately before serialize (matches settings and
+      // matters/documents/memory). Running getHealthReport after assigning
+      // lists would reopen a revoke window for matter titles.
       const presence = await researchSessionPresenceByIds(
         sessionRows.map((row) => row.id)
       )
+      let pendingHealth: Awaited<ReturnType<typeof getHealthReport>> | null =
+        null
+      if (canViewHealthDetails) {
+        pendingHealth = await getHealthReport().catch(() => null)
+      }
       const finalMembership = await requireActiveOrganizationReadMembership(
         user.id,
         activeOrg?.id
@@ -152,9 +159,14 @@ export default async function DashboardPage() {
         researchSessionCount = 0
         recentSessions = []
         recentMatters = []
+        pendingHealth = null
       } else {
         const finalRole = finalMembership.role ?? activeRole
         canViewHealthDetails = roleAtLeast(finalRole, "admin")
+        // Personal / no-org workspace is never admin for dependency probes.
+        if (!activeOrg?.id) {
+          canViewHealthDetails = false
+        }
         matterCount = countedMatters
         retrievalReadyCount = countedRetrievalReady
         researchSessionCount = countedResearchSessions
@@ -171,40 +183,13 @@ export default async function DashboardPage() {
         })
         recentMatters = matterRows
       }
+
+      // Dependency probe details stay admin/owner-only; members see workspace signals.
+      health = canViewHealthDetails ? pendingHealth : null
     }
   } catch {
     loadFailed = true
   }
-
-  // Gather probe details only when the provisional role looks privileged, then
-  // re-check admin under the org membership lock immediately before publish.
-  let pendingHealth: Awaited<ReturnType<typeof getHealthReport>> | null = null
-  if (canViewHealthDetails) {
-    pendingHealth = await getHealthReport().catch(() => null)
-  }
-  if (canViewHealthDetails) {
-    try {
-      const user = await prisma.user.findUnique({
-        where: { clerkId: userId },
-        select: { id: true },
-      })
-      const activeOrg = user ? await getActiveOrganization(user.id) : null
-      if (!user || !activeOrg) {
-        canViewHealthDetails = false
-      } else {
-        const locked = await prisma.$transaction(async (tx) =>
-          requireOrganizationMembershipLocked(tx, user.id, activeOrg.id)
-        )
-        canViewHealthDetails =
-          locked.ok && roleAtLeast(locked.role, "admin")
-      }
-    } catch {
-      canViewHealthDetails = false
-    }
-  }
-
-  // Dependency probe details stay admin/owner-only; members see workspace signals.
-  const health = canViewHealthDetails ? pendingHealth : null
 
   const systemLayers: SystemLayer[] = [
     {
