@@ -8,9 +8,10 @@ import {
 } from "./revocation.ts"
 
 describe("redactResearchOnRevocation", () => {
-  it("clears query, answer, chunks, authorities, and session on revocation", () => {
+  it("clears query, matter title, answer, chunks, authorities, and session on revocation", () => {
     const redacted = redactResearchOnRevocation({
       query: "What are the privilege risks in this matter?",
+      matterTitle: "Acme privilege review",
       answer: "Privileged analysis with client facts.",
       chunks: [{ id: "c1", content: "secret excerpt" }],
       authorities: {
@@ -26,6 +27,7 @@ describe("redactResearchOnRevocation", () => {
     })
 
     assert.equal(redacted.query, "")
+    assert.equal(redacted.matterTitle, "")
     assert.equal(redacted.answer, "")
     assert.deepEqual(redacted.chunks, [])
     assert.deepEqual(redacted.authorities, {

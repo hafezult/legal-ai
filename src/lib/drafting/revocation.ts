@@ -9,6 +9,8 @@ export const DRAFT_PERSIST_REVOKED_MESSAGE =
 export type DraftSensitivePayload = {
   draftId: string
   title: string
+  /** Cleared on revoke so mid-flight returns do not leak matter labels. */
+  matterTitle?: string
   /** Cleared on revoke so mid-flight returns do not echo the prompt. */
   instruction?: string
   content: string
@@ -29,6 +31,7 @@ export function redactDraftOnRevocation<T extends DraftSensitivePayload>(
     ...output,
     draftId: "",
     title: "",
+    matterTitle: "",
     instruction: "",
     content: "",
     chunks: [],

@@ -9,6 +9,8 @@ export const RESEARCH_PERSIST_REVOKED_MESSAGE =
 export type ResearchSensitivePayload = {
   /** Cleared on revoke so mid-flight returns do not echo the prompt. */
   query?: string
+  /** Cleared on revoke so mid-flight returns do not leak matter labels. */
+  matterTitle?: string
   answer: string
   chunks: unknown[]
   authorities: {
@@ -34,6 +36,7 @@ export function redactResearchOnRevocation<T extends ResearchSensitivePayload>(
   return {
     ...output,
     query: "",
+    matterTitle: "",
     answer: "",
     chunks: [],
     authorities: {

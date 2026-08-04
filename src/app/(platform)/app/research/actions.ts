@@ -6,7 +6,6 @@ import { recordAuditEvent } from "@/lib/audit"
 import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   matterAccessWhere,
-  requireMatterPermission,
   requireMatterPermissionLocked,
   requireWorkProductDeleteLocked,
 } from "@/lib/auth/rbac"
@@ -175,7 +174,8 @@ export async function runResearch(
   }
   if (!matterId) return emptyResult("No matter selected.")
 
-  // Validate write access
+  // Validate write access under matter + membership locks before reading the
+  // matter title or retrieving privileged corpus excerpts.
   let user: { id: string } | null = null
   let matter: { id: string; title: string } | null = null
   try {
@@ -190,14 +190,25 @@ export async function runResearch(
       )
     }
 
-    const permission = await requireMatterPermission(user.id, matterId, "write")
-    if (!permission.ok) return emptyResult(permission.error)
-
-    matter = await prisma.matter.findUnique({
-      where: { id: matterId },
-      select: { id: true, title: true },
+    const authorized = await prisma.$transaction(async (tx) => {
+      const permission = await requireMatterPermissionLocked(
+        tx,
+        user!.id,
+        matterId,
+        "write"
+      )
+      if (!permission.ok) return { ok: false as const, error: permission.error }
+      const row = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { id: true, title: true },
+      })
+      if (!row) {
+        return { ok: false as const, error: "Matter not found or access denied." }
+      }
+      return { ok: true as const, matter: row }
     })
-    if (!matter) return emptyResult("Matter not found or access denied.")
+    if (!authorized.ok) return emptyResult(authorized.error)
+    matter = authorized.matter
   } catch {
     return emptyResult("Data layer unreachable.")
   }
@@ -246,6 +257,26 @@ export async function runResearch(
   const remainingBudgetMs = () =>
     Math.max(0, RESEARCH_ACTION_DEADLINE_MS - (Date.now() - actionStartedAt))
 
+  // Re-authorize under lock immediately before retrieving corpus excerpts.
+  try {
+    const preRetrieve = await prisma.$transaction(async (tx) =>
+      requireMatterPermissionLocked(tx, user.id, matterId, "write")
+    )
+    if (!preRetrieve.ok) {
+      return {
+        ...emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE),
+        indexedChunks,
+        embeddingConfigured: true,
+      }
+    }
+  } catch {
+    return {
+      ...emptyResult("Data layer unreachable."),
+      indexedChunks,
+      embeddingConfigured: true,
+    }
+  }
+
   // Semantic retrieval
   let chunks: ResearchChunk[] = []
   try {
@@ -273,14 +304,15 @@ export async function runResearch(
     }
   }
 
-  // Re-check write access before LLM generation so a mid-flight revocation
-  // does not send retrieved matter excerpts to the model or the client.
+  // Re-check write access under lock before LLM generation so a mid-flight
+  // revocation does not send retrieved matter excerpts to the model or client.
   try {
-    const preGenerate = await requireMatterPermission(user.id, matterId, "write")
+    const preGenerate = await prisma.$transaction(async (tx) =>
+      requireMatterPermissionLocked(tx, user.id, matterId, "write")
+    )
     if (!preGenerate.ok) {
       return {
         ...emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE),
-        matterTitle: matter.title,
         indexedChunks,
         embeddingConfigured: true,
       }
@@ -288,7 +320,6 @@ export async function runResearch(
   } catch {
     return {
       ...emptyResult("Data layer unreachable."),
-      matterTitle: matter.title,
       indexedChunks,
       embeddingConfigured: true,
     }
@@ -496,25 +527,21 @@ export async function restoreResearchSession(
       )
     }
 
+    // Identifier-only pre-lookup under current matter access. Do not select
+    // response/query/provenance here — a removed org-matter creator can still
+    // match ResearchSession.userId and would otherwise load bodies into Node
+    // before the locked reauth below.
     const session = await prisma.researchSession.findFirst({
       where: {
         id: sessionId,
-        OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }],
+        matter: matterAccessWhere(user.id),
       },
       select: {
         id: true,
-        query: true,
-        response: true,
-        chunkIds: true,
-        citationSnapshot: true,
         matterId: true,
-        matter: { select: { title: true } },
       },
     })
     if (!session) return emptyResult("Research session not found or access denied.")
-
-    const permission = await requireMatterPermission(user.id, session.matterId, "read")
-    if (!permission.ok) return emptyResult(permission.error)
 
     // Final locked reauth + re-read of body and provenance so a mid-restore
     // revoke/delete cannot fail open with stale answers or source excerpts.

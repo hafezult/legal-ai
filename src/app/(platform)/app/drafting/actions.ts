@@ -11,7 +11,6 @@ import {
 import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   matterAccessWhere,
-  requireMatterPermission,
   requireMatterPermissionLocked,
   requireWorkProductDeleteLocked,
 } from "@/lib/auth/rbac"
@@ -221,14 +220,27 @@ export async function generateDraft(
       )
     }
 
-    const permission = await requireMatterPermission(user.id, matterId, "write")
-    if (!permission.ok) return emptyResult(permission.error)
-
-    matter = await prisma.matter.findUnique({
-      where: { id: matterId },
-      select: { id: true, title: true },
+    // Validate write access under matter + membership locks before reading the
+    // matter title or retrieving privileged corpus excerpts.
+    const authorized = await prisma.$transaction(async (tx) => {
+      const permission = await requireMatterPermissionLocked(
+        tx,
+        user!.id,
+        matterId,
+        "write"
+      )
+      if (!permission.ok) return { ok: false as const, error: permission.error }
+      const row = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { id: true, title: true },
+      })
+      if (!row) {
+        return { ok: false as const, error: "Matter not found or access denied." }
+      }
+      return { ok: true as const, matter: row }
     })
-    if (!matter) return emptyResult("Matter not found or access denied.")
+    if (!authorized.ok) return emptyResult(authorized.error)
+    matter = authorized.matter
   } catch {
     return emptyResult("Data layer unreachable.")
   }
@@ -280,6 +292,28 @@ export async function generateDraft(
   const remainingBudgetMs = () =>
     Math.max(0, DRAFT_ACTION_DEADLINE_MS - (Date.now() - actionStartedAt))
 
+  // Re-authorize under lock immediately before retrieving corpus excerpts.
+  try {
+    const preRetrieve = await prisma.$transaction(async (tx) =>
+      requireMatterPermissionLocked(tx, user.id, matterId, "write")
+    )
+    if (!preRetrieve.ok) {
+      return {
+        ...emptyResult(DRAFT_ACCESS_REVOKED_MESSAGE),
+        draftType,
+        indexedChunks,
+        embeddingConfigured: true,
+      }
+    }
+  } catch {
+    return {
+      ...emptyResult("Data layer unreachable."),
+      draftType,
+      indexedChunks,
+      embeddingConfigured: true,
+    }
+  }
+
   let chunks: DraftSourceChunk[] = []
   try {
     const raw = await semanticSearch(instruction, matterId, {
@@ -307,14 +341,15 @@ export async function generateDraft(
     }
   }
 
-  // Re-check write access before LLM generation so a mid-flight revocation
-  // does not send retrieved matter excerpts to the model or the client.
+  // Re-check write access under lock before LLM generation so a mid-flight
+  // revocation does not send retrieved matter excerpts to the model or client.
   try {
-    const preGenerate = await requireMatterPermission(user.id, matterId, "write")
+    const preGenerate = await prisma.$transaction(async (tx) =>
+      requireMatterPermissionLocked(tx, user.id, matterId, "write")
+    )
     if (!preGenerate.ok) {
       return {
         ...emptyResult(DRAFT_ACCESS_REVOKED_MESSAGE),
-        matterTitle: matter.title,
         draftType,
         indexedChunks,
         embeddingConfigured: true,
@@ -323,7 +358,6 @@ export async function generateDraft(
   } catch {
     return {
       ...emptyResult("Data layer unreachable."),
-      matterTitle: matter.title,
       draftType,
       indexedChunks,
       embeddingConfigured: true,
@@ -507,29 +541,21 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
       return emptyResult(rateLimitMessage("Draft restore", throttle.retryAfterMs))
     }
 
+    // Identifier-only pre-lookup under current matter access. Do not select
+    // content/instruction/provenance here — a removed org-matter creator can
+    // still match DraftDocument.userId and would otherwise load bodies into
+    // Node before the locked reauth below.
     const draft = await prisma.draftDocument.findFirst({
       where: {
         id: draftId,
-        OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }],
+        matter: matterAccessWhere(user.id),
       },
       select: {
         id: true,
-        title: true,
-        draftType: true,
-        instruction: true,
-        content: true,
-        chunkIds: true,
-        citationSnapshot: true,
         matterId: true,
-        matter: { select: { title: true } },
       },
     })
     if (!draft) return emptyResult("Draft not found or access denied.")
-
-    const permission = await requireMatterPermission(user.id, draft.matterId, "read")
-    if (!permission.ok) return emptyResult(permission.error)
-
-    const draftType: DraftType = isDraftType(draft.draftType) ? draft.draftType : "advice"
 
     // Final locked reauth + re-read of body and provenance so a mid-restore
     // revoke/delete cannot fail open with stale draft text or source excerpts.
@@ -617,7 +643,7 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
 
     const restoredType: DraftType = isDraftType(restored.draftType)
       ? restored.draftType
-      : draftType
+      : "advice"
 
     return {
       draftId: restored.id,
