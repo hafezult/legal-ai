@@ -53,9 +53,10 @@ export default async function AppLayout({
               shellLoadFailed = true
             }
           } else if (finalMembership.role) {
+            const lockedRole = finalMembership.role
             organizations = organizations.map((org) =>
               org.id === activeOrganizationId
-                ? { ...org, role: finalMembership.role }
+                ? { ...org, role: lockedRole }
                 : org
             )
           }
