@@ -1,6 +1,9 @@
 import { PlatformShell } from "@/components/layout/platform-shell"
 import { ensureAppUser } from "@/lib/auth/ensure-user"
-import { listUserOrganizations } from "@/lib/auth/rbac"
+import {
+  listUserOrganizations,
+  requireActiveOrganizationReadMembership,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
 export default async function AppLayout({
@@ -32,6 +35,31 @@ export default async function AppLayout({
           organizations.some((org) => org.id === row.activeOrganizationId)
             ? row.activeOrganizationId
             : organizations[0]?.id ?? null
+
+        // Final locked reauth for the active workspace before publishing
+        // switcher labels/role so a concurrent removal cannot leave a stale
+        // selected org in the shell. Other roster rows remain best-effort.
+        if (activeOrganizationId) {
+          const finalMembership = await requireActiveOrganizationReadMembership(
+            user.id,
+            activeOrganizationId
+          )
+          if (!finalMembership.ok) {
+            organizations = organizations.filter(
+              (org) => org.id !== activeOrganizationId
+            )
+            activeOrganizationId = organizations[0]?.id ?? null
+            if (!activeOrganizationId) {
+              shellLoadFailed = true
+            }
+          } else if (finalMembership.role) {
+            organizations = organizations.map((org) =>
+              org.id === activeOrganizationId
+                ? { ...org, role: finalMembership.role }
+                : org
+            )
+          }
+        }
       }
     }
   } catch {

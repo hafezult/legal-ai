@@ -4,6 +4,7 @@ import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   getActiveOrganization,
+  requireActiveOrganizationReadMembership,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
@@ -41,11 +42,24 @@ export default async function NewMatterPage() {
       const activeOrg = await getActiveOrganization(user.id)
       // Fail closed without an active organization — createMatter refuses
       // legacy organizationId:null inserts; surface intake unavailable here.
-      canWrite = activeOrg
-        ? roleHasPermission(activeOrg.role, "write")
-        : false
       if (!activeOrg) {
         loadFailed = true
+        canWrite = false
+      } else {
+        // Final locked membership reauth before publishing the write-capable
+        // intake form so a concurrent demotion cannot show a stale create UI.
+        const finalMembership = await requireActiveOrganizationReadMembership(
+          user.id,
+          activeOrg.id
+        )
+        if (!finalMembership.ok) {
+          loadFailed = true
+          canWrite = false
+        } else {
+          canWrite = finalMembership.role
+            ? roleHasPermission(finalMembership.role, "write")
+            : false
+        }
       }
     }
   } catch {
