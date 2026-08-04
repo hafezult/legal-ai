@@ -9,6 +9,7 @@ import {
   requireActiveOrganizationReadMembership,
   roleHasPermission,
 } from "@/lib/auth/rbac"
+import { draftDocumentPresenceByIds } from "@/lib/documents/work-product-presence"
 import { prisma } from "@/lib/prisma"
 import { DraftingClient } from "./_drafting-client"
 import { restoreDraft, type DraftOutput } from "./actions"
@@ -107,10 +108,8 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
             select: {
               id: true,
               // draftType/metadata only — titles embed instruction excerpts;
-              // instruction/body/title return via locked restore.
+              // instruction/body/title return via locked restore. Presence via SQL.
               draftType: true,
-              content: true,
-              chunkIds: true,
               createdAt: true,
               matterId: true,
               userId: true,
@@ -132,8 +131,6 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
                 select: {
                   id: true,
                   draftType: true,
-                  content: true,
-                  chunkIds: true,
                   createdAt: true,
                   matterId: true,
                   userId: true,
@@ -201,6 +198,11 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
         canWrite =
           finalOrgCanWrite || mappedMatters.some((matter) => matter.canWrite)
 
+        const presence = await draftDocumentPresenceByIds([
+          ...draftRows.map((draft) => draft.id),
+          ...(focusedDraft ? [focusedDraft.id] : []),
+        ])
+
         const mapDraft = (draft: (typeof draftRows)[number]) => {
           const matterCanWrite = canWriteListedMatter(
             draft.matter,
@@ -212,13 +214,14 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
             user.id,
             finalOrgCanDelete
           )
+          const flags = presence.get(draft.id)
           return {
             id: draft.id,
             draftType: draft.draftType,
             // Never ship saved instructions/titles/bodies in list props —
             // titles embed instruction excerpts; restore under lock.
-            hasContent: Boolean(draft.content?.trim()),
-            chunkCount: draft.chunkIds.length,
+            hasContent: flags?.hasBody ?? false,
+            chunkCount: flags?.chunkCount ?? 0,
             createdAt: draft.createdAt,
             matterId: draft.matterId,
             matterTitle: draft.matter.title,

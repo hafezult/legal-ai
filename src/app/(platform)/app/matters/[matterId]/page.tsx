@@ -27,6 +27,7 @@ import {
   documentRetryOr,
   STALE_INDEXING_MS,
 } from "@/lib/documents/status"
+import { researchSessionPresenceByIds } from "@/lib/documents/work-product-presence"
 import { prisma } from "@/lib/prisma"
 import {
   createConversation,
@@ -262,8 +263,7 @@ export default async function MatterDetailPage({
                 select: {
                   id: true,
                   query: true,
-                  response: true,
-                  chunkIds: true,
+                  // Body/chunk presence via SQL flags — do not select response text.
                   createdAt: true,
                   userId: true,
                 },
@@ -307,20 +307,25 @@ export default async function MatterDetailPage({
             new Date().getTime() - STALE_INDEXING_MS
           )
           const documentWhere = { matterId: row.id }
-          const [indexed, retrievalReady, failed] = await Promise.all([
-            tx.document.count({
-              where: { ...documentWhere, ...documentCorpusIndexedWhere() },
-            }),
-            tx.document.count({
-              where: { ...documentWhere, ...documentRetrievalReadyWhere() },
-            }),
-            tx.document.count({
-              where: {
-                ...documentWhere,
-                OR: documentRetryOr(staleBefore),
-              },
-            }),
-          ])
+          const [indexed, retrievalReady, failed, sessionPresence] =
+            await Promise.all([
+              tx.document.count({
+                where: { ...documentWhere, ...documentCorpusIndexedWhere() },
+              }),
+              tx.document.count({
+                where: { ...documentWhere, ...documentRetrievalReadyWhere() },
+              }),
+              tx.document.count({
+                where: {
+                  ...documentWhere,
+                  OR: documentRetryOr(staleBefore),
+                },
+              }),
+              researchSessionPresenceByIds(
+                row.researchSessions.map((session) => session.id),
+                tx
+              ),
+            ])
 
           return {
             status: "ok" as const,
@@ -329,6 +334,7 @@ export default async function MatterDetailPage({
             indexed,
             retrievalReady,
             failed,
+            sessionPresence,
           }
         })
 
@@ -342,6 +348,7 @@ export default async function MatterDetailPage({
           const row = locked.row
           // Saved AI bodies omitted from list props (hasResponse / message
           // counts only); restore actions re-check under lock before content.
+          const sessionPresence = locked.sessionPresence
           matter = {
             id: row.id,
             title: row.title,
@@ -357,19 +364,22 @@ export default async function MatterDetailPage({
             documents: row.documents,
             draftDocuments: row.draftDocuments,
             _count: row._count,
-            researchSessions: row.researchSessions.map((session) => ({
-              id: session.id,
-              query: session.query,
-              hasResponse: Boolean(session.response && session.response.trim()),
-              chunkCount: session.chunkIds.length,
-              createdAt: session.createdAt,
-              canDelete: canDeleteWorkProduct({
-                actorUserId: user.id,
-                createdByUserId: session.userId,
-                matterCanWrite: canWrite,
-                matterCanDelete: canDelete,
-              }),
-            })),
+            researchSessions: row.researchSessions.map((session) => {
+              const flags = sessionPresence.get(session.id)
+              return {
+                id: session.id,
+                query: session.query,
+                hasResponse: flags?.hasBody ?? false,
+                chunkCount: flags?.chunkCount ?? 0,
+                createdAt: session.createdAt,
+                canDelete: canDeleteWorkProduct({
+                  actorUserId: user.id,
+                  createdByUserId: session.userId,
+                  matterCanWrite: canWrite,
+                  matterCanDelete: canDelete,
+                }),
+              }
+            }),
             conversations: row.conversations.map((conversation) => ({
               id: conversation.id,
               title: conversation.title,

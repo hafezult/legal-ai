@@ -9,6 +9,7 @@ import {
   requireActiveOrganizationReadMembership,
   roleHasPermission,
 } from "@/lib/auth/rbac"
+import { researchSessionPresenceByIds } from "@/lib/documents/work-product-presence"
 import { prisma } from "@/lib/prisma"
 import { ResearchClient } from "./_research-client"
 import { restoreResearchSession, type ResearchOutput } from "./actions"
@@ -105,9 +106,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
             take: initialMatterId ? 24 : 8,
             select: {
               id: true,
-              // Presence only — query/response return via locked restore.
-              response: true,
-              chunkIds: true,
+              // Metadata only — body/chunk presence via SQL flags.
               createdAt: true,
               matterId: true,
               userId: true,
@@ -128,8 +127,6 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
                 },
                 select: {
                   id: true,
-                  response: true,
-                  chunkIds: true,
                   createdAt: true,
                   matterId: true,
                   userId: true,
@@ -198,6 +195,11 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
         canWrite =
           finalOrgCanWrite || mappedMatters.some((matter) => matter.canWrite)
 
+        const presence = await researchSessionPresenceByIds([
+          ...sessionRows.map((session) => session.id),
+          ...(focusedSession ? [focusedSession.id] : []),
+        ])
+
         const mapSession = (session: (typeof sessionRows)[number]) => {
           const matterCanWrite = canWriteListedMatter(
             session.matter,
@@ -209,11 +211,12 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
             user.id,
             finalOrgCanDelete
           )
+          const flags = presence.get(session.id)
           return {
             id: session.id,
             // Never ship saved queries/bodies in list props — restore under lock.
-            hasResponse: Boolean(session.response?.trim()),
-            chunkCount: session.chunkIds.length,
+            hasResponse: flags?.hasBody ?? false,
+            chunkCount: flags?.chunkCount ?? 0,
             createdAt: session.createdAt,
             matterId: session.matterId,
             matterTitle: session.matter.title,

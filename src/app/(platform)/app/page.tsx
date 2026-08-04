@@ -11,6 +11,7 @@ import {
   roleAtLeast,
 } from "@/lib/auth/rbac"
 import { documentRetrievalReadyWhere } from "@/lib/documents/status"
+import { researchSessionPresenceByIds } from "@/lib/documents/work-product-presence"
 import { getHealthReport } from "@/lib/health"
 import { prisma } from "@/lib/prisma"
 
@@ -116,9 +117,7 @@ export default async function DashboardPage() {
             take: 5,
             select: {
               id: true,
-              // Presence/count only — query/body return via locked restore.
-              response: true,
-              chunkIds: true,
+              // Metadata only — body/chunk presence via SQL flags (not response text).
               createdAt: true,
               matter: { select: { id: true, title: true } },
             },
@@ -155,13 +154,19 @@ export default async function DashboardPage() {
         retrievalReadyCount = countedRetrievalReady
         researchSessionCount = countedResearchSessions
         // Never ship saved queries/AI bodies in dashboard list props.
-        recentSessions = sessionRows.map((row) => ({
-          id: row.id,
-          hasResponse: Boolean(row.response?.trim()),
-          chunkCount: row.chunkIds.length,
-          createdAt: row.createdAt,
-          matter: row.matter,
-        }))
+        const presence = await researchSessionPresenceByIds(
+          sessionRows.map((row) => row.id)
+        )
+        recentSessions = sessionRows.map((row) => {
+          const flags = presence.get(row.id)
+          return {
+            id: row.id,
+            hasResponse: flags?.hasBody ?? false,
+            chunkCount: flags?.chunkCount ?? 0,
+            createdAt: row.createdAt,
+            matter: row.matter,
+          }
+        })
         recentMatters = matterRows
       }
     }
