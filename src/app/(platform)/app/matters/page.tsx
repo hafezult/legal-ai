@@ -6,6 +6,7 @@ import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
+  requireActiveOrganizationReadMembership,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
@@ -64,7 +65,7 @@ export default async function MattersPage() {
       const activeOrg = await getActiveOrganization(user.id)
       canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
       const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
-      matters = await prisma.matter.findMany({
+      const rows = await prisma.matter.findMany({
         where: matterWhere,
         orderBy: { updatedAt: "desc" },
         take: MATTERS_PAGE_LIMIT,
@@ -78,6 +79,20 @@ export default async function MattersPage() {
           updatedAt: true,
         },
       })
+
+      const finalMembership = await requireActiveOrganizationReadMembership(
+        user.id,
+        activeOrg?.id
+      )
+      if (!finalMembership.ok) {
+        matters = []
+        canWrite = false
+      } else {
+        canWrite = finalMembership.role
+          ? roleHasPermission(finalMembership.role, "write")
+          : true
+        matters = rows
+      }
     }
   } catch {
     loadFailed = true

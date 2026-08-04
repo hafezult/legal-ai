@@ -6,6 +6,7 @@ import {
   canWriteListedMatter,
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
+  requireActiveOrganizationReadMembership,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
@@ -157,65 +158,86 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
             : Promise.resolve(null),
         ])
 
-      const mappedMatters = matterRows.map((matter) => ({
-        id: matter.id,
-        title: matter.title,
-        canWrite: canWriteListedMatter(matter, user.id, orgCanWrite),
-        canDelete: canDeleteListedMatter(matter, user.id, orgCanDelete),
-        _count: matter._count,
-      }))
-      if (
-        focusedMatter &&
-        !mappedMatters.some((matter) => matter.id === focusedMatter.id)
-      ) {
-        mappedMatters.unshift({
-          id: focusedMatter.id,
-          title: focusedMatter.title,
-          canWrite: canWriteListedMatter(focusedMatter, user.id, orgCanWrite),
-          canDelete: canDeleteListedMatter(focusedMatter, user.id, orgCanDelete),
-          _count: focusedMatter._count,
-        })
-      }
-      matters = mappedMatters
-      canWrite =
-        orgCanWrite || mappedMatters.some((matter) => matter.canWrite)
+      const finalMembership = await requireActiveOrganizationReadMembership(
+        user.id,
+        activeOrg?.id
+      )
+      if (!finalMembership.ok) {
+        matters = []
+        recentSessions = []
+        canWrite = false
+        initialResults = null
+      } else {
+        const finalOrgCanWrite = finalMembership.role
+          ? roleHasPermission(finalMembership.role, "write")
+          : true
+        const finalOrgCanDelete = finalMembership.role
+          ? roleHasPermission(finalMembership.role, "delete")
+          : true
 
-      const mapSession = (session: (typeof sessionRows)[number]) => {
-        const matterCanWrite = canWriteListedMatter(
-          session.matter,
-          user.id,
-          orgCanWrite
-        )
-        const matterCanDelete = canDeleteListedMatter(
-          session.matter,
-          user.id,
-          orgCanDelete
-        )
-        return {
-          id: session.id,
-          // Never ship saved queries/bodies in list props — restore under lock.
-          hasResponse: Boolean(session.response?.trim()),
-          chunkCount: session.chunkIds.length,
-          createdAt: session.createdAt,
-          matterId: session.matterId,
-          matterTitle: session.matter.title,
-          canDelete: canDeleteWorkProduct({
-            actorUserId: user.id,
-            createdByUserId: session.userId,
-            matterCanWrite,
-            matterCanDelete,
-          }),
+        const mappedMatters = matterRows.map((matter) => ({
+          id: matter.id,
+          title: matter.title,
+          canWrite: canWriteListedMatter(matter, user.id, finalOrgCanWrite),
+          canDelete: canDeleteListedMatter(matter, user.id, finalOrgCanDelete),
+          _count: matter._count,
+        }))
+        if (
+          focusedMatter &&
+          !mappedMatters.some((matter) => matter.id === focusedMatter.id)
+        ) {
+          mappedMatters.unshift({
+            id: focusedMatter.id,
+            title: focusedMatter.title,
+            canWrite: canWriteListedMatter(focusedMatter, user.id, finalOrgCanWrite),
+            canDelete: canDeleteListedMatter(focusedMatter, user.id, finalOrgCanDelete),
+            _count: focusedMatter._count,
+          })
         }
-      }
+        matters = mappedMatters
+        canWrite =
+          finalOrgCanWrite || mappedMatters.some((matter) => matter.canWrite)
 
-      const mapped = sessionRows.map(mapSession)
-      if (focusedSession && !mapped.some((session) => session.id === focusedSession.id)) {
-        mapped.unshift(mapSession(focusedSession))
-      }
-      recentSessions = mapped
+        const mapSession = (session: (typeof sessionRows)[number]) => {
+          const matterCanWrite = canWriteListedMatter(
+            session.matter,
+            user.id,
+            finalOrgCanWrite
+          )
+          const matterCanDelete = canDeleteListedMatter(
+            session.matter,
+            user.id,
+            finalOrgCanDelete
+          )
+          return {
+            id: session.id,
+            // Never ship saved queries/bodies in list props — restore under lock.
+            hasResponse: Boolean(session.response?.trim()),
+            chunkCount: session.chunkIds.length,
+            createdAt: session.createdAt,
+            matterId: session.matterId,
+            matterTitle: session.matter.title,
+            canDelete: canDeleteWorkProduct({
+              actorUserId: user.id,
+              createdByUserId: session.userId,
+              matterCanWrite,
+              matterCanDelete,
+            }),
+          }
+        }
 
-      if (initialSessionId) {
-        initialResults = await restoreResearchSession(initialSessionId)
+        const mapped = sessionRows.map(mapSession)
+        if (
+          focusedSession &&
+          !mapped.some((session) => session.id === focusedSession.id)
+        ) {
+          mapped.unshift(mapSession(focusedSession))
+        }
+        recentSessions = mapped
+
+        if (initialSessionId) {
+          initialResults = await restoreResearchSession(initialSessionId)
+        }
       }
     }
   } catch {

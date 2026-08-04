@@ -9,6 +9,7 @@ import {
   canWriteListedMatter,
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
+  requireActiveOrganizationReadMembership,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import {
@@ -175,35 +176,53 @@ export default async function WorkflowsPage() {
           }),
         ])
 
-      trackedCount = total
-      readyCount = ready
-      failedCount = failed
-      activeCount = active
-      statusCounts = Object.fromEntries(
-        statusGroups.map((row) => [row.indexingStatus, row._count._all])
+      const finalMembership = await requireActiveOrganizationReadMembership(
+        user.id,
+        activeOrg?.id
       )
+      if (!finalMembership.ok) {
+        trackedCount = 0
+        readyCount = 0
+        failedCount = 0
+        activeCount = 0
+        statusCounts = {}
+        documents = []
+        failedDocuments = []
+        canWrite = false
+      } else {
+        const finalOrgCanWrite = finalMembership.role
+          ? roleHasPermission(finalMembership.role, "write")
+          : true
+        trackedCount = total
+        readyCount = ready
+        failedCount = failed
+        activeCount = active
+        statusCounts = Object.fromEntries(
+          statusGroups.map((row) => [row.indexingStatus, row._count._all])
+        )
 
-      const toWorkflowDoc = (
-        doc: (typeof rows)[number]
-      ): WorkflowDocument => ({
-        id: doc.id,
-        fileName: doc.fileName,
-        indexingStatus: doc.indexingStatus,
-        retrievalStatus: doc.retrievalStatus,
-        uploadedAt: doc.uploadedAt,
-        updatedAt: doc.updatedAt,
-        canWrite: canWriteListedMatter(doc.matter, user.id, orgCanWrite),
-        matter: {
-          id: doc.matter.id,
-          title: doc.matter.title,
-        },
-      })
+        const toWorkflowDoc = (
+          doc: (typeof rows)[number]
+        ): WorkflowDocument => ({
+          id: doc.id,
+          fileName: doc.fileName,
+          indexingStatus: doc.indexingStatus,
+          retrievalStatus: doc.retrievalStatus,
+          uploadedAt: doc.uploadedAt,
+          updatedAt: doc.updatedAt,
+          canWrite: canWriteListedMatter(doc.matter, user.id, finalOrgCanWrite),
+          matter: {
+            id: doc.matter.id,
+            title: doc.matter.title,
+          },
+        })
 
-      documents = rows.map(toWorkflowDoc)
-      failedDocuments = failedRows
-        .map(toWorkflowDoc)
-        .filter((doc) => documentNeedsRetry(doc))
-      canWrite = orgCanWrite || documents.some((doc) => doc.canWrite)
+        documents = rows.map(toWorkflowDoc)
+        failedDocuments = failedRows
+          .map(toWorkflowDoc)
+          .filter((doc) => documentNeedsRetry(doc))
+        canWrite = finalOrgCanWrite || documents.some((doc) => doc.canWrite)
+      }
     }
   } catch {
     loadFailed = true

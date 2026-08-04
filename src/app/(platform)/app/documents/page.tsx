@@ -8,6 +8,7 @@ import {
   canWriteListedMatter,
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
+  requireActiveOrganizationReadMembership,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import {
@@ -148,27 +149,43 @@ export default async function DocumentsPage() {
         prisma.document.count({ where: retryWhere }),
       ])
 
-      sourceCount = total
-      indexedCount = indexed
-      retrievalReadyCount = retrievalReady
-      failedCount = failed
-      documents = rows.map((doc) => ({
-        id: doc.id,
-        fileName: doc.fileName,
-        mimeType: doc.mimeType,
-        fileSize: doc.fileSize,
-        indexingStatus: doc.indexingStatus,
-        retrievalStatus: doc.retrievalStatus,
-        chunkCount: doc.chunkCount,
-        uploadedAt: doc.uploadedAt,
-        updatedAt: doc.updatedAt,
-        canWrite: canWriteListedMatter(doc.matter, user.id, orgCanWrite),
-        matter: {
-          id: doc.matter.id,
-          title: doc.matter.title,
-        },
-      }))
-      canWrite = orgCanWrite || documents.some((doc) => doc.canWrite)
+      const finalMembership = await requireActiveOrganizationReadMembership(
+        user.id,
+        activeOrg?.id
+      )
+      if (!finalMembership.ok) {
+        sourceCount = 0
+        indexedCount = 0
+        retrievalReadyCount = 0
+        failedCount = 0
+        documents = []
+        canWrite = false
+      } else {
+        const finalOrgCanWrite = finalMembership.role
+          ? roleHasPermission(finalMembership.role, "write")
+          : true
+        sourceCount = total
+        indexedCount = indexed
+        retrievalReadyCount = retrievalReady
+        failedCount = failed
+        documents = rows.map((doc) => ({
+          id: doc.id,
+          fileName: doc.fileName,
+          mimeType: doc.mimeType,
+          fileSize: doc.fileSize,
+          indexingStatus: doc.indexingStatus,
+          retrievalStatus: doc.retrievalStatus,
+          chunkCount: doc.chunkCount,
+          uploadedAt: doc.uploadedAt,
+          updatedAt: doc.updatedAt,
+          canWrite: canWriteListedMatter(doc.matter, user.id, finalOrgCanWrite),
+          matter: {
+            id: doc.matter.id,
+            title: doc.matter.title,
+          },
+        }))
+        canWrite = finalOrgCanWrite || documents.some((doc) => doc.canWrite)
+      }
     }
   } catch {
     loadFailed = true

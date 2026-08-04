@@ -5,6 +5,7 @@ import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
+  requireActiveOrganizationReadMembership,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { documentRetrievalReadyWhere } from "@/lib/documents/status"
@@ -151,39 +152,59 @@ export default async function MemoryPage() {
         prisma.conversation.count({ where: { matter: matterWhere } }),
         prisma.draftDocument.count({ where: { matter: matterWhere } }),
       ])
-      const messagesByMatter = new Map<string, number>()
-      for (const row of conversationMessageRows) {
-        messagesByMatter.set(
-          row.matterId,
-          (messagesByMatter.get(row.matterId) ?? 0) + row._count.messages
-        )
+      const finalMembership = await requireActiveOrganizationReadMembership(
+        user.id,
+        activeOrg?.id
+      )
+      if (!finalMembership.ok) {
+        matters = []
+        canWrite = false
+        messageCount = 0
+        documentCount = 0
+        chunkCount = 0
+        retrievalReadyCount = 0
+        matterCount = 0
+        researchSessionCount = 0
+        conversationCount = 0
+        draftCount = 0
+      } else {
+        canWrite = finalMembership.role
+          ? roleHasPermission(finalMembership.role, "write")
+          : true
+        const messagesByMatter = new Map<string, number>()
+        for (const row of conversationMessageRows) {
+          messagesByMatter.set(
+            row.matterId,
+            (messagesByMatter.get(row.matterId) ?? 0) + row._count.messages
+          )
+        }
+        const chunksByMatter = new Map<string, number>()
+        for (const row of publishedDocs) {
+          chunksByMatter.set(row.matterId, row._sum.chunkCount ?? 0)
+        }
+        matters = matterRows.map((matter) => ({
+          id: matter.id,
+          title: matter.title,
+          clientName: matter.clientName,
+          updatedAt: matter.updatedAt,
+          documentCount: matter._count.documents,
+          messageCount: messagesByMatter.get(matter.id) ?? 0,
+          publishedChunkCount: chunksByMatter.get(matter.id) ?? 0,
+          _count: {
+            researchSessions: matter._count.researchSessions,
+            conversations: matter._count.conversations,
+            draftDocuments: matter._count.draftDocuments,
+          },
+        }))
+        matterCount = workspaceMatterTotal
+        messageCount = messageTotal
+        documentCount = sourceTotal
+        retrievalReadyCount = retrievalReadyTotal
+        chunkCount = workspacePublishedChunks._sum.chunkCount ?? 0
+        researchSessionCount = workspaceResearchTotal
+        conversationCount = workspaceConversationTotal
+        draftCount = workspaceDraftTotal
       }
-      const chunksByMatter = new Map<string, number>()
-      for (const row of publishedDocs) {
-        chunksByMatter.set(row.matterId, row._sum.chunkCount ?? 0)
-      }
-      matters = matterRows.map((matter) => ({
-        id: matter.id,
-        title: matter.title,
-        clientName: matter.clientName,
-        updatedAt: matter.updatedAt,
-        documentCount: matter._count.documents,
-        messageCount: messagesByMatter.get(matter.id) ?? 0,
-        publishedChunkCount: chunksByMatter.get(matter.id) ?? 0,
-        _count: {
-          researchSessions: matter._count.researchSessions,
-          conversations: matter._count.conversations,
-          draftDocuments: matter._count.draftDocuments,
-        },
-      }))
-      matterCount = workspaceMatterTotal
-      messageCount = messageTotal
-      documentCount = sourceTotal
-      retrievalReadyCount = retrievalReadyTotal
-      chunkCount = workspacePublishedChunks._sum.chunkCount ?? 0
-      researchSessionCount = workspaceResearchTotal
-      conversationCount = workspaceConversationTotal
-      draftCount = workspaceDraftTotal
     }
   } catch {
     loadFailed = true

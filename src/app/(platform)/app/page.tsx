@@ -6,6 +6,7 @@ import {
   getActiveOrganization,
   isOrgRole,
   matterAccessWhereForActiveOrg,
+  requireActiveOrganizationReadMembership,
   requireOrganizationMembershipLocked,
   roleAtLeast,
 } from "@/lib/auth/rbac"
@@ -136,18 +137,33 @@ export default async function DashboardPage() {
             },
           }),
         ])
-      matterCount = countedMatters
-      retrievalReadyCount = countedRetrievalReady
-      researchSessionCount = countedResearchSessions
-      // Never ship saved queries/AI bodies in dashboard list props.
-      recentSessions = sessionRows.map((row) => ({
-        id: row.id,
-        hasResponse: Boolean(row.response?.trim()),
-        chunkCount: row.chunkIds.length,
-        createdAt: row.createdAt,
-        matter: row.matter,
-      }))
-      recentMatters = matterRows
+      const finalMembership = await requireActiveOrganizationReadMembership(
+        user.id,
+        activeOrg?.id
+      )
+      if (!finalMembership.ok) {
+        canViewHealthDetails = false
+        matterCount = 0
+        retrievalReadyCount = 0
+        researchSessionCount = 0
+        recentSessions = []
+        recentMatters = []
+      } else {
+        const finalRole = finalMembership.role ?? activeRole
+        canViewHealthDetails = roleAtLeast(finalRole, "admin")
+        matterCount = countedMatters
+        retrievalReadyCount = countedRetrievalReady
+        researchSessionCount = countedResearchSessions
+        // Never ship saved queries/AI bodies in dashboard list props.
+        recentSessions = sessionRows.map((row) => ({
+          id: row.id,
+          hasResponse: Boolean(row.response?.trim()),
+          chunkCount: row.chunkIds.length,
+          createdAt: row.createdAt,
+          matter: row.matter,
+        }))
+        recentMatters = matterRows
+      }
     }
   } catch {
     loadFailed = true

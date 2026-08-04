@@ -6,6 +6,7 @@ import {
   canWriteListedMatter,
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
+  requireActiveOrganizationReadMembership,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
@@ -160,67 +161,88 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
             : Promise.resolve(null),
         ])
 
-      const mappedMatters = matterRows.map((matter) => ({
-        id: matter.id,
-        title: matter.title,
-        canWrite: canWriteListedMatter(matter, user.id, orgCanWrite),
-        canDelete: canDeleteListedMatter(matter, user.id, orgCanDelete),
-        _count: matter._count,
-      }))
-      if (
-        focusedMatter &&
-        !mappedMatters.some((matter) => matter.id === focusedMatter.id)
-      ) {
-        mappedMatters.unshift({
-          id: focusedMatter.id,
-          title: focusedMatter.title,
-          canWrite: canWriteListedMatter(focusedMatter, user.id, orgCanWrite),
-          canDelete: canDeleteListedMatter(focusedMatter, user.id, orgCanDelete),
-          _count: focusedMatter._count,
-        })
-      }
-      matters = mappedMatters
-      canWrite =
-        orgCanWrite || mappedMatters.some((matter) => matter.canWrite)
+      const finalMembership = await requireActiveOrganizationReadMembership(
+        user.id,
+        activeOrg?.id
+      )
+      if (!finalMembership.ok) {
+        matters = []
+        recentDrafts = []
+        canWrite = false
+        initialResults = null
+      } else {
+        const finalOrgCanWrite = finalMembership.role
+          ? roleHasPermission(finalMembership.role, "write")
+          : true
+        const finalOrgCanDelete = finalMembership.role
+          ? roleHasPermission(finalMembership.role, "delete")
+          : true
 
-      const mapDraft = (draft: (typeof draftRows)[number]) => {
-        const matterCanWrite = canWriteListedMatter(
-          draft.matter,
-          user.id,
-          orgCanWrite
-        )
-        const matterCanDelete = canDeleteListedMatter(
-          draft.matter,
-          user.id,
-          orgCanDelete
-        )
-        return {
-          id: draft.id,
-          draftType: draft.draftType,
-          // Never ship saved instructions/titles/bodies in list props —
-          // titles embed instruction excerpts; restore under lock.
-          hasContent: Boolean(draft.content?.trim()),
-          chunkCount: draft.chunkIds.length,
-          createdAt: draft.createdAt,
-          matterId: draft.matterId,
-          matterTitle: draft.matter.title,
-          canDelete: canDeleteWorkProduct({
-            actorUserId: user.id,
-            createdByUserId: draft.userId,
-            matterCanWrite,
-            matterCanDelete,
-          }),
+        const mappedMatters = matterRows.map((matter) => ({
+          id: matter.id,
+          title: matter.title,
+          canWrite: canWriteListedMatter(matter, user.id, finalOrgCanWrite),
+          canDelete: canDeleteListedMatter(matter, user.id, finalOrgCanDelete),
+          _count: matter._count,
+        }))
+        if (
+          focusedMatter &&
+          !mappedMatters.some((matter) => matter.id === focusedMatter.id)
+        ) {
+          mappedMatters.unshift({
+            id: focusedMatter.id,
+            title: focusedMatter.title,
+            canWrite: canWriteListedMatter(focusedMatter, user.id, finalOrgCanWrite),
+            canDelete: canDeleteListedMatter(focusedMatter, user.id, finalOrgCanDelete),
+            _count: focusedMatter._count,
+          })
         }
-      }
+        matters = mappedMatters
+        canWrite =
+          finalOrgCanWrite || mappedMatters.some((matter) => matter.canWrite)
 
-      const mapped = draftRows.map(mapDraft)
-      if (focusedDraft && !mapped.some((draft) => draft.id === focusedDraft.id)) {
-        mapped.unshift(mapDraft(focusedDraft))
-      }
-      recentDrafts = mapped
+        const mapDraft = (draft: (typeof draftRows)[number]) => {
+          const matterCanWrite = canWriteListedMatter(
+            draft.matter,
+            user.id,
+            finalOrgCanWrite
+          )
+          const matterCanDelete = canDeleteListedMatter(
+            draft.matter,
+            user.id,
+            finalOrgCanDelete
+          )
+          return {
+            id: draft.id,
+            draftType: draft.draftType,
+            // Never ship saved instructions/titles/bodies in list props —
+            // titles embed instruction excerpts; restore under lock.
+            hasContent: Boolean(draft.content?.trim()),
+            chunkCount: draft.chunkIds.length,
+            createdAt: draft.createdAt,
+            matterId: draft.matterId,
+            matterTitle: draft.matter.title,
+            canDelete: canDeleteWorkProduct({
+              actorUserId: user.id,
+              createdByUserId: draft.userId,
+              matterCanWrite,
+              matterCanDelete,
+            }),
+          }
+        }
 
-      if (initialDraftId) {
-        initialResults = await restoreDraft(initialDraftId)
+        const mapped = draftRows.map(mapDraft)
+        if (
+          focusedDraft &&
+          !mapped.some((draft) => draft.id === focusedDraft.id)
+        ) {
+          mapped.unshift(mapDraft(focusedDraft))
+        }
+        recentDrafts = mapped
+
+        if (initialDraftId) {
+          initialResults = await restoreDraft(initialDraftId)
+        }
       }
     }
   } catch {

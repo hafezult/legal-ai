@@ -407,6 +407,35 @@ export async function requireOrganizationMembershipLocked(
 }
 
 /**
+ * Final reauth for active-organization read/list pages. Cross-matter registries
+ * gather metadata outside a transaction for bounded latency, then call this
+ * immediately before serializing props so a concurrent member removal cannot
+ * leak stale matter/document titles after the revoke commits.
+ */
+export async function requireActiveOrganizationReadMembership(
+  userId: string,
+  organizationId: string | null | undefined
+): Promise<
+  | { ok: true; role: OrgRole | null }
+  | { ok: false; error: string }
+> {
+  if (!organizationId) return { ok: true, role: null }
+
+  try {
+    const locked = await prisma.$transaction(async (tx) =>
+      requireOrganizationMembershipLocked(tx, userId, organizationId)
+    )
+    if (!locked.ok) return locked
+    return { ok: true, role: locked.role }
+  } catch {
+    return {
+      ok: false,
+      error: "Organization membership could not be verified.",
+    }
+  }
+}
+
+/**
  * Active workspace organization for matter creation and settings.
  * Falls back to the primary org when the stored selection is missing or stale.
  */
