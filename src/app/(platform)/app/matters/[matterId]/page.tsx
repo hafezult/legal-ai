@@ -18,6 +18,7 @@ import {
   matterAccessWhere,
   requireMatterPermissionLocked,
   roleHasPermission,
+  type OrgRole,
 } from "@/lib/auth/rbac"
 import {
   documentCorpusIndexedWhere,
@@ -210,122 +211,137 @@ export default async function MatterDetailPage({
       // sync/data-plane failure — not a missing matter.
       loadFailed = true
     } else {
-      const row = await prisma.matter.findFirst({
-        where: { id: matterId, ...matterAccessWhere(user.id) },
-        select: {
-          id: true,
-          title: true,
-          description: true,
-          clientName: true,
-          practiceArea: true,
-          jurisdiction: true,
-          riskLevel: true,
-          billingCode: true,
-          status: true,
-          createdAt: true,
-          updatedAt: true,
-          documents: {
-            orderBy: { uploadedAt: "desc" },
-            take: MATTER_DOCUMENTS_LIMIT,
-            select: {
-              id: true,
-              fileName: true,
-              mimeType: true,
-              fileSize: true,
-              indexingStatus: true,
-              retrievalStatus: true,
-              publishedRunId: true,
-              uploadStatus: true,
-              uploadedAt: true,
-              updatedAt: true,
-            },
-          },
-          researchSessions: {
-            orderBy: { createdAt: "desc" },
-            take: 5,
-            select: {
-              id: true,
-              query: true,
-              response: true,
-              chunkIds: true,
-              createdAt: true,
-              userId: true,
-            },
-          },
-          draftDocuments: {
-            orderBy: { createdAt: "desc" },
-            take: 5,
-            select: {
-              id: true,
-              title: true,
-              draftType: true,
-              createdAt: true,
-            },
-          },
-          conversations: {
-            orderBy: { createdAt: "desc" },
-            take: 8,
-            select: {
-              id: true,
-              title: true,
-              createdAt: true,
-              createdByUserId: true,
-              _count: { select: { messages: true } },
-            },
-          },
-          _count: {
-            select: {
-              documents: true,
-              researchSessions: true,
-              conversations: true,
-              draftDocuments: true,
-            },
-          },
-        },
-      })
-      if (row) {
-        // Final locked read reauth before returning matter payloads. Saved AI
-        // bodies are omitted from list props (hasResponse / message counts only);
-        // restore actions re-check under lock before returning content.
-        let stillAllowed
-        try {
-          stillAllowed = await prisma.$transaction(async (tx) =>
-            requireMatterPermissionLocked(tx, user.id, row.id, "read")
+      // Load matter metadata, work-product titles/queries, and corpus counts
+      // under the final matter lock so a concurrent removal cannot race the
+      // unlocked pre-read + post-lock publish window.
+      try {
+        const locked = await prisma.$transaction(async (tx) => {
+          const stillAllowed = await requireMatterPermissionLocked(
+            tx,
+            user.id,
+            matterId,
+            "read"
           )
-        } catch {
-          permissionLoadFailed = true
-          stillAllowed = null
-        }
+          if (!stillAllowed.ok || !stillAllowed.access.role) {
+            return { status: "denied" as const }
+          }
 
-        if (permissionLoadFailed) {
-          // handled below
-        } else if (!stillAllowed || !stillAllowed.ok) {
-          // Treat revoked mid-load access as not found.
-        } else {
-          const role = stillAllowed.access.role
-          canWrite = role ? roleHasPermission(role, "write") : false
-          canDelete = role ? roleHasPermission(role, "delete") : false
+          const row = await tx.matter.findFirst({
+            where: { id: matterId, ...matterAccessWhere(user.id) },
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              clientName: true,
+              practiceArea: true,
+              jurisdiction: true,
+              riskLevel: true,
+              billingCode: true,
+              status: true,
+              createdAt: true,
+              updatedAt: true,
+              documents: {
+                orderBy: { uploadedAt: "desc" },
+                take: MATTER_DOCUMENTS_LIMIT,
+                select: {
+                  id: true,
+                  fileName: true,
+                  mimeType: true,
+                  fileSize: true,
+                  indexingStatus: true,
+                  retrievalStatus: true,
+                  publishedRunId: true,
+                  uploadStatus: true,
+                  uploadedAt: true,
+                  updatedAt: true,
+                },
+              },
+              researchSessions: {
+                orderBy: { createdAt: "desc" },
+                take: 5,
+                select: {
+                  id: true,
+                  query: true,
+                  response: true,
+                  chunkIds: true,
+                  createdAt: true,
+                  userId: true,
+                },
+              },
+              draftDocuments: {
+                orderBy: { createdAt: "desc" },
+                take: 5,
+                select: {
+                  id: true,
+                  title: true,
+                  draftType: true,
+                  createdAt: true,
+                },
+              },
+              conversations: {
+                orderBy: { createdAt: "desc" },
+                take: 8,
+                select: {
+                  id: true,
+                  title: true,
+                  createdAt: true,
+                  createdByUserId: true,
+                  _count: { select: { messages: true } },
+                },
+              },
+              _count: {
+                select: {
+                  documents: true,
+                  researchSessions: true,
+                  conversations: true,
+                  draftDocuments: true,
+                },
+              },
+            },
+          })
+          if (!row) {
+            return { status: "denied" as const }
+          }
+
           const staleBefore = new Date(
             new Date().getTime() - STALE_INDEXING_MS
           )
           const documentWhere = { matterId: row.id }
           const [indexed, retrievalReady, failed] = await Promise.all([
-            prisma.document.count({
+            tx.document.count({
               where: { ...documentWhere, ...documentCorpusIndexedWhere() },
             }),
-            prisma.document.count({
+            tx.document.count({
               where: { ...documentWhere, ...documentRetrievalReadyWhere() },
             }),
-            prisma.document.count({
+            tx.document.count({
               where: {
                 ...documentWhere,
                 OR: documentRetryOr(staleBefore),
               },
             }),
           ])
-          indexedDocuments = indexed
-          retrievalReadyDocuments = retrievalReady
-          failedDocuments = failed
+
+          return {
+            status: "ok" as const,
+            role: stillAllowed.access.role as OrgRole,
+            row,
+            indexed,
+            retrievalReady,
+            failed,
+          }
+        })
+
+        if (locked.status === "ok") {
+          const role = locked.role
+          canWrite = roleHasPermission(role, "write")
+          canDelete = roleHasPermission(role, "delete")
+          indexedDocuments = locked.indexed
+          retrievalReadyDocuments = locked.retrievalReady
+          failedDocuments = locked.failed
+          const row = locked.row
+          // Saved AI bodies omitted from list props (hasResponse / message
+          // counts only); restore actions re-check under lock before content.
           matter = {
             id: row.id,
             title: row.title,
@@ -368,6 +384,8 @@ export default async function MatterDetailPage({
             })),
           }
         }
+      } catch {
+        permissionLoadFailed = true
       }
     }
   } catch {
