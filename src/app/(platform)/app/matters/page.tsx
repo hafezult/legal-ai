@@ -1,10 +1,20 @@
-import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
+import {
+  getActiveOrganization,
+  matterAccessWhereForActiveOrg,
+  requireActiveOrganizationReadMembership,
+  roleHasPermission,
+} from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
 
 export const dynamic = "force-dynamic"
+
+/** Newest matters rendered in the registry (large orgs stay bounded). */
+const MATTERS_PAGE_LIMIT = 100
 
 function formatDate(date: Date) {
   return new Intl.DateTimeFormat("en-US", {
@@ -20,8 +30,18 @@ function practiceAreaLabel(value: string | null) {
 }
 
 export default async function MattersPage() {
-  const { userId: clerkId } = auth()
-  if (!clerkId) return null
+  const session = await resolvePlatformClerkId()
+  if (session.status === "unauthenticated") return null
+  if (session.status === "unavailable") {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description={session.error}
+        homeHref="/app"
+      />
+    )
+  }
+  const { clerkId } = session
 
   type MatterRow = {
     id: string
@@ -34,13 +54,21 @@ export default async function MattersPage() {
   }
 
   let matters: MatterRow[] = []
+  let canWrite = false
+  let loadFailed = false
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
-    if (user) {
-      matters = await prisma.matter.findMany({
-        where: { userId: user.id },
+    if (!user) {
+      loadFailed = true
+    } else {
+      const activeOrg = await getActiveOrganization(user.id)
+      canWrite = activeOrg ? roleHasPermission(activeOrg.role, "write") : true
+      const matterWhere = matterAccessWhereForActiveOrg(user.id, activeOrg?.id)
+      const rows = await prisma.matter.findMany({
+        where: matterWhere,
         orderBy: { updatedAt: "desc" },
+        take: MATTERS_PAGE_LIMIT,
         select: {
           id: true,
           title: true,
@@ -51,9 +79,23 @@ export default async function MattersPage() {
           updatedAt: true,
         },
       })
+
+      const finalMembership = await requireActiveOrganizationReadMembership(
+        user.id,
+        activeOrg?.id
+      )
+      if (!finalMembership.ok) {
+        matters = []
+        canWrite = false
+      } else {
+        canWrite = finalMembership.role
+          ? roleHasPermission(finalMembership.role, "write")
+          : true
+        matters = rows
+      }
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
   }
 
   return (
@@ -71,15 +113,23 @@ export default async function MattersPage() {
             Governed matter workspaces with privilege boundaries and AI research scope.
           </p>
         </div>
-        <Link
-          href="/app/matters/new"
-          className="mt-1 shrink-0 rounded-lg border border-white/[0.1] bg-white/[0.04] px-4 py-2 text-[13px] text-white/65 transition-colors duration-200 hover:border-white/[0.18] hover:bg-white/[0.07] hover:text-white/88"
-        >
-          New matter
-        </Link>
+        {canWrite ? (
+          <Link
+            href="/app/matters/new"
+            className="mt-1 shrink-0 rounded-lg border border-white/[0.1] bg-white/[0.04] px-4 py-2 text-[13px] text-white/65 transition-colors duration-200 hover:border-white/[0.18] hover:bg-white/[0.07] hover:text-white/88"
+          >
+            New matter
+          </Link>
+        ) : (
+          <span className="mt-1 shrink-0 rounded-lg border border-white/[0.06] px-4 py-2 text-[13px] text-white/28">
+            Read-only role
+          </span>
+        )}
       </div>
 
-      {matters.length === 0 ? (
+      {loadFailed ? (
+        <WorkspaceLoadError title="Matter registry unavailable" />
+      ) : matters.length === 0 ? (
         /* Empty state */
         <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.01] px-8 py-20 text-center">
           <p className="font-serif text-xl text-white/50">No matters registered</p>
@@ -88,12 +138,18 @@ export default async function MattersPage() {
             establishes privilege boundaries, AI research scope, and document intelligence
             context for the platform.
           </p>
-          <Link
-            href="/app/matters/new"
-            className="mt-8 inline-flex rounded-lg border border-white/[0.1] bg-white/[0.03] px-5 py-2.5 text-sm text-white/55 transition-colors duration-200 hover:border-white/[0.16] hover:text-white/78"
-          >
-            Initialize first matter
-          </Link>
+          {canWrite ? (
+            <Link
+              href="/app/matters/new"
+              className="mt-8 inline-flex rounded-lg border border-white/[0.1] bg-white/[0.03] px-5 py-2.5 text-sm text-white/55 transition-colors duration-200 hover:border-white/[0.16] hover:text-white/78"
+            >
+              Initialize first matter
+            </Link>
+          ) : (
+            <p className="mt-8 text-sm text-white/30">
+              Ask an organization admin for write access to create matters.
+            </p>
+          )}
         </div>
       ) : (
         /* Matter list */
