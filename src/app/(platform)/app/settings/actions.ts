@@ -216,23 +216,31 @@ export async function leaveOrganization(
       }
 
       await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actor.user.id} FOR UPDATE`
-
-      const remaining = await tx.organizationMember.findMany({
-        where: { userId: actor.user.id },
-        orderBy: [{ createdAt: "asc" }],
-        select: {
-          role: true,
-          organization: { select: { id: true } },
-        },
-      })
-      const owner = remaining.find((row) => row.role === "owner")
-      const nextActive =
-        owner?.organization.id ?? remaining[0]?.organization.id ?? null
-
-      await tx.user.update({
+      const lockedUser = await tx.user.findUnique({
         where: { id: actor.user.id },
-        data: { activeOrganizationId: nextActive },
+        select: { activeOrganizationId: true },
       })
+
+      // Only rewrite the active workspace when leaving the currently active org
+      // so leaving a background membership cannot clobber an explicit switch.
+      if (lockedUser?.activeOrganizationId === organizationId) {
+        const remaining = await tx.organizationMember.findMany({
+          where: { userId: actor.user.id },
+          orderBy: [{ createdAt: "asc" }],
+          select: {
+            role: true,
+            organization: { select: { id: true } },
+          },
+        })
+        const owner = remaining.find((row) => row.role === "owner")
+        const nextActive =
+          owner?.organization.id ?? remaining[0]?.organization.id ?? null
+
+        await tx.user.update({
+          where: { id: actor.user.id },
+          data: { activeOrganizationId: nextActive },
+        })
+      }
     })
 
     await recordAuditEvent({

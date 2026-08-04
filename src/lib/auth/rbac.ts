@@ -183,9 +183,9 @@ export async function requireMatterPermission(
  * Lock a matter row and re-resolve permission inside the caller's transaction
  * so long-running or check-then-act mutations cannot complete after revocation.
  *
- * For organization matters, also lock the actor's OrganizationMember row so a
- * concurrent demotion/removal cannot commit between the permission read and the
- * caller's write (Matter FOR UPDATE alone does not serialize membership changes).
+ * For organization matters, lock Organization → OrganizationMember → Matter so
+ * lock order matches org delete / ownership / invite writers and avoids
+ * deadlocks with Matter-then-Member locking.
  */
 export async function requireMatterPermissionLocked(
   tx: Prisma.TransactionClient,
@@ -196,6 +196,36 @@ export async function requireMatterPermissionLocked(
   | { ok: true; access: MatterAccess }
   | { ok: false; error: string }
 > {
+  const peek = await tx.matter.findFirst({
+    where: {
+      id: matterId,
+      ...matterAccessWhere(userId),
+    },
+    select: {
+      id: true,
+      organizationId: true,
+    },
+  })
+
+  if (!peek) {
+    return { ok: false, error: "Matter not found or access denied." }
+  }
+
+  let membershipRole: string | null | undefined
+
+  if (peek.organizationId) {
+    await tx.$queryRaw`
+      SELECT id FROM "Organization" WHERE id = ${peek.organizationId} FOR UPDATE
+    `
+    const lockedMembers = await tx.$queryRaw<Array<{ role: string }>>`
+      SELECT role FROM "OrganizationMember"
+      WHERE "organizationId" = ${peek.organizationId}
+        AND "userId" = ${userId}
+      FOR UPDATE
+    `
+    membershipRole = lockedMembers[0]?.role ?? null
+  }
+
   await tx.$queryRaw`SELECT id FROM "Matter" WHERE id = ${matterId} FOR UPDATE`
 
   const matter = await tx.matter.findFirst({
@@ -215,23 +245,19 @@ export async function requireMatterPermissionLocked(
     return { ok: false, error: "Matter not found or access denied." }
   }
 
-  const isCreator = matter.userId === userId
-  let membershipRole: string | null | undefined
-
-  if (matter.organizationId) {
-    const lockedMembers = await tx.$queryRaw<Array<{ role: string }>>`
-      SELECT role FROM "OrganizationMember"
-      WHERE "organizationId" = ${matter.organizationId}
-        AND "userId" = ${userId}
-      FOR UPDATE
-    `
-    membershipRole = lockedMembers[0]?.role ?? null
+  // Org attach/detach under us would invalidate the membership lock above.
+  if (matter.organizationId !== peek.organizationId) {
+    return {
+      ok: false,
+      error: "Matter organization changed concurrently. Retry the request.",
+    }
   }
 
+  const isCreator = matter.userId === userId
   const role = resolveMatterRoleFromLockedMembership({
     organizationId: matter.organizationId,
     isCreator,
-    membershipRole,
+    membershipRole: matter.organizationId ? membershipRole : null,
   })
 
   if (!lockedMatterRoleAllows(role, permission) || !role) {
@@ -517,12 +543,12 @@ export async function ensurePersonalOrganization(user: {
     .slice(0, 40) || "workspace"
   const slug = `${slugBase}-${user.id.slice(-6)}`
 
-  try {
-    return await prisma.$transaction(async (tx) => {
+  const createOwnedWorkspace = async (workspaceSlug: string) =>
+    prisma.$transaction(async (tx) => {
       const organization = await tx.organization.create({
         data: {
           name,
-          slug,
+          slug: workspaceSlug,
           members: {
             create: {
               userId: user.id,
@@ -541,6 +567,9 @@ export async function ensurePersonalOrganization(user: {
 
       return organization.id
     })
+
+  try {
+    return await createOwnedWorkspace(slug)
   } catch (error) {
     if (isPrismaUniqueViolation(error)) {
       const raced = await prisma.organizationMember.findFirst({
@@ -551,6 +580,15 @@ export async function ensurePersonalOrganization(user: {
         await activateOwnedOrganizationIfUnset(user.id, raced.organizationId)
         return raced.organizationId
       }
+
+      // Deterministic slug can remain occupied after transferring the last
+      // owned workspace. Provision a unique replacement instead of failing
+      // every subsequent ensureAppUser call.
+      const uniqueSlug = `${slugBase}-${user.id.slice(-6)}-${Date.now().toString(36)}`.slice(
+        0,
+        48
+      )
+      return await createOwnedWorkspace(uniqueSlug)
     }
     throw error
   }
@@ -1026,6 +1064,13 @@ export async function transferOrganizationOwnership(
       await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
       await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actorUserId} FOR UPDATE`
 
+      const ownedCount = await tx.organizationMember.count({
+        where: { userId: actorUserId, role: "owner" },
+      })
+      if (ownedCount <= 1) {
+        throw new Error("LAST_OWNED_ORGANIZATION")
+      }
+
       const actorStillOwner = await tx.organizationMember.findUnique({
         where: {
           organizationId_userId: { organizationId, userId: actorUserId },
@@ -1069,6 +1114,13 @@ export async function transferOrganizationOwnership(
       }
     })
   } catch (error) {
+    if (error instanceof Error && error.message === "LAST_OWNED_ORGANIZATION") {
+      return {
+        ok: false,
+        error:
+          "Create another organization first. You must keep at least one owned workspace.",
+      }
+    }
     if (
       error instanceof Error &&
       error.message === "CONCURRENT_OWNERSHIP_CHANGE"
@@ -1161,6 +1213,13 @@ export async function deleteOwnedOrganization(
         where: { activeOrganizationId: organizationId },
         data: { activeOrganizationId: null },
       })
+      // Lock members before matter rewrites so order matches matter permission
+      // helpers (Organization → OrganizationMember → Matter).
+      await tx.$queryRaw`
+        SELECT id FROM "OrganizationMember"
+        WHERE "organizationId" = ${organizationId}
+        FOR UPDATE
+      `
       // Org delete SetNulls Matter.organizationId. Preserve an access path for
       // creator-less org matters by assigning the deleting owner as creator.
       await tx.matter.updateMany({

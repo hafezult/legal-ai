@@ -34,5 +34,12 @@ export default clerkMiddleware(async (auth, req) => {
 })
 
 export const config = {
-  matcher: ["/app(.*)", "/sign-in(.*)", "/sign-up(.*)"],
+  // Include authenticated upload APIs so Clerk stamps AuthStatus for auth().
+  // Keep /api/health, /api/ready, and /api/index-document outside the matcher.
+  matcher: [
+    "/app(.*)",
+    "/sign-in(.*)",
+    "/sign-up(.*)",
+    "/api/matters(.*)",
+  ],
 }

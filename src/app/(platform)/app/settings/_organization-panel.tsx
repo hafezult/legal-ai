@@ -110,7 +110,11 @@ export function OrganizationAccessPanel({
   const transferCandidates = members.filter(
     (member) => member.role !== "owner" && !member.isSelf
   )
-  const canDeleteOrg = isOwner && organizations.filter((org) => org.role === "owner").length > 1
+  const ownedOrganizationCount = organizations.filter(
+    (org) => org.role === "owner"
+  ).length
+  const canRelinquishLastOwned = isOwner && ownedOrganizationCount > 1
+  const canDeleteOrg = canRelinquishLastOwned
 
   const run = useCallback(
     (
@@ -644,9 +648,14 @@ export function OrganizationAccessPanel({
             </p>
             <p className="mt-1.5 text-[11px] leading-relaxed text-white/28">
               Promote another member to owner. You become an admin and can leave
-              afterward if needed.
+              afterward if needed. You must keep at least one owned workspace.
             </p>
-            {transferCandidates.length === 0 ? (
+            {!canRelinquishLastOwned ? (
+              <p className="mt-3 text-sm text-white/30">
+                Create another organization first. Your last owned workspace
+                cannot be transferred.
+              </p>
+            ) : transferCandidates.length === 0 ? (
               <p className="mt-3 text-sm text-white/30">
                 Add another member before transferring ownership.
               </p>
