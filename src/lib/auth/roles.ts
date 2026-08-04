@@ -40,6 +40,20 @@ export function roleHasPermission(role: OrgRole, permission: OrgPermission): boo
 }
 
 /**
+ * True when an issuer at `inviterRole` may still authorize acceptance of an
+ * invite granting `inviteRole`. Demoted/removed issuers fail closed so a
+ * stale link cannot expand membership after mint authority was revoked.
+ */
+export function inviterCanAuthorizeInviteRole(
+  inviterRole: string | null | undefined,
+  inviteRole: OrgRole
+): boolean {
+  if (!inviterRole || !isOrgRole(inviterRole)) return false
+  if (!roleAtLeast(inviterRole, "admin")) return false
+  return roleStrictlyAbove(inviterRole, inviteRole)
+}
+
+/**
  * Resolve how invite acceptance should affect an existing membership.
  * Never demotes — especially never overwrites `owner` with an invite role.
  */

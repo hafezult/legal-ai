@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import {
+  inviterCanAuthorizeInviteRole,
   isOrgRole,
   resolveInviteAcceptMembership,
   roleAtLeast,
@@ -33,6 +34,17 @@ describe("organization role helpers", () => {
     assert.equal(roleHasPermission("member", "delete"), false)
     assert.equal(roleHasPermission("admin", "manage_members"), true)
     assert.equal(roleHasPermission("owner", "delete"), true)
+  })
+
+  it("requires the issuer to still be admin+ and strictly above the invite role", () => {
+    assert.equal(inviterCanAuthorizeInviteRole("owner", "admin"), true)
+    assert.equal(inviterCanAuthorizeInviteRole("admin", "member"), true)
+    assert.equal(inviterCanAuthorizeInviteRole("admin", "viewer"), true)
+    assert.equal(inviterCanAuthorizeInviteRole("admin", "admin"), false)
+    assert.equal(inviterCanAuthorizeInviteRole("member", "viewer"), false)
+    assert.equal(inviterCanAuthorizeInviteRole("viewer", "member"), false)
+    assert.equal(inviterCanAuthorizeInviteRole(null, "member"), false)
+    assert.equal(inviterCanAuthorizeInviteRole("unknown", "member"), false)
   })
 })
 

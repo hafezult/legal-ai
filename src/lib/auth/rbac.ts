@@ -19,6 +19,7 @@ import {
 } from "@/lib/auth/matter-permission-lock"
 import {
   ORG_ROLES,
+  inviterCanAuthorizeInviteRole,
   isOrgRole,
   resolveInviteAcceptMembership,
   roleAtLeast,
@@ -31,6 +32,7 @@ import type { Prisma } from "@prisma/client"
 
 export {
   ORG_ROLES,
+  inviterCanAuthorizeInviteRole,
   isOrgRole,
   resolveInviteAcceptMembership,
   roleAtLeast,
@@ -692,6 +694,51 @@ export async function acceptPendingOrganizationInvites(user: {
 }
 
 /**
+ * Drop pending invites an issuer can no longer authorize after demotion,
+ * removal, or ownership transfer. Pass `issuerRole: null` when the issuer
+ * left the organization entirely.
+ */
+export async function purgeUnauthorizedPendingInvites(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  issuerUserId: string,
+  issuerRole: OrgRole | null
+) {
+  if (issuerRole === null || !roleAtLeast(issuerRole, "admin")) {
+    await tx.organizationInvite.deleteMany({
+      where: {
+        organizationId,
+        invitedByUserId: issuerUserId,
+        acceptedAt: null,
+      },
+    })
+    return
+  }
+
+  const pending = await tx.organizationInvite.findMany({
+    where: {
+      organizationId,
+      invitedByUserId: issuerUserId,
+      acceptedAt: null,
+    },
+    select: { id: true, role: true },
+  })
+  const staleIds = pending
+    .filter((invite) => {
+      const inviteRole: OrgRole =
+        invite.role !== "owner" && isOrgRole(invite.role)
+          ? invite.role
+          : "member"
+      return !inviterCanAuthorizeInviteRole(issuerRole, inviteRole)
+    })
+    .map((invite) => invite.id)
+  if (staleIds.length === 0) return
+  await tx.organizationInvite.deleteMany({
+    where: { id: { in: staleIds } },
+  })
+}
+
+/**
  * Atomically claim an invite (acceptedAt still null), upsert membership, and
  * mark the invite accepted. Concurrent acceptors lose on the conditional update.
  * When `switchActive` is set, the active workspace update is part of the same
@@ -708,13 +755,55 @@ async function claimOrganizationInviteAcceptance(args: {
   switchActive?: boolean
 }): Promise<
   | { ok: true; effectiveRole: OrgRole }
-  | { ok: false; reason: "conflict" | "unavailable" }
+  | { ok: false; reason: "conflict" | "unavailable" | "stale_authority" }
 > {
   try {
     return await prisma.$transaction(async (tx) => {
       // Serialize with ownership transfer / org delete so invite accept cannot
       // demote a concurrently promoted owner (or race last-owner checks).
       await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${args.organizationId} FOR UPDATE`
+
+      // Re-check issuer mint authority under the org lock so a demoted/removed
+      // admin cannot leave a live acceptance link after losing invite rights.
+      const inviteRow = await tx.organizationInvite.findFirst({
+        where: {
+          id: args.inviteId,
+          tokenHash: args.tokenHash,
+          acceptedAt: null,
+          expiresAt: { gt: args.acceptedAt },
+        },
+        select: { invitedByUserId: true, role: true },
+      })
+      if (!inviteRow) {
+        return { ok: false as const, reason: "conflict" as const }
+      }
+
+      const inviteRole: OrgRole =
+        inviteRow.role !== "owner" && isOrgRole(inviteRow.role)
+          ? inviteRow.role
+          : "member"
+
+      const inviterMembership = await tx.organizationMember.findUnique({
+        where: {
+          organizationId_userId: {
+            organizationId: args.organizationId,
+            userId: inviteRow.invitedByUserId,
+          },
+        },
+        select: { role: true },
+      })
+      if (
+        !inviterCanAuthorizeInviteRole(inviterMembership?.role, inviteRole)
+      ) {
+        await tx.organizationInvite.deleteMany({
+          where: {
+            id: args.inviteId,
+            tokenHash: args.tokenHash,
+            acceptedAt: null,
+          },
+        })
+        return { ok: false as const, reason: "stale_authority" as const }
+      }
 
       const claimed = await tx.organizationInvite.updateMany({
         where: {
@@ -740,7 +829,7 @@ async function claimOrganizationInviteAcceptance(args: {
       })
 
       const decision = resolveInviteAcceptMembership(
-        args.role,
+        inviteRole,
         existing?.role
       )
       let effectiveRole = decision.effectiveRole
@@ -1025,6 +1114,13 @@ export async function acceptOrganizationInviteByToken(
         error: "Unable to accept invite. Please try again.",
       }
     }
+    if (claimed.reason === "stale_authority") {
+      return {
+        ok: false,
+        error:
+          "This invite is no longer valid. Ask an organization admin to send a new invitation.",
+      }
+    }
     return {
       ok: false,
       error: "This invite was already accepted or expired. Refresh and try again.",
@@ -1150,6 +1246,15 @@ export async function transferOrganizationOwnership(
       if (promoted.count !== 1) {
         throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
       }
+
+      // Former owner is now admin — drop invites they can no longer mint
+      // (e.g. pending admin-role links).
+      await purgeUnauthorizedPendingInvites(
+        tx,
+        organizationId,
+        actorUserId,
+        "admin"
+      )
     })
   } catch (error) {
     if (error instanceof Error && error.message === "LAST_OWNED_ORGANIZATION") {

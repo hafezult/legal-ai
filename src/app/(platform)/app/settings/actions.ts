@@ -23,6 +23,7 @@ import {
   ORG_ROLES,
   roleAtLeast,
   roleStrictlyAbove,
+  purgeUnauthorizedPendingInvites,
   setActiveOrganization,
   transferOrganizationOwnership,
   type OrgRole,
@@ -214,6 +215,14 @@ export async function leaveOrganization(
       if (left.count !== 1) {
         throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
       }
+
+      // Leaving drops mint authority — invalidate outstanding acceptance links.
+      await purgeUnauthorizedPendingInvites(
+        tx,
+        organizationId,
+        actor.user.id,
+        null
+      )
 
       await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actor.user.id} FOR UPDATE`
       const lockedUser = await tx.user.findUnique({
@@ -1149,7 +1158,7 @@ export async function updateOrganizationMemberRole(
         throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
       }
 
-      return tx.organizationMember.updateMany({
+      const updated = await tx.organizationMember.updateMany({
         where: {
           id: member.id,
           organizationId,
@@ -1157,6 +1166,16 @@ export async function updateOrganizationMemberRole(
         },
         data: { role },
       })
+      if (updated.count === 1) {
+        // Drop pending invites the demoted member can no longer authorize.
+        await purgeUnauthorizedPendingInvites(
+          tx,
+          organizationId,
+          member.userId,
+          role
+        )
+      }
+      return updated
     })
     if (updated.count !== 1) {
       return {
@@ -1271,6 +1290,14 @@ export async function removeOrganizationMember(
       if (removed.count !== 1) {
         throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
       }
+
+      // Issuer left the org — invalidate any outstanding acceptance links.
+      await purgeUnauthorizedPendingInvites(
+        tx,
+        organizationId,
+        member.userId,
+        null
+      )
 
       await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${member.userId} FOR UPDATE`
       const removedUser = await tx.user.findUnique({
