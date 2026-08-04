@@ -5,7 +5,7 @@ import {
   selectActiveOrganizationId,
   sortOrganizationSummaries,
   type OrganizationSummary,
-} from "@/lib/auth/organization-roster"
+} from "./organization-roster.ts"
 
 function org(
   partial: Pick<OrganizationSummary, "id" | "name" | "role">
