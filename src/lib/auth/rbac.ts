@@ -734,7 +734,12 @@ export async function requireActiveOrganizationReadMembership(
 
 /**
  * Active workspace organization for matter creation and settings.
- * Falls back to the primary org when the stored selection is missing or stale.
+ * Falls back to the primary org when the stored selection is missing or stale,
+ * but only after the repair persists under Organization → Member → User locks.
+ *
+ * Soft-returning an unrepaired primary would gather list props that
+ * {@link requireActiveOrganizationReadMembership} then withholds because the
+ * locked `activeOrganizationId` still does not match.
  */
 export async function getActiveOrganization(
   userId: string
@@ -755,17 +760,8 @@ export async function getActiveOrganization(
 
   const primary = organizations.find((org) => org.role === "owner") ?? organizations[0]
 
-  if (user && user.activeOrganizationId !== primary.id) {
-    // Repair under the same Organization → member → User lock protocol so a
-    // concurrent removal cannot persist a stale active workspace after revoke.
-    try {
-      await setActiveOrganization(userId, primary.id)
-    } catch {
-      /* Best-effort persistence of the active workspace */
-    }
-  }
-
-  return primary
+  // Persist the fallback under locks; only return it when the pointer sticks.
+  return setActiveOrganization(userId, primary.id)
 }
 
 /**
