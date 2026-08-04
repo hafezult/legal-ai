@@ -710,10 +710,33 @@ export async function requireActiveOrganizationReadMembership(
   | { ok: true; role: OrgRole | null }
   | { ok: false; error: string }
 > {
-  if (!organizationId) return { ok: true, role: null }
-
   try {
     const locked = await prisma.$transaction(async (tx) => {
+      if (!organizationId) {
+        // Null gather is only safe for true personal/empty workspaces. If the
+        // actor still holds memberships, active-org repair failed and list
+        // pages must not broaden across organizations.
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+        const membership = await tx.organizationMember.findFirst({
+          where: { userId },
+          select: { id: true },
+        })
+        if (
+          !decideActiveOrganizationListPublish({
+            gatheredOrganizationId: null,
+            lockedActiveOrganizationId: null,
+            membershipOk: true,
+            hasVerifiedMemberships: Boolean(membership),
+          })
+        ) {
+          return {
+            ok: false as const,
+            error: "Active organization unavailable. Refresh and try again.",
+          }
+        }
+        return { ok: true as const, role: null }
+      }
+
       const membership = await requireOrganizationMembershipLocked(
         tx,
         userId,
@@ -754,34 +777,41 @@ export async function requireActiveOrganizationReadMembership(
 
 /**
  * Active workspace organization for matter creation and settings.
- * Falls back to the primary org when the stored selection is missing or stale,
- * but only after the repair persists under Organization → Member → User locks.
+ * Uses the same locked roster + soft-fallback persist path as the shell so
+ * list gathers and chrome agree on `activeOrganizationId`.
  *
- * Soft-returning an unrepaired primary would gather list props that
- * {@link requireActiveOrganizationReadMembership} then withholds because the
- * locked `activeOrganizationId` still does not match.
+ * Returns null only for a true empty roster. When memberships exist but no
+ * active workspace can be selected/persisted, throws so list pages fail
+ * closed instead of broadening via `matterAccessWhereForActiveOrg(..., null)`.
  */
 export async function getActiveOrganization(
   userId: string
 ): Promise<OrganizationSummary | null> {
-  const organizations = await listUserOrganizations(userId)
-  if (organizations.length === 0) return null
+  let verified: {
+    organizations: OrganizationSummary[]
+    activeOrganizationId: string | null
+  }
+  try {
+    verified = await prisma.$transaction(async (tx) =>
+      verifyUserOrganizationsInTx(tx, userId)
+    )
+  } catch {
+    throw new Error("ACTIVE_ORG_UNAVAILABLE")
+  }
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { activeOrganizationId: true },
-  })
+  if (verified.organizations.length === 0) return null
 
-  const active = user?.activeOrganizationId
-    ? organizations.find((org) => org.id === user.activeOrganizationId)
+  const active = verified.activeOrganizationId
+    ? verified.organizations.find(
+        (org) => org.id === verified.activeOrganizationId
+      )
     : null
 
   if (active) return active
 
-  const primary = organizations.find((org) => org.role === "owner") ?? organizations[0]
-
-  // Persist the fallback under locks; only return it when the pointer sticks.
-  return setActiveOrganization(userId, primary.id)
+  // Soft selection should already have been persisted in-tx. A non-empty
+  // roster without an active row must not soft-broaden list gathers.
+  throw new Error("ACTIVE_ORG_UNAVAILABLE")
 }
 
 /**

@@ -54,8 +54,21 @@ describe("decideActiveOrganizationListPublish", () => {
         gatheredOrganizationId: null,
         lockedActiveOrganizationId: null,
         membershipOk: true,
+        hasVerifiedMemberships: false,
       }),
       true
+    )
+  })
+
+  it("withholds null gathers when the actor still has memberships", () => {
+    assert.equal(
+      decideActiveOrganizationListPublish({
+        gatheredOrganizationId: null,
+        lockedActiveOrganizationId: null,
+        membershipOk: true,
+        hasVerifiedMemberships: true,
+      }),
+      false
     )
   })
 })

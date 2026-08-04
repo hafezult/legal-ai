@@ -6,15 +6,18 @@
  * a different `activeOrganizationId`. Fail closed unless the locked active
  * pointer still matches the gathered organization.
  *
- * When no organization was gathered (personal / empty workspace), there is
- * nothing to mismatch against — membershipOk alone decides publish.
+ * When no organization was gathered, publish only for true personal/empty
+ * workspaces. If the actor still has memberships, a null gather means active
+ * repair failed and must not broaden list props across orgs.
  */
 export function decideActiveOrganizationListPublish(args: {
   gatheredOrganizationId: string | null | undefined
   lockedActiveOrganizationId: string | null | undefined
   membershipOk: boolean
+  hasVerifiedMemberships?: boolean
 }): boolean {
   if (!args.gatheredOrganizationId) {
+    if (args.hasVerifiedMemberships) return false
     return args.membershipOk
   }
   return (
