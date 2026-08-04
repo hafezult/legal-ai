@@ -101,10 +101,14 @@ export async function cleanupStoragePaths(
   }
 }
 
-/** Default TTL matches the workstation preview budget (15 minutes). */
-export async function createSignedUrl(path: string, expiresIn = 900) {
+/**
+ * Download a private storage object for the authenticated app-route byte proxy.
+ * Prefer this over long-lived signed URLs so each byte fetch re-checks matter
+ * permission under lock instead of remaining valid after membership revoke.
+ */
+export async function downloadFromStorage(path: string) {
   const client = getSupabaseAdmin()
-  return client.storage.from(STORAGE_BUCKET).createSignedUrl(path, expiresIn)
+  return client.storage.from(STORAGE_BUCKET).download(path)
 }
 
 function isBucketAlreadyExistsError(error: { message?: string } | null | undefined) {

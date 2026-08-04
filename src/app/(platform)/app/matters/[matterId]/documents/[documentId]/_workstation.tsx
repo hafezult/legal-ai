@@ -81,7 +81,8 @@ export type WorkstationData = {
   embeddingsLoadFailed?: boolean
   authorities: WorkstationAuthority[]
   embeddedCount: number
-  signedUrl: string | null
+  /** Same-origin authenticated content proxy — re-checks matter read per request. */
+  contentUrl: string | null
   parsedTextTruncated: boolean
 }
 
@@ -147,12 +148,62 @@ type Tab = "overview" | "chunks" | "authorities" | "parsed" | "retrieval" | "tim
 
 function DocViewer({
   doc,
-  signedUrl,
+  contentUrl,
 }: {
   doc: WorkstationDoc
-  signedUrl: string | null
+  contentUrl: string | null
 }) {
   const isPdf = doc.mimeType === "application/pdf"
+  const [pdfObjectUrl, setPdfObjectUrl] = useState<string | null>(null)
+  const [pdfLoadFailed, setPdfLoadFailed] = useState(false)
+  const pdfObjectUrlRef = useRef<string | null>(null)
+
+  // Fetch PDF bytes through the authenticated proxy, then hand a blob URL to
+  // the sandboxed iframe (cookies are not sent under sandbox without
+  // allow-same-origin). Each fetch re-checks matter permission server-side.
+  useEffect(() => {
+    if (!contentUrl || !isPdf) {
+      setPdfObjectUrl(null)
+      setPdfLoadFailed(false)
+      return
+    }
+
+    let cancelled = false
+    setPdfObjectUrl(null)
+    setPdfLoadFailed(false)
+
+    ;(async () => {
+      try {
+        const response = await fetch(contentUrl, {
+          credentials: "same-origin",
+          cache: "no-store",
+        })
+        if (!response.ok) throw new Error("content unavailable")
+        const blob = await response.blob()
+        if (cancelled) return
+        const objectUrl = URL.createObjectURL(blob)
+        if (pdfObjectUrlRef.current) {
+          URL.revokeObjectURL(pdfObjectUrlRef.current)
+        }
+        pdfObjectUrlRef.current = objectUrl
+        setPdfObjectUrl(objectUrl)
+      } catch {
+        if (!cancelled) setPdfLoadFailed(true)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      if (pdfObjectUrlRef.current) {
+        URL.revokeObjectURL(pdfObjectUrlRef.current)
+        pdfObjectUrlRef.current = null
+      }
+    }
+  }, [contentUrl, isPdf])
+
+  const openHref = contentUrl
+    ? `${contentUrl}?download=1`
+    : null
 
   return (
     <div className="flex h-full flex-col">
@@ -167,9 +218,9 @@ function DocViewer({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          {signedUrl && (
+          {openHref && (
             <a
-              href={signedUrl}
+              href={openHref}
               target="_blank"
               rel="noopener noreferrer"
               className="text-[10px] text-white/30 transition-colors hover:text-white/60"
@@ -182,7 +233,7 @@ function DocViewer({
 
       {/* Document surface */}
       <div className="relative flex-1 overflow-hidden bg-zinc-900/60">
-        {!signedUrl ? (
+        {!contentUrl ? (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
               <p className="text-sm text-white/38">Source document unavailable</p>
@@ -191,9 +242,22 @@ function DocViewer({
               </p>
             </div>
           </div>
-        ) : isPdf ? (
+        ) : isPdf && pdfLoadFailed ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center">
+              <p className="text-sm text-white/38">PDF preview unavailable</p>
+              <p className="mt-1 text-xs text-white/22">
+                Retry shortly, or use Open to download the source.
+              </p>
+            </div>
+          </div>
+        ) : isPdf && !pdfObjectUrl ? (
+          <div className="flex h-full items-center justify-center">
+            <p className="text-sm text-white/38">Loading PDF preview…</p>
+          </div>
+        ) : isPdf && pdfObjectUrl ? (
           <iframe
-            src={signedUrl}
+            src={pdfObjectUrl}
             className="h-full w-full border-0"
             title={doc.fileName}
             sandbox="allow-scripts"
@@ -952,7 +1016,7 @@ export function DocumentWorkstation({
     embeddingsLoadFailed = false,
     authorities,
     embeddedCount,
-    signedUrl,
+    contentUrl,
     parsedTextTruncated,
   } = data
   const router = useRouter()
@@ -1219,7 +1283,7 @@ export function DocumentWorkstation({
             } as CSSProperties
           }
         >
-          <DocViewer doc={doc} signedUrl={signedUrl} />
+          <DocViewer doc={doc} contentUrl={contentUrl} />
         </div>
 
         {/* ── Drag / keyboard resize handle ─────────────────────────── */}

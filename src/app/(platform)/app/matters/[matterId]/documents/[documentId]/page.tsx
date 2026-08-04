@@ -15,7 +15,7 @@ import {
   sessionReferencesDocument,
   snapshotEntriesForDocument,
 } from "@/lib/retrieval/citation-snapshot"
-import { createSignedUrl } from "@/lib/storage/documents"
+import { documentContentPath } from "@/lib/documents/content-url"
 import { inspectionChunkWhere } from "@/lib/workflows/indexing-publish"
 import { deleteDocument, reindexDocument } from "../../actions"
 import { DocumentWorkstation } from "./_workstation"
@@ -255,23 +255,14 @@ export default async function DocumentViewerPage({
             ? extractAuthorities(authoritySource)
             : []
 
-          // Short-lived preview URL after locked body read. Minting is outside
-          // the transaction (external storage), so reauth again before publish.
-          let signedUrl: string | null = null
-          if (lockedDoc.storagePath) {
-            try {
-              const { data: urlData } = await createSignedUrl(
-                lockedDoc.storagePath,
-                900
-              )
-              signedUrl = urlData?.signedUrl ?? null
-            } catch {
-              /* storage unavailable */
-            }
-          }
+          // Authenticated same-origin content path (not a storage signed URL).
+          // Byte fetches re-check matter permission per request on the API route.
+          const contentUrl = lockedDoc.storagePath
+            ? documentContentPath(matterId, documentId)
+            : null
 
-          // Final locked reauth after post-lock embedding probes + signed URL
-          // mint so a concurrent removal cannot receive bodies or a fresh URL.
+          // Final locked reauth after post-lock embedding probes so a concurrent
+          // removal cannot receive bodies or a content URL after revoke.
           let publishAllowed
           try {
             publishAllowed = await prisma.$transaction(async (tx) =>
@@ -346,7 +337,7 @@ export default async function DocumentViewerPage({
                 normalized: a.normalized,
               })),
               embeddedCount: embeddedIds.size,
-              signedUrl,
+              contentUrl,
               parsedTextTruncated: isParsedTextTruncated(lockedDoc.parsedText),
             }
           }
