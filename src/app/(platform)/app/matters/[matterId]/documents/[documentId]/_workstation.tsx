@@ -146,14 +146,13 @@ type Tab = "overview" | "chunks" | "authorities" | "parsed" | "retrieval" | "tim
 
 // ── Source document viewer (left panel) ───────────────────────────────────
 
-function DocViewer({
-  doc,
+function PdfPreview({
   contentUrl,
+  fileName,
 }: {
-  doc: WorkstationDoc
-  contentUrl: string | null
+  contentUrl: string
+  fileName: string
 }) {
-  const isPdf = doc.mimeType === "application/pdf"
   const [pdfObjectUrl, setPdfObjectUrl] = useState<string | null>(null)
   const [pdfLoadFailed, setPdfLoadFailed] = useState(false)
   const pdfObjectUrlRef = useRef<string | null>(null)
@@ -161,16 +160,10 @@ function DocViewer({
   // Fetch PDF bytes through the authenticated proxy, then hand a blob URL to
   // the sandboxed iframe (cookies are not sent under sandbox without
   // allow-same-origin). Each fetch re-checks matter permission server-side.
+  // Remount via key={contentUrl} on the parent so state resets without
+  // synchronous setState in the effect body.
   useEffect(() => {
-    if (!contentUrl || !isPdf) {
-      setPdfObjectUrl(null)
-      setPdfLoadFailed(false)
-      return
-    }
-
     let cancelled = false
-    setPdfObjectUrl(null)
-    setPdfLoadFailed(false)
 
     ;(async () => {
       try {
@@ -182,9 +175,6 @@ function DocViewer({
         const blob = await response.blob()
         if (cancelled) return
         const objectUrl = URL.createObjectURL(blob)
-        if (pdfObjectUrlRef.current) {
-          URL.revokeObjectURL(pdfObjectUrlRef.current)
-        }
         pdfObjectUrlRef.current = objectUrl
         setPdfObjectUrl(objectUrl)
       } catch {
@@ -199,8 +189,48 @@ function DocViewer({
         pdfObjectUrlRef.current = null
       }
     }
-  }, [contentUrl, isPdf])
+  }, [contentUrl])
 
+  if (pdfLoadFailed) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="text-center">
+          <p className="text-sm text-white/38">PDF preview unavailable</p>
+          <p className="mt-1 text-xs text-white/22">
+            Retry shortly, or use Open to download the source.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!pdfObjectUrl) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-sm text-white/38">Loading PDF preview…</p>
+      </div>
+    )
+  }
+
+  return (
+    <iframe
+      src={pdfObjectUrl}
+      className="h-full w-full border-0"
+      title={fileName}
+      sandbox="allow-scripts"
+      referrerPolicy="no-referrer"
+    />
+  )
+}
+
+function DocViewer({
+  doc,
+  contentUrl,
+}: {
+  doc: WorkstationDoc
+  contentUrl: string | null
+}) {
+  const isPdf = doc.mimeType === "application/pdf"
   const openHref = contentUrl
     ? `${contentUrl}?download=1`
     : null
@@ -242,26 +272,11 @@ function DocViewer({
               </p>
             </div>
           </div>
-        ) : isPdf && pdfLoadFailed ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              <p className="text-sm text-white/38">PDF preview unavailable</p>
-              <p className="mt-1 text-xs text-white/22">
-                Retry shortly, or use Open to download the source.
-              </p>
-            </div>
-          </div>
-        ) : isPdf && !pdfObjectUrl ? (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-white/38">Loading PDF preview…</p>
-          </div>
-        ) : isPdf && pdfObjectUrl ? (
-          <iframe
-            src={pdfObjectUrl}
-            className="h-full w-full border-0"
-            title={doc.fileName}
-            sandbox="allow-scripts"
-            referrerPolicy="no-referrer"
+        ) : isPdf ? (
+          <PdfPreview
+            key={contentUrl}
+            contentUrl={contentUrl}
+            fileName={doc.fileName}
           />
         ) : (
           /* TXT / DOCX — render parsed text */

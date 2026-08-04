@@ -10,7 +10,7 @@ import {
   requireMatterPermissionLocked,
 } from "@/lib/auth/rbac"
 import { buildContentDisposition } from "@/lib/documents/content-disposition"
-import { isDocumentContentPathIds } from "@/lib/documents/content-url"
+import { isDocumentIdShape } from "@/lib/documents/ids"
 import { prisma } from "@/lib/prisma"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import { clientKeyFromRequest } from "@/lib/request-ip"
@@ -77,7 +77,7 @@ export async function GET(
   const { clerkId } = clerk
 
   const { matterId, documentId } = await params
-  if (!isDocumentContentPathIds(matterId, documentId)) {
+  if (!isDocumentIdShape(matterId) || !isDocumentIdShape(documentId)) {
     return jsonError("Document not found or access denied.", 404)
   }
 

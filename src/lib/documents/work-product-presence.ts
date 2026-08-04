@@ -1,12 +1,16 @@
 import type { Prisma } from "@prisma/client"
 
-import { prisma } from "@/lib/prisma"
-
-type DbClient = Prisma.TransactionClient | typeof prisma
+type DbClient = Pick<Prisma.TransactionClient, "$queryRaw">
 
 export type WorkProductPresence = {
   hasBody: boolean
   chunkCount: number
+}
+
+async function resolveDb(db?: DbClient): Promise<DbClient> {
+  if (db) return db
+  const { prisma } = await import("../prisma")
+  return prisma
 }
 
 /**
@@ -15,12 +19,13 @@ export type WorkProductPresence = {
  */
 export async function researchSessionPresenceByIds(
   ids: string[],
-  db: DbClient = prisma
+  db?: DbClient
 ): Promise<Map<string, WorkProductPresence>> {
   const unique = [...new Set(ids.filter(Boolean))]
   if (unique.length === 0) return new Map()
 
-  const rows = await db.$queryRaw<
+  const client = await resolveDb(db)
+  const rows = await client.$queryRaw<
     Array<{ id: string; hasBody: boolean; chunkCount: number }>
   >`
     SELECT
@@ -45,12 +50,13 @@ export async function researchSessionPresenceByIds(
  */
 export async function draftDocumentPresenceByIds(
   ids: string[],
-  db: DbClient = prisma
+  db?: DbClient
 ): Promise<Map<string, WorkProductPresence>> {
   const unique = [...new Set(ids.filter(Boolean))]
   if (unique.length === 0) return new Map()
 
-  const rows = await db.$queryRaw<
+  const client = await resolveDb(db)
+  const rows = await client.$queryRaw<
     Array<{ id: string; hasBody: boolean; chunkCount: number }>
   >`
     SELECT
