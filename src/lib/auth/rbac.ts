@@ -17,6 +17,7 @@ import {
   lockedMatterRoleAllows,
   resolveMatterRoleFromLockedMembership,
 } from "@/lib/auth/matter-permission-lock"
+import { decideActiveOrganizationListPublish } from "@/lib/auth/active-org-list-publish"
 import { orgDeleteConfirmationMatches } from "@/lib/auth/org-delete-confirm"
 import {
   selectActiveOrganizationId,
@@ -674,6 +675,13 @@ export async function requireOrganizationMembershipLocked(
  * gather metadata outside a transaction for bounded latency, then call this
  * immediately before serializing props so a concurrent member removal cannot
  * leak stale matter/document titles after the revoke commits.
+ *
+ * Also requires the locked `User.activeOrganizationId` still equal the gathered
+ * organization. Membership alone is not enough — a concurrent workspace switch
+ * can leave the actor in the gathered org while shell chrome already shows a
+ * different active workspace.
+ *
+ * Lock order: Organization → OrganizationMember → User.
  */
 export async function requireActiveOrganizationReadMembership(
   userId: string,
@@ -685,9 +693,35 @@ export async function requireActiveOrganizationReadMembership(
   if (!organizationId) return { ok: true, role: null }
 
   try {
-    const locked = await prisma.$transaction(async (tx) =>
-      requireOrganizationMembershipLocked(tx, userId, organizationId)
-    )
+    const locked = await prisma.$transaction(async (tx) => {
+      const membership = await requireOrganizationMembershipLocked(
+        tx,
+        userId,
+        organizationId
+      )
+      if (!membership.ok) return membership
+
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { activeOrganizationId: true },
+      })
+
+      if (
+        !decideActiveOrganizationListPublish({
+          gatheredOrganizationId: organizationId,
+          lockedActiveOrganizationId: user?.activeOrganizationId,
+          membershipOk: true,
+        })
+      ) {
+        return {
+          ok: false as const,
+          error: "Active organization changed. Refresh and try again.",
+        }
+      }
+
+      return { ok: true as const, role: membership.role }
+    })
     if (!locked.ok) return locked
     return { ok: true, role: locked.role }
   } catch {
@@ -1465,6 +1499,8 @@ export function buildInviteAcceptUrl(token: string) {
 /**
  * Transfer organization ownership to another member.
  * The previous owner is demoted to admin.
+ * Success payload name/emails are read under Organization + User FOR UPDATE —
+ * pre-tx probe values are not authoritative for audit/toast publish.
  */
 export async function transferOrganizationOwnership(
   actorUserId: string,
@@ -1512,13 +1548,30 @@ export async function transferOrganizationOwnership(
     return { ok: false, error: "You already own this organization." }
   }
 
+  // Pre-tx probe values are UX/fast-fail only — audit/toast publish uses the
+  // locked snapshot captured under Organization + User FOR UPDATE below.
+  let organizationName = actorMembership.organization.name
+  let previousOwnerEmail = actorMembership.user.email
+  let newOwnerEmail = target.user.email
+
   try {
-    // Lock the organization + actor user so transfer cannot race org delete /
-    // last-owned checks, then demote/promote under conditional updates so the
-    // org never ends with zero or two owners.
+    // Lock the organization + actor/target users so transfer cannot race org
+    // delete / last-owned checks / email renames, then demote/promote under
+    // conditional updates so the org never ends with zero or two owners.
     await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
-      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actorUserId} FOR UPDATE`
+      const userLockIds = [actorUserId, target.userId].sort()
+      for (const userLockId of userLockIds) {
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userLockId} FOR UPDATE`
+      }
+
+      const lockedOrg = await tx.organization.findUnique({
+        where: { id: organizationId },
+        select: { name: true },
+      })
+      if (!lockedOrg) {
+        throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
+      }
 
       const ownedCount = await tx.organizationMember.count({
         where: { userId: actorUserId, role: "owner" },
@@ -1577,6 +1630,23 @@ export async function transferOrganizationOwnership(
         actorUserId,
         "admin"
       )
+
+      const lockedActor = await tx.user.findUnique({
+        where: { id: actorUserId },
+        select: { email: true },
+      })
+      const lockedTarget = await tx.user.findUnique({
+        where: { id: targetStillMember.userId },
+        select: { email: true },
+      })
+      if (!lockedActor?.email || !lockedTarget?.email) {
+        throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
+      }
+
+      // Publish audit/toast labels from the locked snapshot only.
+      organizationName = lockedOrg.name
+      previousOwnerEmail = lockedActor.email
+      newOwnerEmail = lockedTarget.email
     })
   } catch (error) {
     if (error instanceof Error && error.message === "LAST_OWNED_ORGANIZATION") {
@@ -1600,9 +1670,9 @@ export async function transferOrganizationOwnership(
 
   return {
     ok: true,
-    organizationName: actorMembership.organization.name,
-    previousOwnerEmail: actorMembership.user.email,
-    newOwnerEmail: target.user.email,
+    organizationName,
+    previousOwnerEmail,
+    newOwnerEmail,
   }
 }
 
