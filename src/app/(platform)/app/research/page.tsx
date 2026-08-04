@@ -155,6 +155,17 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
             : Promise.resolve(null),
         ])
 
+      // Presence + deep-link restore before final membership reauth so the
+      // lock check stays immediately before list serialize (restore has its
+      // own matter lock; a concurrent remove must not keep matter titles).
+      const presence = await researchSessionPresenceByIds([
+        ...sessionRows.map((session) => session.id),
+        ...(focusedSession ? [focusedSession.id] : []),
+      ])
+      const pendingRestore = initialSessionId
+        ? await restoreResearchSession(initialSessionId)
+        : null
+
       const finalMembership = await requireActiveOrganizationReadMembership(
         user.id,
         activeOrg?.id
@@ -195,11 +206,6 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
         canWrite =
           finalOrgCanWrite || mappedMatters.some((matter) => matter.canWrite)
 
-        const presence = await researchSessionPresenceByIds([
-          ...sessionRows.map((session) => session.id),
-          ...(focusedSession ? [focusedSession.id] : []),
-        ])
-
         const mapSession = (session: (typeof sessionRows)[number]) => {
           const matterCanWrite = canWriteListedMatter(
             session.matter,
@@ -237,10 +243,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
           mapped.unshift(mapSession(focusedSession))
         }
         recentSessions = mapped
-
-        if (initialSessionId) {
-          initialResults = await restoreResearchSession(initialSessionId)
-        }
+        initialResults = pendingRestore
       }
     }
   } catch {

@@ -641,6 +641,19 @@ export async function restoreDraft(draftId: string): Promise<DraftOutput> {
       )
     }
 
+    // Final locked reauth after the post-lock indexed count so a concurrent
+    // removal cannot receive restored bodies/provenance after revoke.
+    try {
+      const publishAllowed = await prisma.$transaction(async (tx) =>
+        requireMatterPermissionLocked(tx, user.id, draft.matterId, "read")
+      )
+      if (!publishAllowed.ok) {
+        return emptyResult(DRAFT_ACCESS_REVOKED_MESSAGE)
+      }
+    } catch {
+      return emptyResult("Unable to verify workspace permissions.")
+    }
+
     const restoredType: DraftType = isDraftType(restored.draftType)
       ? restored.draftType
       : "advice"

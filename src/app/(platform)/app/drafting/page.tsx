@@ -158,6 +158,17 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
             : Promise.resolve(null),
         ])
 
+      // Presence + deep-link restore before final membership reauth so the
+      // lock check stays immediately before list serialize (restore has its
+      // own matter lock; a concurrent remove must not keep matter titles).
+      const presence = await draftDocumentPresenceByIds([
+        ...draftRows.map((draft) => draft.id),
+        ...(focusedDraft ? [focusedDraft.id] : []),
+      ])
+      const pendingRestore = initialDraftId
+        ? await restoreDraft(initialDraftId)
+        : null
+
       const finalMembership = await requireActiveOrganizationReadMembership(
         user.id,
         activeOrg?.id
@@ -198,11 +209,6 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
         canWrite =
           finalOrgCanWrite || mappedMatters.some((matter) => matter.canWrite)
 
-        const presence = await draftDocumentPresenceByIds([
-          ...draftRows.map((draft) => draft.id),
-          ...(focusedDraft ? [focusedDraft.id] : []),
-        ])
-
         const mapDraft = (draft: (typeof draftRows)[number]) => {
           const matterCanWrite = canWriteListedMatter(
             draft.matter,
@@ -242,10 +248,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
           mapped.unshift(mapDraft(focusedDraft))
         }
         recentDrafts = mapped
-
-        if (initialDraftId) {
-          initialResults = await restoreDraft(initialDraftId)
-        }
+        initialResults = pendingRestore
       }
     }
   } catch {

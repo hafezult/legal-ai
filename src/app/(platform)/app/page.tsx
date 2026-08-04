@@ -136,6 +136,11 @@ export default async function DashboardPage() {
             },
           }),
         ])
+      // Presence before final membership reauth so the lock check stays
+      // immediately before serialize (matches matters/documents/memory).
+      const presence = await researchSessionPresenceByIds(
+        sessionRows.map((row) => row.id)
+      )
       const finalMembership = await requireActiveOrganizationReadMembership(
         user.id,
         activeOrg?.id
@@ -154,9 +159,6 @@ export default async function DashboardPage() {
         retrievalReadyCount = countedRetrievalReady
         researchSessionCount = countedResearchSessions
         // Never ship saved queries/AI bodies in dashboard list props.
-        const presence = await researchSessionPresenceByIds(
-          sessionRows.map((row) => row.id)
-        )
         recentSessions = sessionRows.map((row) => {
           const flags = presence.get(row.id)
           return {

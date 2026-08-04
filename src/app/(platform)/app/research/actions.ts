@@ -632,6 +632,19 @@ export async function restoreResearchSession(
       )
     }
 
+    // Final locked reauth after the post-lock indexed count so a concurrent
+    // removal cannot receive restored bodies/provenance after revoke.
+    try {
+      const publishAllowed = await prisma.$transaction(async (tx) =>
+        requireMatterPermissionLocked(tx, user.id, session.matterId, "read")
+      )
+      if (!publishAllowed.ok) {
+        return emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE)
+      }
+    } catch {
+      return emptyResult("Unable to verify workspace permissions.")
+    }
+
     return {
       query: restored.query,
       matterId: session.matterId,
