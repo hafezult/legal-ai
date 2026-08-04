@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - cursor/overall-project-finalization-32c2
+      - cursor/overall-project-finalization-289d
 
 permissions:
   contents: read
