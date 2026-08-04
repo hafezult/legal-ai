@@ -1,4 +1,5 @@
 import { STORAGE_BUCKET, getSupabaseAdmin } from "@/lib/storage/client"
+import { assertSafeDocxZip } from "@/lib/parsing/docx-zip-preflight"
 import {
   detectDocumentType,
   extractHeadings,
@@ -44,6 +45,12 @@ async function parsePdf(buffer: Buffer): Promise<ParseResult> {
 }
 
 async function parseDocx(buffer: Buffer): Promise<ParseResult> {
+  // Structural zip preflight before mammoth expands entry payloads.
+  const preflight = assertSafeDocxZip(buffer)
+  if (!preflight.ok) {
+    throw new Error(preflight.error)
+  }
+
   const mammoth = await import("mammoth")
   const { value, messages } = await mammoth.extractRawText({ buffer })
   const text = normalizeText(value)
@@ -52,7 +59,12 @@ async function parseDocx(buffer: Buffer): Promise<ParseResult> {
     pageCount: Math.max(1, Math.ceil(text.split("\n").length / 28)),
     confidence: 0.95,
     headings: extractHeadings(text),
-    metadata: { warnings: (messages as { type: string }[]).filter((m) => m.type === "warning").length },
+    metadata: {
+      warnings: (messages as { type: string }[]).filter((m) => m.type === "warning")
+        .length,
+      zipEntries: preflight.entryCount,
+      zipUncompressedBytes: preflight.uncompressedBytes,
+    },
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   }
 }

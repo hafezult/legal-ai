@@ -1,34 +1,15 @@
 import { NextResponse } from "next/server"
 
 import { getLivenessReport } from "@/lib/health"
-import { consumeRateLimit } from "@/lib/rate-limit"
-import { clientKeyFromRequest } from "@/lib/request-ip"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
-const HEALTH_RATE_LIMIT = { limit: 120, windowMs: 60_000 } as const
-
-export async function GET(request: Request) {
+export async function GET() {
   // Public probe is process liveness only — no DB/service fan-out.
   // Detailed dependency probes remain on Settings via getHealthReport().
-  // In-process only — liveness must not call Upstash even when configured.
-  const throttle = await consumeRateLimit(
-    `health:${clientKeyFromRequest(request)}`,
-    { ...HEALTH_RATE_LIMIT, localOnly: true }
-  )
-  if (!throttle.ok) {
-    return NextResponse.json(
-      { status: "degraded", error: "Rate limit exceeded" },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": String(Math.ceil(throttle.retryAfterMs / 1000)),
-        },
-      }
-    )
-  }
-
+  // No rate limit: load balancers must not receive 429 on a static ok payload.
+  // Readiness (/api/ready) remains locally rate-limited + cached.
   const payload = getLivenessReport()
   return NextResponse.json(payload, { status: 200 })
 }
