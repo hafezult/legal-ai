@@ -1,4 +1,4 @@
-import { verifiedClerkEmailMatches } from "@/lib/auth/clerk-email"
+import { verifiedClerkEmailMatches } from "./clerk-email.ts"
 
 /**
  * Invite metadata safe to show on the accept page after the signed-in account
