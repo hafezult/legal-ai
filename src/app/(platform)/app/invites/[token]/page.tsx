@@ -10,6 +10,10 @@ import {
   verifiedClerkEmailMatches,
 } from "@/lib/auth/clerk-email"
 import { ensureAppUser } from "@/lib/auth/ensure-user"
+import {
+  decideInviteAcceptPublish,
+  type InviteAcceptPublishRow,
+} from "@/lib/auth/invite-accept-view"
 import { hashInviteToken, isInviteTokenShape } from "@/lib/auth/invite-token"
 import { prisma } from "@/lib/prisma"
 import { AcceptInviteClient } from "./_accept-invite-client"
@@ -41,6 +45,39 @@ function InviteShell({
   )
 }
 
+async function loadInviteAcceptRow(
+  token: string
+): Promise<
+  | { ok: true; invite: InviteAcceptPublishRow | null }
+  | { ok: false }
+> {
+  try {
+    const row = await prisma.organizationInvite.findUnique({
+      where: { tokenHash: hashInviteToken(token) },
+      select: {
+        email: true,
+        role: true,
+        expiresAt: true,
+        acceptedAt: true,
+        organization: { select: { name: true } },
+      },
+    })
+    if (!row) return { ok: true, invite: null }
+    return {
+      ok: true,
+      invite: {
+        email: row.email,
+        role: row.role,
+        expiresAt: row.expiresAt,
+        acceptedAt: row.acceptedAt,
+        organizationName: row.organization.name,
+      },
+    }
+  } catch {
+    return { ok: false }
+  }
+}
+
 export default async function InviteAcceptPage({
   params,
 }: {
@@ -66,40 +103,11 @@ export default async function InviteAcceptPage({
   }
   if (!user) return null
 
-  let invite: {
-    email: string
-    role: string
-    expiresAt: Date
-    acceptedAt: Date | null
-    organizationName: string
-  } | null = null
-  let loadFailed = false
-
-  try {
-    const row = await prisma.organizationInvite.findUnique({
-      where: { tokenHash: hashInviteToken(token) },
-      select: {
-        email: true,
-        role: true,
-        expiresAt: true,
-        acceptedAt: true,
-        organization: { select: { name: true } },
-      },
-    })
-    if (row) {
-      invite = {
-        email: row.email,
-        role: row.role,
-        expiresAt: row.expiresAt,
-        acceptedAt: row.acceptedAt,
-        organizationName: row.organization.name,
-      }
-    }
-  } catch {
-    loadFailed = true
-  }
-
-  if (loadFailed) {
+  // Probe only whether a matching token exists before identity lookup. Do not
+  // publish organization/role labels from this pre-identity snapshot — a
+  // concurrent revoke during currentUser() must not keep stale metadata.
+  const preIdentity = await loadInviteAcceptRow(token)
+  if (!preIdentity.ok) {
     return (
       <WorkspaceLoadError
         title="Invitation service unavailable"
@@ -109,7 +117,7 @@ export default async function InviteAcceptPage({
     )
   }
 
-  if (!invite) {
+  if (!preIdentity.invite) {
     return (
       <InviteShell
         title="Invite unavailable"
@@ -159,7 +167,10 @@ export default async function InviteAcceptPage({
     )
   }
 
-  const emailMatches = verifiedClerkEmailMatches(signedInEmails, invite.email)
+  const emailMatches = verifiedClerkEmailMatches(
+    signedInEmails,
+    preIdentity.invite.email
+  )
 
   // Do not reveal organization name, role, or invited email until the signed-in
   // account matches the invite target.
@@ -188,6 +199,40 @@ export default async function InviteAcceptPage({
     )
   }
 
+  // Fresh read immediately before publish so revoke/accept/target-change during
+  // identity lookup cannot keep pre-identity organization labels on the page.
+  const postIdentity = await loadInviteAcceptRow(token)
+  if (!postIdentity.ok) {
+    return (
+      <WorkspaceLoadError
+        title="Invitation service unavailable"
+        description="Aether could not reach the invitation data plane. Retry in a moment — do not assume this invite was revoked."
+        homeHref="/app/settings"
+      />
+    )
+  }
+
+  const publish = decideInviteAcceptPublish({
+    verifiedEmails: signedInEmails,
+    freshInvite: postIdentity.invite,
+  })
+  if (publish.kind === "unavailable") {
+    return (
+      <InviteShell
+        title="Invite unavailable"
+        description="This invite link is invalid or has been revoked. Ask an organization admin to send a new invitation."
+      >
+        <Link
+          href="/app/settings"
+          className="inline-flex rounded-lg border border-white/[0.1] bg-white/[0.03] px-4 py-2 text-sm text-white/55 transition-colors hover:border-white/[0.16] hover:text-white/78"
+        >
+          Open settings
+        </Link>
+      </InviteShell>
+    )
+  }
+
+  const invite = publish.invite
   const expired = invite.expiresAt.getTime() <= new Date().getTime()
 
   return (
