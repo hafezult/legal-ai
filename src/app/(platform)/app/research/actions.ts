@@ -479,6 +479,49 @@ export async function runResearch(
   revalidatePath("/app/settings")
   revalidatePath("/app")
 
+  // Final locked publish reauth after audit/revalidation so a concurrent
+  // removal cannot receive generated/retrieved content after revoke.
+  try {
+    const publishAllowed = await prisma.$transaction(async (tx) =>
+      requireMatterPermissionLocked(tx, user.id, matterId, "read")
+    )
+    if (!publishAllowed.ok) {
+      return redactResearchOnRevocation(
+        {
+          query,
+          matterId,
+          matterTitle: matter.title,
+          answer,
+          chunks,
+          authorities,
+          sessionId,
+          retrievalCount: chunks.length,
+          indexedChunks,
+          embeddingConfigured: true,
+          error: undefined,
+        },
+        RESEARCH_ACCESS_REVOKED_MESSAGE
+      )
+    }
+  } catch {
+    return redactResearchOnRevocation(
+      {
+        query,
+        matterId,
+        matterTitle: matter.title,
+        answer,
+        chunks,
+        authorities,
+        sessionId,
+        retrievalCount: chunks.length,
+        indexedChunks,
+        embeddingConfigured: true,
+        error: undefined,
+      },
+      RESEARCH_ACCESS_REVOKED_MESSAGE
+    )
+  }
+
   return {
     query,
     matterId,

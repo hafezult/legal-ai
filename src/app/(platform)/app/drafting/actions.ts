@@ -493,6 +493,51 @@ export async function generateDraft(
   revalidatePath("/app/settings")
   revalidatePath("/app")
 
+  // Final locked publish reauth after audit/revalidation so a concurrent
+  // removal cannot receive generated draft/source content after revoke.
+  try {
+    const publishAllowed = await prisma.$transaction(async (tx) =>
+      requireMatterPermissionLocked(tx, user.id, matterId, "read")
+    )
+    if (!publishAllowed.ok) {
+      return redactDraftOnRevocation(
+        {
+          draftId,
+          matterId,
+          matterTitle: matter.title,
+          title,
+          draftType,
+          instruction: instruction.trim(),
+          content,
+          chunks,
+          retrievalCount: chunks.length,
+          indexedChunks,
+          embeddingConfigured: true,
+          error: undefined,
+        },
+        DRAFT_ACCESS_REVOKED_MESSAGE
+      )
+    }
+  } catch {
+    return redactDraftOnRevocation(
+      {
+        draftId,
+        matterId,
+        matterTitle: matter.title,
+        title,
+        draftType,
+        instruction: instruction.trim(),
+        content,
+        chunks,
+        retrievalCount: chunks.length,
+        indexedChunks,
+        embeddingConfigured: true,
+        error: undefined,
+      },
+      DRAFT_ACCESS_REVOKED_MESSAGE
+    )
+  }
+
   return {
     draftId,
     matterId,
