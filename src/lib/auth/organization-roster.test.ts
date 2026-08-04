@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 
 import {
   selectActiveOrganizationId,
+  shouldPersistActiveOrganizationRepair,
   sortOrganizationSummaries,
   type OrganizationSummary,
 } from "./organization-roster.ts"
@@ -52,5 +53,21 @@ describe("selectActiveOrganizationId", () => {
       org({ id: "m2", name: "M2", role: "viewer" }),
     ]
     assert.equal(selectActiveOrganizationId(membersOnly, "gone"), "m1")
+  })
+})
+
+describe("shouldPersistActiveOrganizationRepair", () => {
+  it("persists when soft selection differs from the locked pointer", () => {
+    assert.equal(shouldPersistActiveOrganizationRepair(null, "owned"), true)
+    assert.equal(shouldPersistActiveOrganizationRepair("gone", "owned"), true)
+  })
+
+  it("skips when selection already matches the locked pointer", () => {
+    assert.equal(shouldPersistActiveOrganizationRepair("owned", "owned"), false)
+  })
+
+  it("skips when there is no selected workspace to persist", () => {
+    assert.equal(shouldPersistActiveOrganizationRepair("owned", null), false)
+    assert.equal(shouldPersistActiveOrganizationRepair(null, null), false)
   })
 })

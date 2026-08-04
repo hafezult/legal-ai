@@ -625,9 +625,10 @@ export async function addOrganizationMember(
     const tokenHash = hashInviteToken(token)
     const expiresAt = inviteExpiryDate()
     const inviteUrl = buildInviteAcceptUrl(token)
+    let lockedOrganizationName = "Aether workspace"
 
     try {
-      await prisma.$transaction(async (tx) => {
+      lockedOrganizationName = await prisma.$transaction(async (tx) => {
         // Serialize concurrent invites for the same org+email so two admins
         // cannot both mint tokens and email a link that the other immediately
         // invalidates via upsert.
@@ -640,6 +641,14 @@ export async function addOrganizationMember(
         // Re-check admin + assignable rank under org lock so a concurrent
         // demotion cannot mint invites after losing invite authority.
         await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+        const organization = await tx.organization.findUnique({
+          where: { id: organizationId },
+          select: { name: true },
+        })
+        if (!organization) {
+          throw new Error("ORG_MISSING")
+        }
+
         const actorMembership = await tx.organizationMember.findUnique({
           where: {
             organizationId_userId: { organizationId, userId: actor.user.id },
@@ -706,6 +715,10 @@ export async function addOrganizationMember(
             acceptedAt: null,
           },
         })
+
+        // Thread the locked org name into outbound email so a concurrent
+        // rename cannot change the workspace label after mint commits.
+        return organization.name
       })
     } catch (error) {
       if (error instanceof Error && error.message === "PENDING_INVITE_EXISTS") {
@@ -725,17 +738,15 @@ export async function addOrganizationMember(
           error: "Organization role changed concurrently. Refresh and try again.",
         }
       }
+      if (error instanceof Error && error.message === "ORG_MISSING") {
+        return { error: "Organization not found or access denied." }
+      }
       throw error
     }
 
-    const organization = await prisma.organization.findUnique({
-      where: { id: organizationId },
-      select: { name: true },
-    })
-
     const emailResult = await sendOrganizationInviteEmail({
       to: emailNormalized,
-      organizationName: organization?.name || "Aether workspace",
+      organizationName: lockedOrganizationName,
       inviteUrl,
       role,
       invitedByName: actor.user.name || actor.user.email,
@@ -747,9 +758,10 @@ export async function addOrganizationMember(
       entityType: "organization_invite",
       entityId: organizationId,
       organizationId,
-      summary: `Invited ${emailNormalized} as ${role}`,
+      summary: `Invited ${emailNormalized} as ${role} to “${lockedOrganizationName}”`,
       metadata: {
         role,
+        organizationName: lockedOrganizationName,
         expiresAt: expiresAt.toISOString(),
         emailSent: emailResult.sent,
         emailReason: emailResult.sent ? undefined : emailResult.reason,

@@ -8,6 +8,7 @@ import {
   buildDraftUserPrompt,
   groundedSystemRulesAppendix,
 } from "@/lib/ai/prompt-envelope"
+import { resolvePublishMatterTitle } from "@/lib/auth/matter-title-publish"
 import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   matterAccessWhere,
@@ -260,14 +261,29 @@ export async function generateDraft(
 
   // Locked reauth after unlocked indexedChunkCount (and before any early
   // matterTitle publish or corpus retrieval) so a mid-flight revoke cannot
-  // echo the matter label after access is lost.
+  // echo the matter label after access is lost. Re-read title under the same
+  // Matter lock so rename-stale pre-authorize labels are not published.
   try {
-    const postCount = await prisma.$transaction(async (tx) =>
-      requireMatterPermissionLocked(tx, user.id, matterId, "write")
-    )
+    const postCount = await prisma.$transaction(async (tx) => {
+      const permission = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matterId,
+        "write"
+      )
+      if (!permission.ok) return { ok: false as const }
+      const row = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { title: true },
+      })
+      const title = resolvePublishMatterTitle({ lockedTitle: row?.title })
+      if (title === null) return { ok: false as const }
+      return { ok: true as const, title }
+    })
     if (!postCount.ok) {
       return emptyResult(DRAFT_ACCESS_REVOKED_MESSAGE)
     }
+    matter = { id: matterId, title: postCount.title }
   } catch {
     return emptyResult("Data layer unreachable.")
   }
@@ -330,12 +346,26 @@ export async function generateDraft(
       console.error("[generateDraft] retrieval", err.message.slice(0, 240))
     }
     try {
-      const postRetrieve = await prisma.$transaction(async (tx) =>
-        requireMatterPermissionLocked(tx, user.id, matterId, "write")
-      )
+      const postRetrieve = await prisma.$transaction(async (tx) => {
+        const permission = await requireMatterPermissionLocked(
+          tx,
+          user.id,
+          matterId,
+          "write"
+        )
+        if (!permission.ok) return { ok: false as const }
+        const row = await tx.matter.findUnique({
+          where: { id: matterId },
+          select: { title: true },
+        })
+        const title = resolvePublishMatterTitle({ lockedTitle: row?.title })
+        if (title === null) return { ok: false as const }
+        return { ok: true as const, title }
+      })
       if (!postRetrieve.ok) {
         return emptyResult(DRAFT_ACCESS_REVOKED_MESSAGE)
       }
+      matter = { id: matterId, title: postRetrieve.title }
     } catch {
       return emptyResult("Data layer unreachable.")
     }
@@ -410,6 +440,17 @@ export async function generateDraft(
       }
       lockedReauthConfirmed = true
 
+      const lockedMatter = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { title: true },
+      })
+      const lockedTitle = resolvePublishMatterTitle({
+        lockedTitle: lockedMatter?.title,
+      })
+      if (lockedTitle === null) {
+        return { ok: false as const }
+      }
+
       const draft = await tx.draftDocument.create({
         data: {
           userId: user.id,
@@ -429,7 +470,11 @@ export async function generateDraft(
         data: { updatedAt: new Date() },
       })
 
-      return { ok: true as const, draftId: draft.id }
+      return {
+        ok: true as const,
+        draftId: draft.id,
+        matterTitle: lockedTitle,
+      }
     })
 
     if (!persisted.ok) {
@@ -454,13 +499,14 @@ export async function generateDraft(
       )
     }
     draftId = persisted.draftId
+    matter = { id: matterId, title: persisted.matterTitle }
     await recordAuditEvent({
       userId: user.id,
       action: "draft.generate",
       entityType: "draft_document",
       entityId: persisted.draftId,
       matterId,
-      summary: `Generated ${draftType} draft on “${matter.title}”`,
+      summary: `Generated ${draftType} draft on “${persisted.matterTitle}”`,
       metadata: { draftType, chunkCount: chunks.length },
     })
   } catch {
@@ -495,10 +541,24 @@ export async function generateDraft(
 
   // Final locked publish reauth after audit/revalidation so a concurrent
   // removal cannot receive generated draft/source content after revoke.
+  // Refresh the matter title under the same lock for response labels.
   try {
-    const publishAllowed = await prisma.$transaction(async (tx) =>
-      requireMatterPermissionLocked(tx, user.id, matterId, "read")
-    )
+    const publishAllowed = await prisma.$transaction(async (tx) => {
+      const permission = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matterId,
+        "read"
+      )
+      if (!permission.ok) return { ok: false as const }
+      const row = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { title: true },
+      })
+      const publishTitle = resolvePublishMatterTitle({ lockedTitle: row?.title })
+      if (publishTitle === null) return { ok: false as const }
+      return { ok: true as const, title: publishTitle }
+    })
     if (!publishAllowed.ok) {
       return redactDraftOnRevocation(
         {
@@ -518,6 +578,7 @@ export async function generateDraft(
         DRAFT_ACCESS_REVOKED_MESSAGE
       )
     }
+    matter = { id: matterId, title: publishAllowed.title }
   } catch {
     return redactDraftOnRevocation(
       {

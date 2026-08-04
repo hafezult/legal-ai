@@ -39,3 +39,15 @@ export function selectActiveOrganizationId(
     null
   )
 }
+
+/**
+ * Soft shell/settings selection must persist before serialize when it differs
+ * from the locked User.activeOrganizationId. Otherwise list pages that require
+ * a hard pointer match can withhold props the shell still advertises.
+ */
+export function shouldPersistActiveOrganizationRepair(
+  preferredActiveId: string | null | undefined,
+  selectedActiveId: string | null
+): selectedActiveId is string {
+  return Boolean(selectedActiveId && selectedActiveId !== preferredActiveId)
+}

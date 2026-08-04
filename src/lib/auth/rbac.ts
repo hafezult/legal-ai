@@ -21,6 +21,7 @@ import { decideActiveOrganizationListPublish } from "@/lib/auth/active-org-list-
 import { orgDeleteConfirmationMatches } from "@/lib/auth/org-delete-confirm"
 import {
   selectActiveOrganizationId,
+  shouldPersistActiveOrganizationRepair,
   sortOrganizationSummaries,
   type OrganizationSummary,
 } from "@/lib/auth/organization-roster"
@@ -50,6 +51,7 @@ export type { OrgPermission, OrgRole }
 
 export {
   selectActiveOrganizationId,
+  shouldPersistActiveOrganizationRepair,
   sortOrganizationSummaries,
   type OrganizationSummary,
 } from "@/lib/auth/organization-roster"
@@ -414,12 +416,28 @@ async function verifyUserOrganizationsInTx(
   })
 
   const organizations = sortOrganizationSummaries(verified)
+  const lockedPointer = user?.activeOrganizationId ?? null
+  const activeOrganizationId = selectActiveOrganizationId(
+    organizations,
+    lockedPointer
+  )
+
+  // Persist soft fallback under the User FOR UPDATE already held above so
+  // shell/Settings chrome and list hard-pointer gates agree on the same
+  // activeOrganizationId (same repair contract as getActiveOrganization).
+  if (
+    user &&
+    shouldPersistActiveOrganizationRepair(lockedPointer, activeOrganizationId)
+  ) {
+    await tx.user.update({
+      where: { id: userId },
+      data: { activeOrganizationId },
+    })
+  }
+
   return {
     organizations,
-    activeOrganizationId: selectActiveOrganizationId(
-      organizations,
-      user?.activeOrganizationId
-    ),
+    activeOrganizationId,
   }
 }
 

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
 import { requireClerkId } from "@/lib/auth/require-actor"
+import { resolvePublishMatterTitle } from "@/lib/auth/matter-title-publish"
 import {
   matterAccessWhere,
   requireMatterPermissionLocked,
@@ -228,14 +229,29 @@ export async function runResearch(
 
   // Locked reauth after unlocked indexedChunkCount (and before any early
   // matterTitle publish or corpus retrieval) so a mid-flight revoke cannot
-  // echo the matter label after access is lost.
+  // echo the matter label after access is lost. Re-read title under the same
+  // Matter lock so rename-stale pre-authorize labels are not published.
   try {
-    const postCount = await prisma.$transaction(async (tx) =>
-      requireMatterPermissionLocked(tx, user.id, matterId, "write")
-    )
+    const postCount = await prisma.$transaction(async (tx) => {
+      const permission = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matterId,
+        "write"
+      )
+      if (!permission.ok) return { ok: false as const }
+      const row = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { title: true },
+      })
+      const title = resolvePublishMatterTitle({ lockedTitle: row?.title })
+      if (title === null) return { ok: false as const }
+      return { ok: true as const, title }
+    })
     if (!postCount.ok) {
       return emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE)
     }
+    matter = { id: matterId, title: postCount.title }
   } catch {
     return emptyResult("Data layer unreachable.")
   }
@@ -296,12 +312,26 @@ export async function runResearch(
       console.error("[runResearch] retrieval", err.message.slice(0, 240))
     }
     try {
-      const postRetrieve = await prisma.$transaction(async (tx) =>
-        requireMatterPermissionLocked(tx, user.id, matterId, "write")
-      )
+      const postRetrieve = await prisma.$transaction(async (tx) => {
+        const permission = await requireMatterPermissionLocked(
+          tx,
+          user.id,
+          matterId,
+          "write"
+        )
+        if (!permission.ok) return { ok: false as const }
+        const row = await tx.matter.findUnique({
+          where: { id: matterId },
+          select: { title: true },
+        })
+        const title = resolvePublishMatterTitle({ lockedTitle: row?.title })
+        if (title === null) return { ok: false as const }
+        return { ok: true as const, title }
+      })
       if (!postRetrieve.ok) {
         return emptyResult(RESEARCH_ACCESS_REVOKED_MESSAGE)
       }
+      matter = { id: matterId, title: postRetrieve.title }
     } catch {
       return emptyResult("Data layer unreachable.")
     }
@@ -383,6 +413,17 @@ export async function runResearch(
       }
       lockedReauthConfirmed = true
 
+      const lockedMatter = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { title: true },
+      })
+      const lockedTitle = resolvePublishMatterTitle({
+        lockedTitle: lockedMatter?.title,
+      })
+      if (lockedTitle === null) {
+        return { ok: false as const }
+      }
+
       const session = await tx.researchSession.create({
         data: {
           userId: user.id,
@@ -418,7 +459,11 @@ export async function runResearch(
         })
       }
 
-      return { ok: true as const, sessionId: session.id }
+      return {
+        ok: true as const,
+        sessionId: session.id,
+        matterTitle: lockedTitle,
+      }
     })
 
     if (!persisted.ok) {
@@ -442,13 +487,14 @@ export async function runResearch(
       )
     }
     sessionId = persisted.sessionId
+    matter = { id: matterId, title: persisted.matterTitle }
     await recordAuditEvent({
       userId: user.id,
       action: "research.run",
       entityType: "research_session",
       entityId: persisted.sessionId,
       matterId,
-      summary: `Ran research query on “${matter.title}”`,
+      summary: `Ran research query on “${persisted.matterTitle}”`,
       metadata: { chunkCount: chunks.length, queryLength: query.length },
     })
   } catch {
@@ -481,10 +527,24 @@ export async function runResearch(
 
   // Final locked publish reauth after audit/revalidation so a concurrent
   // removal cannot receive generated/retrieved content after revoke.
+  // Refresh the matter title under the same lock for response labels.
   try {
-    const publishAllowed = await prisma.$transaction(async (tx) =>
-      requireMatterPermissionLocked(tx, user.id, matterId, "read")
-    )
+    const publishAllowed = await prisma.$transaction(async (tx) => {
+      const permission = await requireMatterPermissionLocked(
+        tx,
+        user.id,
+        matterId,
+        "read"
+      )
+      if (!permission.ok) return { ok: false as const }
+      const row = await tx.matter.findUnique({
+        where: { id: matterId },
+        select: { title: true },
+      })
+      const title = resolvePublishMatterTitle({ lockedTitle: row?.title })
+      if (title === null) return { ok: false as const }
+      return { ok: true as const, title }
+    })
     if (!publishAllowed.ok) {
       return redactResearchOnRevocation(
         {
@@ -503,6 +563,7 @@ export async function runResearch(
         RESEARCH_ACCESS_REVOKED_MESSAGE
       )
     }
+    matter = { id: matterId, title: publishAllowed.title }
   } catch {
     return redactResearchOnRevocation(
       {
