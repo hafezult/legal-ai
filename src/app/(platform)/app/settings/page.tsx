@@ -5,13 +5,13 @@ import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   getActiveOrganization,
   isOrgRole,
-  listVerifiedUserOrganizationsWithActive,
-  loadVerifiedOrganizationAccessDetail,
+  loadVerifiedSettingsWorkspace,
   requireOrganizationMembershipLocked,
   roleAtLeast,
   roleHasPermission,
   roleStrictlyAbove,
 } from "@/lib/auth/rbac"
+import { decideSettingsAccessPublish } from "@/lib/auth/settings-workspace"
 import { isAppUrlConfigured } from "@/lib/app-url"
 import { getHealthReport, type HealthReport } from "@/lib/health"
 import { isIndexingSecretStrong } from "@/lib/indexing/secret"
@@ -264,100 +264,83 @@ export default async function SettingsPage() {
         },
       })
 
-      if (active) {
-        // Final transactional switcher roster first, then a locked access-detail
-        // read for the active org. Member/invite rows must not come from the
-        // earlier unlocked gather — concurrent revoke/demotion/removal can
-        // otherwise leave stale emails and roles on the page.
-        const verified = await listVerifiedUserOrganizationsWithActive(user.id)
-        organizations = verified.organizations.map((org) => ({
-          id: org.id,
-          name: org.name,
-          role: org.role,
-        }))
-        const finalOrg = verified.organizations.find(
-          (org) => org.id === active.id
-        )
-        // Only publish detail when this org is still the verified active workspace.
-        if (
-          !finalOrg ||
-          verified.activeOrganizationId !== active.id
-        ) {
-          organization = null
-          health = null
-          canManageMembers = false
-          canViewHealthDetails = false
-          activity = []
-        } else {
-          const access = await loadVerifiedOrganizationAccessDetail(
-            user.id,
-            active.id
-          )
-          if (!access.ok) {
-            organization = null
-            health = null
-            canManageMembers = false
-            canViewHealthDetails = false
-            activity = []
-          } else {
-            activeRole = access.role
-            canManageMembers = roleHasPermission(activeRole, "manage_members")
-            canViewHealthDetails = roleAtLeast(activeRole, "admin")
-            health = canViewHealthDetails ? pendingHealth : null
-            if (!canManageMembers) {
-              activity = activity.filter(
-                (event) =>
-                  !(memberAdminActions as readonly string[]).includes(
-                    event.action
-                  )
-              )
-            }
+      // Single locked snapshot for switcher roster + active-org access detail.
+      // A second await between roster and members/invites previously let
+      // concurrent removals leave stale non-active org rows (and rename drift
+      // between switcher label and panel name) on the page.
+      const workspace = await loadVerifiedSettingsWorkspace(user.id)
+      organizations = workspace.organizations.map((org) => ({
+        id: org.id,
+        name: org.name,
+        role: org.role,
+      }))
 
-            organization = {
-              id: finalOrg.id,
-              name: access.name,
-              role: activeRole,
-              members: access.members.map((member) => {
-                const isSelf = member.userId === user.id
-                return {
-                  id: member.id,
-                  role: member.role,
-                  userId: member.userId,
-                  // Member emails are admin/owner-only; others see names/roles (+ self).
-                  email:
-                    canManageMembers || isSelf ? member.user.email : "",
-                  name: member.user.name,
-                  isSelf,
-                }
-              }),
-              // Raw invite tokens are never stored or serialized; admins mint a
-              // fresh link via refreshOrganizationInviteLink when copying.
-              invites: canManageMembers
-                ? access.invites
-                    .filter(
-                      (invite) =>
-                        isOrgRole(invite.role) &&
-                        roleStrictlyAbove(activeRole, invite.role)
-                    )
-                    .map((invite) => ({
-                      id: invite.id,
-                      email: invite.email,
-                      role: invite.role,
-                      expiresAt: invite.expiresAt.toISOString(),
-                    }))
-                : [],
-            }
-          }
+      const access = workspace.access
+      const activeId = workspace.activeOrganizationId
+      const accessOk = Boolean(access?.ok)
+      // Provisional active-org gather (health/activity) must still bind to the
+      // verified active workspace before those admin payloads publish.
+      const provisionalMatches =
+        !active || (activeId !== null && activeId === active.id)
+      const publishAccess =
+        decideSettingsAccessPublish({
+          activeOrganizationId: activeId,
+          accessOk,
+        }) && provisionalMatches
+
+      if (!publishAccess || !access || !access.ok || !activeId) {
+        organization = null
+        health = null
+        canManageMembers = false
+        canViewHealthDetails = false
+        if (active) {
+          activity = []
         }
       } else {
-        health = null
-        // Still publish a verified switcher when there is no active org detail.
-        const verified = await listVerifiedUserOrganizationsWithActive(user.id)
-        organizations = verified.organizations.map((org) => ({
-          id: org.id,
-          name: org.name,
-          role: org.role,
-        }))
+        activeRole = access.role
+        canManageMembers = roleHasPermission(activeRole, "manage_members")
+        canViewHealthDetails = roleAtLeast(activeRole, "admin")
+        health = canViewHealthDetails ? pendingHealth : null
+        if (!canManageMembers) {
+          activity = activity.filter(
+            (event) =>
+              !(memberAdminActions as readonly string[]).includes(event.action)
+          )
+        }
+
+        organization = {
+          id: activeId,
+          name: access.name,
+          role: activeRole,
+          members: access.members.map((member) => {
+            const isSelf = member.userId === user.id
+            return {
+              id: member.id,
+              role: member.role,
+              userId: member.userId,
+              // Member emails are admin/owner-only; others see names/roles (+ self).
+              email: canManageMembers || isSelf ? member.user.email : "",
+              name: member.user.name,
+              isSelf,
+            }
+          }),
+          // Raw invite tokens are never stored or serialized; admins mint a
+          // fresh link via refreshOrganizationInviteLink when copying.
+          invites: canManageMembers
+            ? access.invites
+                .filter(
+                  (invite) =>
+                    isOrgRole(invite.role) &&
+                    roleStrictlyAbove(activeRole, invite.role)
+                )
+                .map((invite) => ({
+                  id: invite.id,
+                  email: invite.email,
+                  role: invite.role,
+                  expiresAt: invite.expiresAt.toISOString(),
+                }))
+            : [],
+        }
       }
     }
   } catch {

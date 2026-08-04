@@ -17,6 +17,7 @@ import {
   lockedMatterRoleAllows,
   resolveMatterRoleFromLockedMembership,
 } from "@/lib/auth/matter-permission-lock"
+import { orgDeleteConfirmationMatches } from "@/lib/auth/org-delete-confirm"
 import {
   selectActiveOrganizationId,
   sortOrganizationSummaries,
@@ -364,10 +365,66 @@ export async function listUserOrganizations(
 }
 
 /**
- * Final switcher roster + active workspace under one transaction.
+ * Shared switcher roster + active workspace under an open transaction.
  *
  * Locks each Organization in sorted id order, then the actor's member row,
  * reads names under those locks, then locks User for activeOrganizationId.
+ */
+async function verifyUserOrganizationsInTx(
+  tx: Prisma.TransactionClient,
+  userId: string
+): Promise<{
+  organizations: OrganizationSummary[]
+  activeOrganizationId: string | null
+}> {
+  const membershipRows = await tx.organizationMember.findMany({
+    where: { userId },
+    select: { organizationId: true },
+  })
+  const orgIds = [
+    ...new Set(membershipRows.map((row) => row.organizationId)),
+  ].sort()
+
+  const verified: OrganizationSummary[] = []
+  for (const organizationId of orgIds) {
+    const membership = await requireOrganizationMembershipLocked(
+      tx,
+      userId,
+      organizationId
+    )
+    if (!membership.ok) continue
+
+    const organization = await tx.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, name: true, slug: true },
+    })
+    if (!organization) continue
+
+    verified.push({
+      ...organization,
+      role: membership.role,
+    })
+  }
+
+  await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+  const user = await tx.user.findUnique({
+    where: { id: userId },
+    select: { activeOrganizationId: true },
+  })
+
+  const organizations = sortOrganizationSummaries(verified)
+  return {
+    organizations,
+    activeOrganizationId: selectActiveOrganizationId(
+      organizations,
+      user?.activeOrganizationId
+    ),
+  }
+}
+
+/**
+ * Final switcher roster + active workspace under one transaction.
+ *
  * Callers must not await further work before serializing the returned roster
  * so concurrent removals cannot leave stale org names/roles in the shell or
  * Settings switcher after a non-final per-row check.
@@ -379,51 +436,9 @@ export async function listVerifiedUserOrganizationsWithActive(
   activeOrganizationId: string | null
 }> {
   try {
-    return await prisma.$transaction(async (tx) => {
-      const membershipRows = await tx.organizationMember.findMany({
-        where: { userId },
-        select: { organizationId: true },
-      })
-      const orgIds = [
-        ...new Set(membershipRows.map((row) => row.organizationId)),
-      ].sort()
-
-      const verified: OrganizationSummary[] = []
-      for (const organizationId of orgIds) {
-        const membership = await requireOrganizationMembershipLocked(
-          tx,
-          userId,
-          organizationId
-        )
-        if (!membership.ok) continue
-
-        const organization = await tx.organization.findUnique({
-          where: { id: organizationId },
-          select: { id: true, name: true, slug: true },
-        })
-        if (!organization) continue
-
-        verified.push({
-          ...organization,
-          role: membership.role,
-        })
-      }
-
-      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
-      const user = await tx.user.findUnique({
-        where: { id: userId },
-        select: { activeOrganizationId: true },
-      })
-
-      const organizations = sortOrganizationSummaries(verified)
-      return {
-        organizations,
-        activeOrganizationId: selectActiveOrganizationId(
-          organizations,
-          user?.activeOrganizationId
-        ),
-      }
-    })
+    return await prisma.$transaction(async (tx) =>
+      verifyUserOrganizationsInTx(tx, userId)
+    )
   } catch {
     return { organizations: [], activeOrganizationId: null }
   }
@@ -443,12 +458,79 @@ export type OrganizationAccessInviteRow = {
   expiresAt: Date
 }
 
+async function loadOrganizationAccessDetailInTx(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  organizationId: string
+): Promise<
+  | {
+      ok: true
+      role: OrgRole
+      name: string
+      members: OrganizationAccessMemberRow[]
+      invites: OrganizationAccessInviteRow[]
+    }
+  | { ok: false }
+> {
+  const membership = await requireOrganizationMembershipLocked(
+    tx,
+    userId,
+    organizationId
+  )
+  if (!membership.ok) return { ok: false as const }
+
+  const organization = await tx.organization.findUnique({
+    where: { id: organizationId },
+    select: { name: true },
+  })
+  if (!organization) return { ok: false as const }
+
+  const members = await tx.organizationMember.findMany({
+    where: { organizationId },
+    orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+    take: 200,
+    select: {
+      id: true,
+      role: true,
+      userId: true,
+      user: { select: { email: true, name: true } },
+    },
+  })
+
+  const canManage = roleHasPermission(membership.role, "manage_members")
+  const invites = canManage
+    ? await tx.organizationInvite.findMany({
+        where: {
+          organizationId,
+          acceptedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          expiresAt: true,
+        },
+      })
+    : []
+
+  return {
+    ok: true as const,
+    role: membership.role,
+    name: organization.name,
+    members,
+    invites,
+  }
+}
+
 /**
  * Final locked Settings access roster for one organization.
  *
  * Locks Organization then the actor membership, then reads member/invite rows
- * under those locks. Call after switcher verification and serialize from this
- * snapshot only — never from an earlier unlocked gather.
+ * under those locks. Prefer {@link loadVerifiedSettingsWorkspace} when the
+ * switcher roster must not drift across a second await.
  */
 export async function loadVerifiedOrganizationAccessDetail(
   userId: string,
@@ -464,61 +546,83 @@ export async function loadVerifiedOrganizationAccessDetail(
   | { ok: false }
 > {
   try {
+    return await prisma.$transaction(async (tx) =>
+      loadOrganizationAccessDetailInTx(tx, userId, organizationId)
+    )
+  } catch {
+    return { ok: false }
+  }
+}
+
+export type SettingsWorkspaceAccess =
+  | {
+      ok: true
+      role: OrgRole
+      name: string
+      members: OrganizationAccessMemberRow[]
+      invites: OrganizationAccessInviteRow[]
+    }
+  | { ok: false }
+
+/**
+ * Final Settings switcher roster + active-org access detail under one
+ * transaction.
+ *
+ * Closing the prior two-step pattern (roster txn, then access-detail txn)
+ * prevents non-active org rows from lingering after concurrent removal and
+ * keeps the active switcher label aligned with the locked panel name.
+ * Serialize from this snapshot with no further awaits.
+ */
+export async function loadVerifiedSettingsWorkspace(userId: string): Promise<{
+  organizations: OrganizationSummary[]
+  activeOrganizationId: string | null
+  access: SettingsWorkspaceAccess | null
+}> {
+  try {
     return await prisma.$transaction(async (tx) => {
-      const membership = await requireOrganizationMembershipLocked(
+      const verified = await verifyUserOrganizationsInTx(tx, userId)
+      const activeOrganizationId = verified.activeOrganizationId
+      if (!activeOrganizationId) {
+        return {
+          organizations: verified.organizations,
+          activeOrganizationId: null,
+          access: null,
+        }
+      }
+
+      const access = await loadOrganizationAccessDetailInTx(
         tx,
         userId,
-        organizationId
+        activeOrganizationId
       )
-      if (!membership.ok) return { ok: false as const }
+      if (!access.ok) {
+        return {
+          organizations: verified.organizations,
+          activeOrganizationId,
+          access,
+        }
+      }
 
-      const organization = await tx.organization.findUnique({
-        where: { id: organizationId },
-        select: { name: true },
-      })
-      if (!organization) return { ok: false as const }
-
-      const members = await tx.organizationMember.findMany({
-        where: { organizationId },
-        orderBy: [{ role: "asc" }, { createdAt: "asc" }],
-        take: 200,
-        select: {
-          id: true,
-          role: true,
-          userId: true,
-          user: { select: { email: true, name: true } },
-        },
-      })
-
-      const canManage = roleHasPermission(membership.role, "manage_members")
-      const invites = canManage
-        ? await tx.organizationInvite.findMany({
-            where: {
-              organizationId,
-              acceptedAt: null,
-              expiresAt: { gt: new Date() },
-            },
-            orderBy: { createdAt: "desc" },
-            take: 100,
-            select: {
-              id: true,
-              email: true,
-              role: true,
-              expiresAt: true,
-            },
-          })
-        : []
+      // Keep switcher label/role for the active org bound to the same locked
+      // access snapshot published into the admin panel.
+      const organizations = verified.organizations.map((org) =>
+        org.id === activeOrganizationId
+          ? { ...org, name: access.name, role: access.role }
+          : org
+      )
 
       return {
-        ok: true as const,
-        role: membership.role,
-        name: organization.name,
-        members,
-        invites,
+        organizations,
+        activeOrganizationId,
+        access,
       }
     })
   } catch {
-    return { ok: false }
+    return {
+      organizations: [],
+      activeOrganizationId: null,
+      access: null,
+    }
   }
 }
 
@@ -1507,7 +1611,8 @@ export async function transferOrganizationOwnership(
  * Before Organization delete SetNulls Matter.organizationId, every org matter
  * is reassigned to the deleting owner so former creators cannot regain access
  * through the legacy personal-matter path (`userId` + `organizationId: null`).
- * Requires confirmationName to match the organization name.
+ * Requires confirmationName to match the organization name under Organization
+ * FOR UPDATE — a pre-lock name match alone is not authoritative.
  */
 export async function deleteOwnedOrganization(
   actorUserId: string,
@@ -1537,16 +1642,18 @@ export async function deleteOwnedOrganization(
     return { ok: false, error: "Only the organization owner can delete it." }
   }
 
-  const organizationName = membership.organization.name
-  const confirmed = confirmationName.replace(/\s+/g, " ").trim()
-  if (!confirmed || confirmed.toLowerCase() !== organizationName.toLowerCase()) {
+  // Fast-fail UX against the unlocked probe; the locked check below is the
+  // authoritative gate against concurrent rename.
+  const probedName = membership.organization.name
+  if (!orgDeleteConfirmationMatches(confirmationName, probedName)) {
     return {
       ok: false,
-      error: `Type “${organizationName}” exactly to confirm deletion.`,
+      error: `Type “${probedName}” exactly to confirm deletion.`,
     }
   }
 
-  const matterCount = membership.organization._count.matters
+  let organizationName = probedName
+  let matterCount = membership.organization._count.matters
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -1554,6 +1661,23 @@ export async function deleteOwnedOrganization(
       // workspace" checks so delete cannot race a transfer mid-flight.
       await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
       await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actorUserId} FOR UPDATE`
+
+      const lockedOrg = await tx.organization.findUnique({
+        where: { id: organizationId },
+        select: {
+          name: true,
+          _count: { select: { matters: true } },
+        },
+      })
+      if (!lockedOrg) {
+        throw new Error("CONCURRENT_OWNERSHIP_CHANGE")
+      }
+      // Publish audit/toast names from the locked snapshot only.
+      organizationName = lockedOrg.name
+      matterCount = lockedOrg._count.matters
+      if (!orgDeleteConfirmationMatches(confirmationName, organizationName)) {
+        throw new Error("CONFIRMATION_MISMATCH")
+      }
 
       const ownedCount = await tx.organizationMember.count({
         where: { userId: actorUserId, role: "owner" },
@@ -1615,6 +1739,12 @@ export async function deleteOwnedOrganization(
       return {
         ok: false,
         error: "Ownership changed concurrently. Refresh and try again.",
+      }
+    }
+    if (error instanceof Error && error.message === "CONFIRMATION_MISMATCH") {
+      return {
+        ok: false,
+        error: `Type “${organizationName}” exactly to confirm deletion.`,
       }
     }
     throw error
