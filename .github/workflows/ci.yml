@@ -40,7 +40,7 @@ jobs:
       OPENAI_API_KEY: ""
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       # Intentionally denylisted prefix — CI must not use a production-strong secret.
-      INDEXING_SECRET: aether-ci-validate-6fe6-8d35f2acc66c89dbc2131668e88687fb2625875e!
+      INDEXING_SECRET: aether-ci-validate-2999-8ac2c726f0589d00121ea6d2bc6e96b04ab3ed5b!
 
     steps:
       - name: Check out repository
