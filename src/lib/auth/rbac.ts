@@ -372,6 +372,8 @@ export async function listUserOrganizations(
  *
  * Locks each Organization in sorted id order, then the actor's member row,
  * reads names under those locks, then locks User for activeOrganizationId.
+ * Soft fallbacks that differ from the locked pointer are persisted before
+ * return so shell/Settings chrome and list hard-pointer gates stay aligned.
  */
 async function verifyUserOrganizationsInTx(
   tx: Prisma.TransactionClient,
