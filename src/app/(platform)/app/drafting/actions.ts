@@ -670,11 +670,16 @@ export async function deleteDraft(draftId: string): Promise<DraftDeleteState> {
         id: draftId,
         OR: [{ userId: user.id }, { matter: matterAccessWhere(user.id) }],
       },
-      select: { id: true, matterId: true, title: true, userId: true },
+      // Omit title — draft titles embed instruction excerpts and must not land
+      // in org-wide Settings activity visible without matter lock.
+      select: { id: true, matterId: true, draftType: true, userId: true },
     })
     if (!draft) return { error: "Draft not found or access denied." }
 
     matterId = draft.matterId
+    const draftTypeLabel = isDraftType(draft.draftType)
+      ? DRAFT_TYPE_LABELS[draft.draftType]
+      : "draft"
     await prisma.$transaction(async (tx) => {
       const permission = await requireWorkProductDeleteLocked(
         tx,
@@ -703,7 +708,8 @@ export async function deleteDraft(draftId: string): Promise<DraftDeleteState> {
       entityType: "draft_document",
       entityId: draft.id,
       matterId: draft.matterId,
-      summary: `Deleted draft “${draft.title.slice(0, 80)}”`,
+      summary: `Deleted ${draftTypeLabel} draft`,
+      metadata: { draftType: draft.draftType },
     })
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("PERMISSION:")) {

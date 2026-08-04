@@ -692,7 +692,9 @@ export async function createConversation(
       entityType: "conversation",
       entityId: conversation.id,
       matterId: conversation.matterId,
-      summary: `Opened conversation “${normalizedTitle}”`,
+      // Omit title — research-spawned threads embed the query, and org-wide
+      // Settings activity is visible without a matter lock.
+      summary: "Opened conversation",
     })
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
@@ -741,7 +743,8 @@ export async function deleteConversation(
         id: conversationId,
         matter: matterAccessWhere(user.id),
       },
-      select: { id: true, matterId: true, title: true, createdByUserId: true },
+      // Omit title — research-spawned threads embed the query in the title.
+      select: { id: true, matterId: true, createdByUserId: true },
     })
     if (!conversation) return { error: "Conversation not found or access denied." }
 
@@ -774,7 +777,7 @@ export async function deleteConversation(
       entityType: "conversation",
       entityId: conversation.id,
       matterId: conversation.matterId,
-      summary: `Deleted conversation “${conversation.title}”`,
+      summary: "Deleted conversation",
     })
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
@@ -851,6 +854,19 @@ export async function createConversationMessage(
       )
       if (!permission.ok) {
         throw new Error(`PERMISSION:${permission.error}`)
+      }
+
+      // Re-check under the matter lock so a concurrent delete cannot create an
+      // orphaned note against a vanished conversation id.
+      const stillThere = await tx.conversation.findFirst({
+        where: {
+          id: conversation.id,
+          matterId: conversation.matterId,
+        },
+        select: { id: true },
+      })
+      if (!stillThere) {
+        throw new Error("PERMISSION:Conversation not found or access denied.")
       }
 
       const created = await tx.conversationMessage.create({
