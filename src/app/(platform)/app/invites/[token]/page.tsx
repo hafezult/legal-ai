@@ -213,7 +213,10 @@ export default async function InviteAcceptPage({
   }
 
   const publish = decideInviteAcceptPublish({
-    verifiedEmails: signedInEmails,
+    freshEmailMatches: verifiedClerkEmailMatches(
+      signedInEmails,
+      postIdentity.invite?.email
+    ),
     freshInvite: postIdentity.invite,
   })
   if (publish.kind === "unavailable") {

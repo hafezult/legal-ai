@@ -1,5 +1,3 @@
-import { verifiedClerkEmailMatches } from "./clerk-email.ts"
-
 /**
  * Invite metadata safe to show on the accept page after the signed-in account
  * matches the invite target. Callers must load this from a fresh DB read that
@@ -24,17 +22,15 @@ export type InviteAcceptPublishDecision =
  * invite row may supply organization name / role / expiry. A concurrent
  * revoke, accept, or email-target change during identity lookup must not keep
  * stale labels on the page.
+ *
+ * `freshEmailMatches` must be computed from the fresh row's email (not a
+ * pre-identity snapshot) via `verifiedClerkEmailMatches`.
  */
 export function decideInviteAcceptPublish(args: {
-  verifiedEmails: readonly string[]
+  freshEmailMatches: boolean
   freshInvite: InviteAcceptPublishRow | null
 }): InviteAcceptPublishDecision {
-  if (!args.freshInvite) return { kind: "unavailable" }
-  if (
-    !verifiedClerkEmailMatches(args.verifiedEmails, args.freshInvite.email)
-  ) {
-    // Target rotated away from this account — do not reveal the new target or
-    // keep the pre-identity organization label.
+  if (!args.freshInvite || !args.freshEmailMatches) {
     return { kind: "unavailable" }
   }
   return { kind: "publish", invite: args.freshInvite }

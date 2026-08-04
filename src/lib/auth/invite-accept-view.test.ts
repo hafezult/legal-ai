@@ -14,7 +14,7 @@ const freshInvite = {
 describe("decideInviteAcceptPublish", () => {
   it("publishes only when a fresh invite still matches verified emails", () => {
     const decision = decideInviteAcceptPublish({
-      verifiedEmails: ["counsel@example.com"],
+      freshEmailMatches: true,
       freshInvite,
     })
     assert.deepEqual(decision, { kind: "publish", invite: freshInvite })
@@ -22,15 +22,15 @@ describe("decideInviteAcceptPublish", () => {
 
   it("hides metadata when the invite disappeared after identity lookup", () => {
     const decision = decideInviteAcceptPublish({
-      verifiedEmails: ["counsel@example.com"],
+      freshEmailMatches: true,
       freshInvite: null,
     })
     assert.deepEqual(decision, { kind: "unavailable" })
   })
 
-  it("hides metadata when the invite target rotated to another email", () => {
+  it("hides metadata when the invite target no longer matches the actor", () => {
     const decision = decideInviteAcceptPublish({
-      verifiedEmails: ["counsel@example.com"],
+      freshEmailMatches: false,
       freshInvite: {
         ...freshInvite,
         email: "other@example.com",
