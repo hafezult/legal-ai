@@ -18,6 +18,11 @@ import {
   resolveMatterRoleFromLockedMembership,
 } from "@/lib/auth/matter-permission-lock"
 import {
+  selectActiveOrganizationId,
+  sortOrganizationSummaries,
+  type OrganizationSummary,
+} from "@/lib/auth/organization-roster"
+import {
   ORG_ROLES,
   inviterCanAuthorizeInviteRole,
   isOrgRole,
@@ -40,6 +45,12 @@ export {
   roleStrictlyAbove,
 }
 export type { OrgPermission, OrgRole }
+
+export {
+  selectActiveOrganizationId,
+  sortOrganizationSummaries,
+  type OrganizationSummary,
+} from "@/lib/auth/organization-roster"
 
 export { matterAccessWhere, matterAccessWhereForActiveOrg }
 
@@ -323,13 +334,6 @@ export async function requireWorkProductDeleteLocked(
   return requireMatterPermissionLocked(tx, userId, matterId, "delete")
 }
 
-export type OrganizationSummary = {
-  id: string
-  name: string
-  slug: string
-  role: OrgRole
-}
-
 /** All organizations the user belongs to, owners first then join order. */
 export async function listUserOrganizations(
   userId: string
@@ -356,11 +360,73 @@ export async function listUserOrganizations(
       role: membership.role as OrgRole,
     }))
 
-  return summaries.sort((a, b) => {
-    if (a.role === "owner" && b.role !== "owner") return -1
-    if (b.role === "owner" && a.role !== "owner") return 1
-    return a.name.localeCompare(b.name)
-  })
+  return sortOrganizationSummaries(summaries)
+}
+
+/**
+ * Final switcher roster + active workspace under one transaction.
+ *
+ * Locks each Organization in sorted id order, then the actor's member row,
+ * reads names under those locks, then locks User for activeOrganizationId.
+ * Callers must not await further work before serializing the returned roster
+ * so concurrent removals cannot leave stale org names/roles in the shell or
+ * Settings switcher after a non-final per-row check.
+ */
+export async function listVerifiedUserOrganizationsWithActive(
+  userId: string
+): Promise<{
+  organizations: OrganizationSummary[]
+  activeOrganizationId: string | null
+}> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const membershipRows = await tx.organizationMember.findMany({
+        where: { userId },
+        select: { organizationId: true },
+      })
+      const orgIds = [
+        ...new Set(membershipRows.map((row) => row.organizationId)),
+      ].sort()
+
+      const verified: OrganizationSummary[] = []
+      for (const organizationId of orgIds) {
+        const membership = await requireOrganizationMembershipLocked(
+          tx,
+          userId,
+          organizationId
+        )
+        if (!membership.ok) continue
+
+        const organization = await tx.organization.findUnique({
+          where: { id: organizationId },
+          select: { id: true, name: true, slug: true },
+        })
+        if (!organization) continue
+
+        verified.push({
+          ...organization,
+          role: membership.role,
+        })
+      }
+
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { activeOrganizationId: true },
+      })
+
+      const organizations = sortOrganizationSummaries(verified)
+      return {
+        organizations,
+        activeOrganizationId: selectActiveOrganizationId(
+          organizations,
+          user?.activeOrganizationId
+        ),
+      }
+    })
+  } catch {
+    return { organizations: [], activeOrganizationId: null }
+  }
 }
 
 /** Primary organization for a user (prefer owned workspace). */

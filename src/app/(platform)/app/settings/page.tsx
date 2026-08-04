@@ -5,8 +5,7 @@ import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   getActiveOrganization,
   isOrgRole,
-  listUserOrganizations,
-  requireActiveOrganizationReadMembership,
+  listVerifiedUserOrganizationsWithActive,
   requireOrganizationMembershipLocked,
   roleAtLeast,
   roleHasPermission,
@@ -175,7 +174,6 @@ export default async function SettingsPage() {
     if (!user) {
       loadFailed = true
     } else {
-      organizations = await listUserOrganizations(user.id)
       const active = await getActiveOrganization(user.id)
       let activeRole =
         active && isOrgRole(active.role) ? active.role : "viewer"
@@ -301,25 +299,32 @@ export default async function SettingsPage() {
             : Promise.resolve([]),
         ])
 
-        // Final locked membership reauth for every role before publishing any
-        // active-org Settings payload (roster, activity summaries, health).
-        // Viewers previously skipped this and could observe stale org metadata
-        // after a concurrent remove/leave committed mid-render.
-        const finalMembership = await requireActiveOrganizationReadMembership(
-          user.id,
-          active.id
+        // Final transactional roster + active-org membership before publishing
+        // any Settings payload (switcher names/roles, member emails, invites,
+        // activity, health). Replaces a single-org reauth that left the
+        // switcher roster unlocked after gather awaits.
+        const verified = await listVerifiedUserOrganizationsWithActive(user.id)
+        organizations = verified.organizations.map((org) => ({
+          id: org.id,
+          name: org.name,
+          role: org.role,
+        }))
+        const finalOrg = verified.organizations.find(
+          (org) => org.id === active.id
         )
-        if (!finalMembership.ok || !finalMembership.role) {
+        // Only publish detail gathered for this active org when it is still
+        // the verified active workspace (or at least still a verified member).
+        if (
+          !finalOrg ||
+          verified.activeOrganizationId !== active.id
+        ) {
           organization = null
           health = null
           canManageMembers = false
           canViewHealthDetails = false
-          // Fail closed: drop activity gathered under the revoked membership.
           activity = []
-          // Refresh org switcher so a just-removed workspace does not linger.
-          organizations = await listUserOrganizations(user.id)
         } else {
-          activeRole = finalMembership.role
+          activeRole = finalOrg.role
           canManageMembers = roleHasPermission(activeRole, "manage_members")
           canViewHealthDetails = roleAtLeast(activeRole, "admin")
           health = canViewHealthDetails ? pendingHealth : null
@@ -331,8 +336,8 @@ export default async function SettingsPage() {
           }
 
           organization = {
-            id: active.id,
-            name: active.name,
+            id: finalOrg.id,
+            name: finalOrg.name,
             role: activeRole,
             members: memberRows.map((member) => {
               const isSelf = member.userId === user.id
@@ -367,6 +372,13 @@ export default async function SettingsPage() {
         }
       } else {
         health = null
+        // Still publish a verified switcher when there is no active org detail.
+        const verified = await listVerifiedUserOrganizationsWithActive(user.id)
+        organizations = verified.organizations.map((org) => ({
+          id: org.id,
+          name: org.name,
+          role: org.role,
+        }))
       }
     }
   } catch {
