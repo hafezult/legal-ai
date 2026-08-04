@@ -3,9 +3,9 @@
 import { Container, Section } from "@/components/marketing/primitives"
 
 const steps = [
-  { id: "01", label: "Intake", detail: "Matters, documents, and signals" },
-  { id: "02", label: "Orchestrate", detail: "Policies, roles, and approvals" },
-  { id: "03", label: "Execute", detail: "Agents, tools, and firm memory" },
+  { id: "01", label: "Intake", detail: "Matters, documents, and roles" },
+  { id: "02", label: "Index", detail: "Parse, chunk, and embed sources" },
+  { id: "03", label: "Retrieve", detail: "Matter-scoped grounded answers" },
   { id: "04", label: "Observe", detail: "Audit trails and lineage" },
 ]
 
@@ -21,7 +21,7 @@ export function OrchestrationStory() {
             One calm spine across every legal motion.
           </h2>
           <p className="mt-6 text-lg leading-relaxed text-white/[0.62]">
-            Route work through the right people, models, and systems without losing
+            Move from intake through indexing, retrieval, and audit without losing
             context—governed steps instead of ad hoc prompts.
           </p>
         </div>

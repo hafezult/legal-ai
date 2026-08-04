@@ -15,8 +15,8 @@ export function EnterpriseStory() {
           </h2>
           <p className="mt-6 text-lg leading-relaxed text-white/[0.62]">
             Deploy behind your perimeter, align to retention and access policies, and
-            connect to the systems your firm already trusts—without fragmenting the
-            practice.
+            keep matter work inside governed organization boundaries—with a clear
+            path to the systems your firm already trusts.
           </p>
         </div>
       </Container>
