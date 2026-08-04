@@ -1,6 +1,9 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 
-export const STORAGE_BUCKET = "legal-documents"
+import { createTimedFetch } from "./fetch"
+
+export const STORAGE_BUCKET =
+  process.env.SUPABASE_DOCUMENT_BUCKET?.trim() || "legal-documents"
 
 let _admin: SupabaseClient | null = null
 
@@ -19,6 +22,12 @@ export function getSupabaseAdmin(): SupabaseClient {
 
   _admin = createClient(url, key, {
     auth: { persistSession: false },
+    global: { fetch: createTimedFetch() },
   })
   return _admin
+}
+
+/** Test helper — clears the cached admin client. */
+export function resetSupabaseAdminForTests() {
+  _admin = null
 }
