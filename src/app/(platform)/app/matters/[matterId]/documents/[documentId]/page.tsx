@@ -43,16 +43,29 @@ export async function generateMetadata({
     })
     if (!user) return { title: "Document workstation" }
 
-    const doc = await prisma.document.findFirst({
-      where: {
-        id: documentId,
+    // Resolve the filename under the same matter lock as the page body so a
+    // concurrent removal cannot disclose document names via <title> alone.
+    const title = await prisma.$transaction(async (tx) => {
+      const stillAllowed = await requireMatterPermissionLocked(
+        tx,
+        user.id,
         matterId,
-        matter: matterAccessWhere(user.id),
-      },
-      select: { fileName: true },
+        "read"
+      )
+      if (!stillAllowed.ok) return null
+
+      const doc = await tx.document.findFirst({
+        where: {
+          id: documentId,
+          matterId,
+          matter: matterAccessWhere(user.id),
+        },
+        select: { fileName: true },
+      })
+      return doc?.fileName ?? null
     })
-    if (!doc) return { title: "Document workstation" }
-    return { title: `${doc.fileName} · workstation` }
+    if (!title) return { title: "Document workstation" }
+    return { title: `${title} · workstation` }
   } catch {
     return { title: "Document workstation" }
   }

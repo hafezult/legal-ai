@@ -6,6 +6,7 @@ import {
   getActiveOrganization,
   isOrgRole,
   listUserOrganizations,
+  requireActiveOrganizationReadMembership,
   requireOrganizationMembershipLocked,
   roleAtLeast,
   roleHasPermission,
@@ -300,69 +301,69 @@ export default async function SettingsPage() {
             : Promise.resolve([]),
         ])
 
-        // Final locked membership reauth immediately before publishing admin
-        // emails / invites / health details gathered after the earlier lock.
-        if (canManageMembers || canViewHealthDetails) {
-          try {
-            const locked = await prisma.$transaction(async (tx) =>
-              requireOrganizationMembershipLocked(tx, user.id, active.id)
+        // Final locked membership reauth for every role before publishing any
+        // active-org Settings payload (roster, activity summaries, health).
+        // Viewers previously skipped this and could observe stale org metadata
+        // after a concurrent remove/leave committed mid-render.
+        const finalMembership = await requireActiveOrganizationReadMembership(
+          user.id,
+          active.id
+        )
+        if (!finalMembership.ok || !finalMembership.role) {
+          organization = null
+          health = null
+          canManageMembers = false
+          canViewHealthDetails = false
+          // Fail closed: drop activity gathered under the revoked membership.
+          activity = []
+          // Refresh org switcher so a just-removed workspace does not linger.
+          organizations = await listUserOrganizations(user.id)
+        } else {
+          activeRole = finalMembership.role
+          canManageMembers = roleHasPermission(activeRole, "manage_members")
+          canViewHealthDetails = roleAtLeast(activeRole, "admin")
+          health = canViewHealthDetails ? pendingHealth : null
+          if (!canManageMembers) {
+            activity = activity.filter(
+              (event) =>
+                !(memberAdminActions as readonly string[]).includes(event.action)
             )
-            if (!locked.ok) {
-              activeRole = "viewer"
-              canManageMembers = false
-              canViewHealthDetails = false
-            } else {
-              activeRole = locked.role
-              canManageMembers = roleHasPermission(activeRole, "manage_members")
-              canViewHealthDetails = roleAtLeast(activeRole, "admin")
-            }
-          } catch {
-            canManageMembers = false
-            canViewHealthDetails = false
           }
-        }
 
-        health = canViewHealthDetails ? pendingHealth : null
-        if (!canManageMembers) {
-          activity = activity.filter(
-            (event) =>
-              !(memberAdminActions as readonly string[]).includes(event.action)
-          )
-        }
-
-        organization = {
-          id: active.id,
-          name: active.name,
-          role: activeRole,
-          members: memberRows.map((member) => {
-            const isSelf = member.userId === user.id
-            return {
-              id: member.id,
-              role: member.role,
-              userId: member.userId,
-              // Member emails are admin/owner-only; others see names/roles (+ self).
-              email:
-                canManageMembers || isSelf
-                  ? member.user.email
-                  : "",
-              name: member.user.name,
-              isSelf,
-            }
-          }),
-          invites: canManageMembers
-            ? inviteRows
-                .filter(
-                  (invite) =>
-                    isOrgRole(invite.role) &&
-                    roleStrictlyAbove(activeRole, invite.role)
-                )
-                .map((invite) => ({
-                  id: invite.id,
-                  email: invite.email,
-                  role: invite.role,
-                  expiresAt: invite.expiresAt.toISOString(),
-                }))
-            : [],
+          organization = {
+            id: active.id,
+            name: active.name,
+            role: activeRole,
+            members: memberRows.map((member) => {
+              const isSelf = member.userId === user.id
+              return {
+                id: member.id,
+                role: member.role,
+                userId: member.userId,
+                // Member emails are admin/owner-only; others see names/roles (+ self).
+                email:
+                  canManageMembers || isSelf
+                    ? member.user.email
+                    : "",
+                name: member.user.name,
+                isSelf,
+              }
+            }),
+            invites: canManageMembers
+              ? inviteRows
+                  .filter(
+                    (invite) =>
+                      isOrgRole(invite.role) &&
+                      roleStrictlyAbove(activeRole, invite.role)
+                  )
+                  .map((invite) => ({
+                    id: invite.id,
+                    email: invite.email,
+                    role: invite.role,
+                    expiresAt: invite.expiresAt.toISOString(),
+                  }))
+              : [],
+          }
         }
       } else {
         health = null
