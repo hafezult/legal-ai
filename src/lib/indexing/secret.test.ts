@@ -226,6 +226,18 @@ describe("indexing secret helpers", () => {
       ),
       false
     )
+    assert.equal(
+      isIndexingSecretStrong(
+        "aether-ci-validate-289d-1a967323ef0acfee52b55ac6130e4a329c72b26e0cd0b74d!"
+      ),
+      false
+    )
+    assert.equal(
+      isIndexingSecretStrong(
+        "aether-ci-validate-d054-344b1472613a3073d3c3f9ba06d6b9bbbaeaa23d!"
+      ),
+      false
+    )
     assert.equal(isIndexingSecretStrong("a".repeat(MIN_SECRET_LENGTH - 1)), false)
     assert.equal(isIndexingSecretStrong("a".repeat(MIN_SECRET_LENGTH)), false)
     assert.equal(isIndexingSecretStrong("ab".repeat(MIN_SECRET_LENGTH)), false)
