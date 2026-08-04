@@ -136,10 +136,10 @@ export function OrganizationAccessPanel({
           onSuccess?.(result)
           const text =
             result.inviteCreated
-              ? result.inviteEmailSent
-                ? "Invite emailed and link ready to share."
-                : result.inviteEmailWarning
-                  ? result.inviteEmailWarning
+              ? result.inviteEmailWarning
+                ? result.inviteEmailWarning
+                : result.inviteEmailSent
+                  ? "Invite emailed and link ready to share."
                   : "Invite ready. Copy the link or open mail to deliver it."
               : successText
           setMessage({

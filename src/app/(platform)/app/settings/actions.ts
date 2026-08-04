@@ -18,6 +18,7 @@ import {
   createOwnedOrganization,
   deleteOwnedOrganization,
   inviteExpiryDate,
+  inviterCanAuthorizeInviteRole,
   isOrgRole,
   maybePurgeExpiredOrganizationInvites,
   ORG_ROLES,
@@ -121,6 +122,27 @@ async function requireOrgAdmin(userId: string, organizationId: string) {
     return { error: "Admin role required to manage members." as const }
   }
   return { role: membership.role as OrgRole }
+}
+
+/**
+ * Final locked publish check before returning a raw invite acceptance URL.
+ * Email/audit/revalidate can race a concurrent demotion after mint/rotate.
+ */
+async function actorCanPublishInviteUrl(
+  userId: string,
+  organizationId: string,
+  inviteRole: OrgRole
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
+    const actorMembership = await tx.organizationMember.findUnique({
+      where: {
+        organizationId_userId: { organizationId, userId },
+      },
+      select: { role: true },
+    })
+    return inviterCanAuthorizeInviteRole(actorMembership?.role, inviteRole)
+  })
 }
 
 export async function createOrganization(
@@ -718,6 +740,33 @@ export async function addOrganizationMember(
     maybePurgeExpiredOrganizationInvites()
 
     revalidatePath("/app/settings")
+
+    // Final locked publish reauth after email/audit/revalidation so a concurrent
+    // demotion cannot receive a fresh invite capability URL after losing authority.
+    let canPublishUrl = false
+    try {
+      canPublishUrl = await actorCanPublishInviteUrl(
+        actor.user.id,
+        organizationId,
+        role
+      )
+    } catch {
+      return {
+        error: "Organization role changed concurrently. Refresh and try again.",
+      }
+    }
+    if (!canPublishUrl) {
+      return {
+        success: true,
+        inviteCreated: true,
+        inviteEmailSent: emailResult.sent,
+        // Intentionally omit inviteUrl — demoted actors must not copy the link.
+        inviteEmailWarning: emailResult.sent
+          ? "Invite was emailed, but your role changed before the link could be shown."
+          : "Invite was created, but your role changed before the link could be shown. Ask another admin to refresh the invite.",
+      }
+    }
+
     return {
       success: true,
       inviteCreated: true,
@@ -943,6 +992,33 @@ export async function refreshOrganizationInviteLink(
     maybePurgeExpiredOrganizationInvites()
 
     revalidatePath("/app/settings")
+
+    // Final locked publish reauth after audit/revalidation so a concurrent
+    // demotion cannot receive the rotated invite capability URL.
+    const inviteRole = invite.role
+    if (!isOrgRole(inviteRole)) {
+      return {
+        error: "Organization role changed concurrently. Refresh and try again.",
+      }
+    }
+    let canPublishUrl = false
+    try {
+      canPublishUrl = await actorCanPublishInviteUrl(
+        actor.user.id,
+        organizationId,
+        inviteRole
+      )
+    } catch {
+      return {
+        error: "Organization role changed concurrently. Refresh and try again.",
+      }
+    }
+    if (!canPublishUrl) {
+      return {
+        error: "Organization role changed concurrently. Refresh and try again.",
+      }
+    }
+
     return {
       success: true,
       inviteUrl: buildInviteAcceptUrl(token),
