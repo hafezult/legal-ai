@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - cursor/overall-project-finalization-7b46
+      - cursor/overall-project-finalization-41d5
 
 permissions:
   contents: read
@@ -40,7 +40,7 @@ jobs:
       OPENAI_API_KEY: ""
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       # Intentionally denylisted prefix — CI must not use a production-strong secret.
-      INDEXING_SECRET: aether-ci-validate-7b46-34f561eb2548152912b6835e8a46d9e9ae39e781!
+      INDEXING_SECRET: aether-ci-validate-41d5-326b07ffabdbc0e9d0443caf8efa9a9033fc3fd2!
 
     steps:
       - name: Check out repository
