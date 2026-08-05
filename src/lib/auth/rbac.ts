@@ -18,6 +18,7 @@ import {
   resolveMatterRoleFromLockedMembership,
 } from "@/lib/auth/matter-permission-lock"
 import { decideActiveOrganizationListPublish } from "@/lib/auth/active-org-list-publish"
+import { createRequestScopedOrganizationsSnapshotLoader } from "@/lib/auth/active-org-request-snapshot-react"
 import { orgDeleteConfirmationMatches } from "@/lib/auth/org-delete-confirm"
 import {
   selectActiveOrganizationId,
@@ -444,11 +445,25 @@ async function verifyUserOrganizationsInTx(
 }
 
 /**
+ * Request-scoped roster + active workspace load shared with
+ * `getActiveOrganization` so shell chrome and page gathers agree within one
+ * RSC render (see `active-org-request-snapshot.ts`).
+ */
+const loadVerifiedUserOrganizationsSnapshot =
+  createRequestScopedOrganizationsSnapshotLoader(async (userId) =>
+    prisma.$transaction((tx) => verifyUserOrganizationsInTx(tx, userId))
+  )
+
+/**
  * Final switcher roster + active workspace under one transaction.
  *
  * Callers must not await further work before serializing the returned roster
  * so concurrent removals cannot leave stale org names/roles in the shell or
  * Settings switcher after a non-final per-row check.
+ *
+ * Shares a request-scoped snapshot with `getActiveOrganization` so a concurrent
+ * workspace switch cannot leave layout chrome on org A while page props
+ * authorize org B within the same RSC response.
  */
 export async function listVerifiedUserOrganizationsWithActive(
   userId: string
@@ -457,9 +472,7 @@ export async function listVerifiedUserOrganizationsWithActive(
   activeOrganizationId: string | null
 }> {
   try {
-    return await prisma.$transaction(async (tx) =>
-      verifyUserOrganizationsInTx(tx, userId)
-    )
+    return await loadVerifiedUserOrganizationsSnapshot(userId)
   } catch {
     return { organizations: [], activeOrganizationId: null }
   }
@@ -806,6 +819,10 @@ export async function requireActiveOrganizationReadMembership(
  * Uses the same locked roster + soft-fallback persist path as the shell so
  * list gathers and chrome agree on `activeOrganizationId`.
  *
+ * Within an RSC request this reuses the shell's request-scoped snapshot so a
+ * concurrent `setActiveOrganization` cannot diverge layout chrome from page
+ * gathers before each page's final active-pointer publish gate.
+ *
  * Returns null only for a true empty roster. When memberships exist but no
  * active workspace can be selected/persisted, throws so list pages fail
  * closed instead of broadening via `matterAccessWhereForActiveOrg(..., null)`.
@@ -818,9 +835,7 @@ export async function getActiveOrganization(
     activeOrganizationId: string | null
   }
   try {
-    verified = await prisma.$transaction(async (tx) =>
-      verifyUserOrganizationsInTx(tx, userId)
-    )
+    verified = await loadVerifiedUserOrganizationsSnapshot(userId)
   } catch {
     throw new Error("ACTIVE_ORG_UNAVAILABLE")
   }

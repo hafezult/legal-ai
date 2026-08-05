@@ -6,6 +6,11 @@
  * a different `activeOrganizationId`. Fail closed unless the locked active
  * pointer still matches the gathered organization.
  *
+ * Pair with the request-scoped shell/page roster snapshot
+ * (`active-org-request-snapshot.ts`) so layout chrome and page gathers start
+ * from the same `activeOrganizationId` within one RSC render; this gate then
+ * fails closed if the pointer moves before serialize.
+ *
  * When no organization was gathered, publish only for true personal/empty
  * workspaces. If the actor still has memberships, a null gather means active
  * repair failed and must not broaden list props across orgs.
