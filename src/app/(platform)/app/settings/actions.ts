@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache"
 import { recordAuditEvent } from "@/lib/audit"
 import { selectVerifiedClerkEmails } from "@/lib/auth/clerk-email"
 import { decideInviteUrlPublish } from "@/lib/auth/invite-url-publish"
+import { resolveMemberAuditLabels } from "@/lib/auth/member-audit-labels"
 import { requireActor } from "@/lib/auth/require-actor"
 import {
   generateInviteToken,
@@ -1231,6 +1232,8 @@ export async function updateOrganizationMemberRole(
 
     // Lock org, re-read actor/target roles, CAS on exact prior target role so
     // concurrent promotions/demotions cannot be overwritten with stale auth.
+    // Capture audit labels under Org + target User FOR UPDATE so concurrent
+    // role/email changes never reach the org audit trail.
     const updated = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
 
@@ -1259,13 +1262,26 @@ export async function updateOrganizationMemberRole(
 
       const target = await tx.organizationMember.findFirst({
         where: { id: member.id, organizationId },
-        select: { id: true, role: true },
+        select: { id: true, role: true, userId: true },
       })
       if (
         !target ||
         !isOrgRole(target.role) ||
         !roleStrictlyAbove(actorMembership.role, target.role)
       ) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${target.userId} FOR UPDATE`
+      const lockedUser = await tx.user.findUnique({
+        where: { id: target.userId },
+        select: { email: true },
+      })
+      const auditLabels = resolveMemberAuditLabels({
+        lockedPreviousRole: target.role,
+        lockedEmail: lockedUser?.email,
+      })
+      if (!auditLabels) {
         throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
       }
 
@@ -1282,11 +1298,11 @@ export async function updateOrganizationMemberRole(
         await purgeUnauthorizedPendingInvites(
           tx,
           organizationId,
-          member.userId,
+          target.userId,
           role
         )
       }
-      return updated
+      return { count: updated.count, auditLabels }
     })
     if (updated.count !== 1) {
       return {
@@ -1300,8 +1316,8 @@ export async function updateOrganizationMemberRole(
       entityType: "organization_member",
       entityId: member.id,
       organizationId,
-      summary: `Updated ${member.user.email} role to ${role}`,
-      metadata: { role, previousRole: member.role },
+      summary: `Updated ${updated.auditLabels.email} role to ${role}`,
+      metadata: { role, previousRole: updated.auditLabels.previousRole },
     })
   } catch (error) {
     if (
@@ -1361,7 +1377,9 @@ export async function removeOrganizationMember(
     // Membership delete + cleared active workspace must be atomic so a failed
     // activeOrganizationId update cannot report error after the removal applied.
     // Re-check actor admin + CAS on exact prior target role under org lock.
-    await prisma.$transaction(async (tx) => {
+    // Capture audit labels under Org + target User FOR UPDATE so concurrent
+    // role/email changes never reach the org audit trail.
+    const removed = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE`
 
       const actorMembership = await tx.organizationMember.findUnique({
@@ -1391,14 +1409,14 @@ export async function removeOrganizationMember(
         throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
       }
 
-      const removed = await tx.organizationMember.deleteMany({
+      const removedRows = await tx.organizationMember.deleteMany({
         where: {
           id: member.id,
           organizationId,
           role: target.role,
         },
       })
-      if (removed.count !== 1) {
+      if (removedRows.count !== 1) {
         throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
       }
 
@@ -1406,18 +1424,26 @@ export async function removeOrganizationMember(
       await purgeUnauthorizedPendingInvites(
         tx,
         organizationId,
-        member.userId,
+        target.userId,
         null
       )
 
-      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${member.userId} FOR UPDATE`
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${target.userId} FOR UPDATE`
       const removedUser = await tx.user.findUnique({
-        where: { id: member.userId },
-        select: { activeOrganizationId: true },
+        where: { id: target.userId },
+        select: { activeOrganizationId: true, email: true },
       })
+      const auditLabels = resolveMemberAuditLabels({
+        lockedPreviousRole: target.role,
+        lockedEmail: removedUser?.email,
+      })
+      if (!auditLabels) {
+        throw new Error("CONCURRENT_MEMBERSHIP_CHANGE")
+      }
+
       if (removedUser?.activeOrganizationId === organizationId) {
         const remaining = await tx.organizationMember.findMany({
-          where: { userId: member.userId },
+          where: { userId: target.userId },
           orderBy: [{ createdAt: "asc" }],
           select: {
             role: true,
@@ -1428,10 +1454,12 @@ export async function removeOrganizationMember(
         const fallback =
           owner?.organization.id ?? remaining[0]?.organization.id ?? null
         await tx.user.update({
-          where: { id: member.userId },
+          where: { id: target.userId },
           data: { activeOrganizationId: fallback },
         })
       }
+
+      return { auditLabels }
     })
 
     await recordAuditEvent({
@@ -1440,8 +1468,8 @@ export async function removeOrganizationMember(
       entityType: "organization_member",
       entityId: member.id,
       organizationId,
-      summary: `Removed ${member.user.email} from the organization`,
-      metadata: { previousRole: member.role },
+      summary: `Removed ${removed.auditLabels.email} from the organization`,
+      metadata: { previousRole: removed.auditLabels.previousRole },
     })
   } catch (error) {
     if (
