@@ -766,8 +766,12 @@ export async function requireActiveOrganizationReadMembershipInTx(
 /**
  * Final reauth for active-organization read/list pages. Cross-matter registries
  * gather metadata outside a transaction for bounded latency, then call this
- * immediately before serializing props so a concurrent member removal cannot
- * leak stale matter/document titles after the revoke commits.
+ * (or compose `requireActiveOrganizationReadMembershipInTx`) immediately before
+ * serializing props so a concurrent member removal cannot leak stale
+ * matter/document titles after the revoke commits. Callers that ship list
+ * descriptors should also re-read probed row ids in that same final transaction
+ * (`selectLiveRegistryRows`) so deleteMatter / deleteDocument cannot leave
+ * filenames, client names, or titles shipping after membership alone.
  *
  * Also requires the locked `User.activeOrganizationId` still equal the gathered
  * organization. Membership alone is not enough — a concurrent workspace switch

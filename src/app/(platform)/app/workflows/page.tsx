@@ -5,11 +5,12 @@ import { DocumentRetryButton } from "@/components/documents/document-retry-butto
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
+import { selectLiveRegistryRows } from "@/lib/auth/registry-list-publish"
 import {
   canWriteListedMatter,
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
-  requireActiveOrganizationReadMembership,
+  requireActiveOrganizationReadMembershipInTx,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import {
@@ -176,11 +177,60 @@ export default async function WorkflowsPage() {
           }),
         ])
 
-      const finalMembership = await requireActiveOrganizationReadMembership(
-        user.id,
-        activeOrg?.id
-      )
-      if (!finalMembership.ok) {
+      // Final active-org membership + document descriptor liveness share one
+      // transaction so deleteDocument / deleteMatter cannot leave filenames or
+      // matter titles shipping after a membership-only gate.
+      const documentSelect = {
+        id: true,
+        fileName: true,
+        indexingStatus: true,
+        retrievalStatus: true,
+        uploadedAt: true,
+        updatedAt: true,
+        matter: {
+          select: {
+            id: true,
+            title: true,
+            userId: true,
+            organizationId: true,
+          },
+        },
+      } as const
+
+      const finalPublish = await prisma.$transaction(async (tx) => {
+        const membership = await requireActiveOrganizationReadMembershipInTx(
+          tx,
+          user.id,
+          activeOrg?.id
+        )
+        if (!membership.ok) return { ok: false as const }
+
+        const rowIds = rows.map((doc) => doc.id)
+        const failedIds = failedRows.map((doc) => doc.id)
+        const probedIds = [...new Set([...rowIds, ...failedIds])]
+        const liveRows =
+          probedIds.length === 0
+            ? []
+            : await tx.document.findMany({
+                where: {
+                  id: { in: probedIds },
+                  matter: matterWhere,
+                },
+                select: documentSelect,
+              })
+        const lockedById = new Map(liveRows.map((doc) => [doc.id, doc]))
+        return {
+          ok: true as const,
+          role: membership.role,
+          liveRows: selectLiveRegistryRows({ probedIds: rowIds, lockedById }),
+          liveFailedRows: selectLiveRegistryRows({
+            probedIds: failedIds,
+            lockedById,
+          }),
+        }
+      })
+
+      if (!finalPublish.ok) {
         trackedCount = 0
         readyCount = 0
         failedCount = 0
@@ -190,8 +240,8 @@ export default async function WorkflowsPage() {
         failedDocuments = []
         canWrite = false
       } else {
-        const finalOrgCanWrite = finalMembership.role
-          ? roleHasPermission(finalMembership.role, "write")
+        const finalOrgCanWrite = finalPublish.role
+          ? roleHasPermission(finalPublish.role, "write")
           : true
         trackedCount = total
         readyCount = ready
@@ -202,7 +252,7 @@ export default async function WorkflowsPage() {
         )
 
         const toWorkflowDoc = (
-          doc: (typeof rows)[number]
+          doc: (typeof finalPublish.liveRows)[number]
         ): WorkflowDocument => ({
           id: doc.id,
           fileName: doc.fileName,
@@ -217,8 +267,8 @@ export default async function WorkflowsPage() {
           },
         })
 
-        documents = rows.map(toWorkflowDoc)
-        failedDocuments = failedRows
+        documents = finalPublish.liveRows.map(toWorkflowDoc)
+        failedDocuments = finalPublish.liveFailedRows
           .map(toWorkflowDoc)
           .filter((doc) => documentNeedsRetry(doc))
         canWrite = finalOrgCanWrite || documents.some((doc) => doc.canWrite)

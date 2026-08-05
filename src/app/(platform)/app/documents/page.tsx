@@ -4,11 +4,12 @@ import { DocumentRetryButton } from "@/components/documents/document-retry-butto
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
+import { selectLiveRegistryRows } from "@/lib/auth/registry-list-publish"
 import {
   canWriteListedMatter,
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
-  requireActiveOrganizationReadMembership,
+  requireActiveOrganizationReadMembershipInTx,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import {
@@ -149,11 +150,55 @@ export default async function DocumentsPage() {
         prisma.document.count({ where: retryWhere }),
       ])
 
-      const finalMembership = await requireActiveOrganizationReadMembership(
-        user.id,
-        activeOrg?.id
-      )
-      if (!finalMembership.ok) {
+      // Final active-org membership + document/matter descriptor liveness share
+      // one transaction so deleteDocument / deleteMatter cannot leave filenames
+      // or matter titles shipping after a membership-only gate.
+      const finalPublish = await prisma.$transaction(async (tx) => {
+        const membership = await requireActiveOrganizationReadMembershipInTx(
+          tx,
+          user.id,
+          activeOrg?.id
+        )
+        if (!membership.ok) return { ok: false as const }
+
+        const probedIds = rows.map((doc) => doc.id)
+        const liveRows =
+          probedIds.length === 0
+            ? []
+            : await tx.document.findMany({
+                where: {
+                  id: { in: probedIds },
+                  matter: matterWhere,
+                },
+                select: {
+                  id: true,
+                  fileName: true,
+                  mimeType: true,
+                  fileSize: true,
+                  indexingStatus: true,
+                  retrievalStatus: true,
+                  chunkCount: true,
+                  uploadedAt: true,
+                  updatedAt: true,
+                  matter: {
+                    select: {
+                      id: true,
+                      title: true,
+                      userId: true,
+                      organizationId: true,
+                    },
+                  },
+                },
+              })
+        const lockedById = new Map(liveRows.map((doc) => [doc.id, doc]))
+        return {
+          ok: true as const,
+          role: membership.role,
+          liveDocs: selectLiveRegistryRows({ probedIds, lockedById }),
+        }
+      })
+
+      if (!finalPublish.ok) {
         sourceCount = 0
         indexedCount = 0
         retrievalReadyCount = 0
@@ -161,14 +206,14 @@ export default async function DocumentsPage() {
         documents = []
         canWrite = false
       } else {
-        const finalOrgCanWrite = finalMembership.role
-          ? roleHasPermission(finalMembership.role, "write")
+        const finalOrgCanWrite = finalPublish.role
+          ? roleHasPermission(finalPublish.role, "write")
           : true
         sourceCount = total
         indexedCount = indexed
         retrievalReadyCount = retrievalReady
         failedCount = failed
-        documents = rows.map((doc) => ({
+        documents = finalPublish.liveDocs.map((doc) => ({
           id: doc.id,
           fileName: doc.fileName,
           mimeType: doc.mimeType,

@@ -2,11 +2,12 @@ import Link from "next/link"
 
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
+import { selectLiveRegistryRows } from "@/lib/auth/registry-list-publish"
 import {
   getActiveOrganization,
   isOrgRole,
   matterAccessWhereForActiveOrg,
-  requireActiveOrganizationReadMembership,
+  requireActiveOrganizationReadMembershipInTx,
   roleAtLeast,
 } from "@/lib/auth/rbac"
 import { documentRetrievalReadyWhere } from "@/lib/documents/status"
@@ -148,11 +149,76 @@ export default async function DashboardPage() {
       if (canViewHealthDetails) {
         pendingHealth = await getHealthReport().catch(() => null)
       }
-      const finalMembership = await requireActiveOrganizationReadMembership(
-        user.id,
-        activeOrg?.id
-      )
-      if (!finalMembership.ok) {
+      // Final active-org membership + matter/session descriptor liveness share
+      // one transaction so deleteMatter / deleteResearchSession cannot leave
+      // titles shipping after a membership-only gate.
+      const finalPublish = await prisma.$transaction(async (tx) => {
+        const membership = await requireActiveOrganizationReadMembershipInTx(
+          tx,
+          user.id,
+          activeOrg?.id
+        )
+        if (!membership.ok) return { ok: false as const }
+
+        const matterIds = matterRows.map((matter) => matter.id)
+        const sessionIds = sessionRows.map((session) => session.id)
+        const liveMatters =
+          matterIds.length === 0
+            ? []
+            : await tx.matter.findMany({
+                where: {
+                  AND: [
+                    matterWhere,
+                    { status: "active" },
+                    { id: { in: matterIds } },
+                  ],
+                },
+                select: {
+                  id: true,
+                  title: true,
+                  clientName: true,
+                  status: true,
+                  updatedAt: true,
+                  _count: {
+                    select: { documents: true, researchSessions: true },
+                  },
+                },
+              })
+        const liveSessions =
+          sessionIds.length === 0
+            ? []
+            : await tx.researchSession.findMany({
+                where: {
+                  id: { in: sessionIds },
+                  matter: matterWhere,
+                },
+                select: {
+                  id: true,
+                  createdAt: true,
+                  matter: { select: { id: true, title: true } },
+                },
+              })
+        const mattersById = new Map(
+          liveMatters.map((matter) => [matter.id, matter])
+        )
+        const sessionsById = new Map(
+          liveSessions.map((session) => [session.id, session])
+        )
+        return {
+          ok: true as const,
+          role: membership.role,
+          liveMatters: selectLiveRegistryRows({
+            probedIds: matterIds,
+            lockedById: mattersById,
+          }),
+          liveSessions: selectLiveRegistryRows({
+            probedIds: sessionIds,
+            lockedById: sessionsById,
+          }),
+        }
+      })
+
+      if (!finalPublish.ok) {
         canViewHealthDetails = false
         matterCount = 0
         retrievalReadyCount = 0
@@ -161,7 +227,7 @@ export default async function DashboardPage() {
         recentMatters = []
         pendingHealth = null
       } else {
-        const finalRole = finalMembership.role ?? activeRole
+        const finalRole = finalPublish.role ?? activeRole
         canViewHealthDetails = roleAtLeast(finalRole, "admin")
         // Personal / no-org workspace is never admin for dependency probes.
         if (!activeOrg?.id) {
@@ -171,7 +237,7 @@ export default async function DashboardPage() {
         retrievalReadyCount = countedRetrievalReady
         researchSessionCount = countedResearchSessions
         // Never ship saved queries/AI bodies in dashboard list props.
-        recentSessions = sessionRows.map((row) => {
+        recentSessions = finalPublish.liveSessions.map((row) => {
           const flags = presence.get(row.id)
           return {
             id: row.id,
@@ -181,7 +247,7 @@ export default async function DashboardPage() {
             matter: row.matter,
           }
         })
-        recentMatters = matterRows
+        recentMatters = finalPublish.liveMatters
       }
 
       // Dependency probe details stay admin/owner-only; members see workspace signals.

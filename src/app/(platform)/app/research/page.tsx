@@ -1,5 +1,6 @@
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { decideDeepLinkRestorePagePublish } from "@/lib/auth/deep-link-restore-page-publish"
+import { selectLiveRegistryRows } from "@/lib/auth/registry-list-publish"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   canDeleteListedMatter,
@@ -245,10 +246,79 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
             bodyDecision = { mode: "error" }
           }
 
+          // Re-confirm picker/list descriptors under the same final txn so
+          // deleteMatter / deleteResearchSession cannot leave titles shipping
+          // after membership alone.
+          const probedMatterIds = [
+            ...matterRows.map((matter) => matter.id),
+            ...(focusedMatter &&
+            !matterRows.some((matter) => matter.id === focusedMatter.id)
+              ? [focusedMatter.id]
+              : []),
+          ]
+          const probedSessionIds = [
+            ...sessionRows.map((session) => session.id),
+            ...(focusedSession &&
+            !sessionRows.some((session) => session.id === focusedSession.id)
+              ? [focusedSession.id]
+              : []),
+          ]
+          const liveMatters =
+            probedMatterIds.length === 0
+              ? []
+              : await tx.matter.findMany({
+                  where: {
+                    AND: [matterWhere, { id: { in: probedMatterIds } }],
+                  },
+                  select: {
+                    id: true,
+                    title: true,
+                    userId: true,
+                    organizationId: true,
+                    _count: { select: { documents: true } },
+                  },
+                })
+          const liveSessions =
+            probedSessionIds.length === 0
+              ? []
+              : await tx.researchSession.findMany({
+                  where: {
+                    id: { in: probedSessionIds },
+                    matter: matterWhere,
+                  },
+                  select: {
+                    id: true,
+                    createdAt: true,
+                    matterId: true,
+                    userId: true,
+                    matter: {
+                      select: {
+                        title: true,
+                        userId: true,
+                        organizationId: true,
+                      },
+                    },
+                  },
+                })
+          const mattersById = new Map(
+            liveMatters.map((matter) => [matter.id, matter])
+          )
+          const sessionsById = new Map(
+            liveSessions.map((session) => [session.id, session])
+          )
+
           return {
             ok: true as const,
             role: membership.role,
             body: bodyDecision,
+            liveMatters: selectLiveRegistryRows({
+              probedIds: probedMatterIds,
+              lockedById: mattersById,
+            }),
+            liveSessions: selectLiveRegistryRows({
+              probedIds: probedSessionIds,
+              lockedById: sessionsById,
+            }),
           }
         })
 
@@ -265,38 +335,18 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
             ? roleHasPermission(finalPublish.role, "delete")
             : true
 
-          const mappedMatters = matterRows.map((matter) => ({
+          const mappedMatters = finalPublish.liveMatters.map((matter) => ({
             id: matter.id,
             title: matter.title,
             canWrite: canWriteListedMatter(matter, user.id, finalOrgCanWrite),
             canDelete: canDeleteListedMatter(matter, user.id, finalOrgCanDelete),
             _count: matter._count,
           }))
-          if (
-            focusedMatter &&
-            !mappedMatters.some((matter) => matter.id === focusedMatter.id)
-          ) {
-            mappedMatters.unshift({
-              id: focusedMatter.id,
-              title: focusedMatter.title,
-              canWrite: canWriteListedMatter(
-                focusedMatter,
-                user.id,
-                finalOrgCanWrite
-              ),
-              canDelete: canDeleteListedMatter(
-                focusedMatter,
-                user.id,
-                finalOrgCanDelete
-              ),
-              _count: focusedMatter._count,
-            })
-          }
           matters = mappedMatters
           canWrite =
             finalOrgCanWrite || mappedMatters.some((matter) => matter.canWrite)
 
-          const mapSession = (session: (typeof sessionRows)[number]) => {
+          recentSessions = finalPublish.liveSessions.map((session) => {
             const matterCanWrite = canWriteListedMatter(
               session.matter,
               user.id,
@@ -323,16 +373,7 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
                 matterCanDelete,
               }),
             }
-          }
-
-          const mapped = sessionRows.map(mapSession)
-          if (
-            focusedSession &&
-            !mapped.some((session) => session.id === focusedSession.id)
-          ) {
-            mapped.unshift(mapSession(focusedSession))
-          }
-          recentSessions = mapped
+          })
 
           if (finalPublish.body.mode === "error" && pendingRestore) {
             initialResults = pendingRestore

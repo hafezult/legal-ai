@@ -1,5 +1,6 @@
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { decideDeepLinkRestorePagePublish } from "@/lib/auth/deep-link-restore-page-publish"
+import { selectLiveRegistryRows } from "@/lib/auth/registry-list-publish"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   canDeleteListedMatter,
@@ -248,10 +249,80 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
             bodyDecision = { mode: "error" }
           }
 
+          // Re-confirm picker/list descriptors under the same final txn so
+          // deleteMatter / deleteDraft cannot leave titles shipping after
+          // membership alone.
+          const probedMatterIds = [
+            ...matterRows.map((matter) => matter.id),
+            ...(focusedMatter &&
+            !matterRows.some((matter) => matter.id === focusedMatter.id)
+              ? [focusedMatter.id]
+              : []),
+          ]
+          const probedDraftIds = [
+            ...draftRows.map((draft) => draft.id),
+            ...(focusedDraft &&
+            !draftRows.some((draft) => draft.id === focusedDraft.id)
+              ? [focusedDraft.id]
+              : []),
+          ]
+          const liveMatters =
+            probedMatterIds.length === 0
+              ? []
+              : await tx.matter.findMany({
+                  where: {
+                    AND: [matterWhere, { id: { in: probedMatterIds } }],
+                  },
+                  select: {
+                    id: true,
+                    title: true,
+                    userId: true,
+                    organizationId: true,
+                    _count: { select: { documents: true } },
+                  },
+                })
+          const liveDrafts =
+            probedDraftIds.length === 0
+              ? []
+              : await tx.draftDocument.findMany({
+                  where: {
+                    id: { in: probedDraftIds },
+                    matter: matterWhere,
+                  },
+                  select: {
+                    id: true,
+                    draftType: true,
+                    createdAt: true,
+                    matterId: true,
+                    userId: true,
+                    matter: {
+                      select: {
+                        title: true,
+                        userId: true,
+                        organizationId: true,
+                      },
+                    },
+                  },
+                })
+          const mattersById = new Map(
+            liveMatters.map((matter) => [matter.id, matter])
+          )
+          const draftsById = new Map(
+            liveDrafts.map((draft) => [draft.id, draft])
+          )
+
           return {
             ok: true as const,
             role: membership.role,
             body: bodyDecision,
+            liveMatters: selectLiveRegistryRows({
+              probedIds: probedMatterIds,
+              lockedById: mattersById,
+            }),
+            liveDrafts: selectLiveRegistryRows({
+              probedIds: probedDraftIds,
+              lockedById: draftsById,
+            }),
           }
         })
 
@@ -268,38 +339,18 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
             ? roleHasPermission(finalPublish.role, "delete")
             : true
 
-          const mappedMatters = matterRows.map((matter) => ({
+          const mappedMatters = finalPublish.liveMatters.map((matter) => ({
             id: matter.id,
             title: matter.title,
             canWrite: canWriteListedMatter(matter, user.id, finalOrgCanWrite),
             canDelete: canDeleteListedMatter(matter, user.id, finalOrgCanDelete),
             _count: matter._count,
           }))
-          if (
-            focusedMatter &&
-            !mappedMatters.some((matter) => matter.id === focusedMatter.id)
-          ) {
-            mappedMatters.unshift({
-              id: focusedMatter.id,
-              title: focusedMatter.title,
-              canWrite: canWriteListedMatter(
-                focusedMatter,
-                user.id,
-                finalOrgCanWrite
-              ),
-              canDelete: canDeleteListedMatter(
-                focusedMatter,
-                user.id,
-                finalOrgCanDelete
-              ),
-              _count: focusedMatter._count,
-            })
-          }
           matters = mappedMatters
           canWrite =
             finalOrgCanWrite || mappedMatters.some((matter) => matter.canWrite)
 
-          const mapDraft = (draft: (typeof draftRows)[number]) => {
+          recentDrafts = finalPublish.liveDrafts.map((draft) => {
             const matterCanWrite = canWriteListedMatter(
               draft.matter,
               user.id,
@@ -328,16 +379,7 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
                 matterCanDelete,
               }),
             }
-          }
-
-          const mapped = draftRows.map(mapDraft)
-          if (
-            focusedDraft &&
-            !mapped.some((draft) => draft.id === focusedDraft.id)
-          ) {
-            mapped.unshift(mapDraft(focusedDraft))
-          }
-          recentDrafts = mapped
+          })
 
           if (finalPublish.body.mode === "error" && pendingRestore) {
             initialResults = pendingRestore

@@ -2,10 +2,11 @@ import Link from "next/link"
 
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
+import { selectLiveRegistryRows } from "@/lib/auth/registry-list-publish"
 import {
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
-  requireActiveOrganizationReadMembership,
+  requireActiveOrganizationReadMembershipInTx,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { documentRetrievalReadyWhere } from "@/lib/documents/status"
@@ -152,11 +153,47 @@ export default async function MemoryPage() {
         prisma.conversation.count({ where: { matter: matterWhere } }),
         prisma.draftDocument.count({ where: { matter: matterWhere } }),
       ])
-      const finalMembership = await requireActiveOrganizationReadMembership(
-        user.id,
-        activeOrg?.id
-      )
-      if (!finalMembership.ok) {
+      // Final active-org membership + matter descriptor liveness share one
+      // transaction so deleteMatter cannot leave titles/client names shipping
+      // after a membership-only gate. Aggregates for omitted rows are dropped.
+      const finalPublish = await prisma.$transaction(async (tx) => {
+        const membership = await requireActiveOrganizationReadMembershipInTx(
+          tx,
+          user.id,
+          activeOrg?.id
+        )
+        if (!membership.ok) return { ok: false as const }
+
+        const probedIds = matterRows.map((matter) => matter.id)
+        const liveRows =
+          probedIds.length === 0
+            ? []
+            : await tx.matter.findMany({
+                where: { AND: [matterWhere, { id: { in: probedIds } }] },
+                select: {
+                  id: true,
+                  title: true,
+                  clientName: true,
+                  updatedAt: true,
+                  _count: {
+                    select: {
+                      documents: true,
+                      researchSessions: true,
+                      conversations: true,
+                      draftDocuments: true,
+                    },
+                  },
+                },
+              })
+        const lockedById = new Map(liveRows.map((matter) => [matter.id, matter]))
+        return {
+          ok: true as const,
+          role: membership.role,
+          liveMatters: selectLiveRegistryRows({ probedIds, lockedById }),
+        }
+      })
+
+      if (!finalPublish.ok) {
         matters = []
         canWrite = false
         messageCount = 0
@@ -168,8 +205,8 @@ export default async function MemoryPage() {
         conversationCount = 0
         draftCount = 0
       } else {
-        canWrite = finalMembership.role
-          ? roleHasPermission(finalMembership.role, "write")
+        canWrite = finalPublish.role
+          ? roleHasPermission(finalPublish.role, "write")
           : true
         const messagesByMatter = new Map<string, number>()
         for (const row of conversationMessageRows) {
@@ -182,7 +219,7 @@ export default async function MemoryPage() {
         for (const row of publishedDocs) {
           chunksByMatter.set(row.matterId, row._sum.chunkCount ?? 0)
         }
-        matters = matterRows.map((matter) => ({
+        matters = finalPublish.liveMatters.map((matter) => ({
           id: matter.id,
           title: matter.title,
           clientName: matter.clientName,

@@ -3,10 +3,11 @@ import Link from "next/link"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
+import { selectLiveRegistryRows } from "@/lib/auth/registry-list-publish"
 import {
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
-  requireActiveOrganizationReadMembership,
+  requireActiveOrganizationReadMembershipInTx,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
@@ -80,18 +81,49 @@ export default async function MattersPage() {
         },
       })
 
-      const finalMembership = await requireActiveOrganizationReadMembership(
-        user.id,
-        activeOrg?.id
-      )
-      if (!finalMembership.ok) {
+      // Final active-org membership + matter descriptor liveness share one
+      // transaction so deleteMatter cannot leave titles/client names shipping
+      // after a membership-only gate.
+      const finalPublish = await prisma.$transaction(async (tx) => {
+        const membership = await requireActiveOrganizationReadMembershipInTx(
+          tx,
+          user.id,
+          activeOrg?.id
+        )
+        if (!membership.ok) return { ok: false as const }
+
+        const probedIds = rows.map((matter) => matter.id)
+        const liveRows =
+          probedIds.length === 0
+            ? []
+            : await tx.matter.findMany({
+                where: { AND: [matterWhere, { id: { in: probedIds } }] },
+                select: {
+                  id: true,
+                  title: true,
+                  clientName: true,
+                  practiceArea: true,
+                  jurisdiction: true,
+                  status: true,
+                  updatedAt: true,
+                },
+              })
+        const lockedById = new Map(liveRows.map((matter) => [matter.id, matter]))
+        return {
+          ok: true as const,
+          role: membership.role,
+          liveMatters: selectLiveRegistryRows({ probedIds, lockedById }),
+        }
+      })
+
+      if (!finalPublish.ok) {
         matters = []
         canWrite = false
       } else {
-        canWrite = finalMembership.role
-          ? roleHasPermission(finalMembership.role, "write")
+        canWrite = finalPublish.role
+          ? roleHasPermission(finalPublish.role, "write")
           : true
-        matters = rows
+        matters = finalPublish.liveMatters
       }
     }
   } catch {
