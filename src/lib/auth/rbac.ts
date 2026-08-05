@@ -691,6 +691,79 @@ export async function requireOrganizationMembershipLocked(
 }
 
 /**
+ * In-transaction final reauth for active-organization read/list pages.
+ *
+ * Prefer composing this inside the caller's last publish transaction when
+ * other row-liveness locks (e.g. Matter → work product) must also gate
+ * serialize — so no await remains between membership proof and props.
+ *
+ * Lock order: Organization → OrganizationMember → User. When the caller already
+ * holds Matter under Org → Member → Matter, invoke this afterward so User is
+ * taken last (Org → Member → Matter → User).
+ */
+export async function requireActiveOrganizationReadMembershipInTx(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  organizationId: string | null | undefined
+): Promise<
+  | { ok: true; role: OrgRole | null }
+  | { ok: false; error: string }
+> {
+  if (!organizationId) {
+    // Null gather is only safe for true personal/empty workspaces. If the
+    // actor still holds memberships, active-org repair failed and list
+    // pages must not broaden across organizations.
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+    const membership = await tx.organizationMember.findFirst({
+      where: { userId },
+      select: { id: true },
+    })
+    if (
+      !decideActiveOrganizationListPublish({
+        gatheredOrganizationId: null,
+        lockedActiveOrganizationId: null,
+        membershipOk: true,
+        hasVerifiedMemberships: Boolean(membership),
+      })
+    ) {
+      return {
+        ok: false,
+        error: "Active organization unavailable. Refresh and try again.",
+      }
+    }
+    return { ok: true, role: null }
+  }
+
+  const membership = await requireOrganizationMembershipLocked(
+    tx,
+    userId,
+    organizationId
+  )
+  if (!membership.ok) return membership
+
+  await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+  const user = await tx.user.findUnique({
+    where: { id: userId },
+    select: { activeOrganizationId: true },
+  })
+
+  if (
+    !decideActiveOrganizationListPublish({
+      gatheredOrganizationId: organizationId,
+      lockedActiveOrganizationId: user?.activeOrganizationId,
+      membershipOk: true,
+    })
+  ) {
+    return {
+      ok: false,
+      error: "Active organization changed. Refresh and try again.",
+    }
+  }
+
+  return { ok: true, role: membership.role }
+}
+
+/**
  * Final reauth for active-organization read/list pages. Cross-matter registries
  * gather metadata outside a transaction for bounded latency, then call this
  * immediately before serializing props so a concurrent member removal cannot
@@ -711,60 +784,9 @@ export async function requireActiveOrganizationReadMembership(
   | { ok: false; error: string }
 > {
   try {
-    const locked = await prisma.$transaction(async (tx) => {
-      if (!organizationId) {
-        // Null gather is only safe for true personal/empty workspaces. If the
-        // actor still holds memberships, active-org repair failed and list
-        // pages must not broaden across organizations.
-        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
-        const membership = await tx.organizationMember.findFirst({
-          where: { userId },
-          select: { id: true },
-        })
-        if (
-          !decideActiveOrganizationListPublish({
-            gatheredOrganizationId: null,
-            lockedActiveOrganizationId: null,
-            membershipOk: true,
-            hasVerifiedMemberships: Boolean(membership),
-          })
-        ) {
-          return {
-            ok: false as const,
-            error: "Active organization unavailable. Refresh and try again.",
-          }
-        }
-        return { ok: true as const, role: null }
-      }
-
-      const membership = await requireOrganizationMembershipLocked(
-        tx,
-        userId,
-        organizationId
-      )
-      if (!membership.ok) return membership
-
-      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
-      const user = await tx.user.findUnique({
-        where: { id: userId },
-        select: { activeOrganizationId: true },
-      })
-
-      if (
-        !decideActiveOrganizationListPublish({
-          gatheredOrganizationId: organizationId,
-          lockedActiveOrganizationId: user?.activeOrganizationId,
-          membershipOk: true,
-        })
-      ) {
-        return {
-          ok: false as const,
-          error: "Active organization changed. Refresh and try again.",
-        }
-      }
-
-      return { ok: true as const, role: membership.role }
-    })
+    const locked = await prisma.$transaction((tx) =>
+      requireActiveOrganizationReadMembershipInTx(tx, userId, organizationId)
+    )
     if (!locked.ok) return locked
     return { ok: true, role: locked.role }
   } catch {

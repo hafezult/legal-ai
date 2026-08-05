@@ -6,6 +6,11 @@
  * locked matter title (parity with decideWorkProductRestorePublish /
  * document workstation final serialize).
  *
+ * Callers must verify active-org membership and body liveness inside the same
+ * final transaction — no await may remain between that proof and SSR serialize
+ * (a concurrent workspace switch after membership-only reauth must not ship
+ * stale list props or old-org bodies).
+ *
  * Body rule matches `decideWorkProductRestorePublish` — kept inline so this
  * pure helper stays import-free under node:test.
  */

@@ -7,7 +7,7 @@ import {
   canWriteListedMatter,
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
-  requireActiveOrganizationReadMembership,
+  requireActiveOrganizationReadMembershipInTx,
   requireMatterPermissionLocked,
   roleHasPermission,
 } from "@/lib/auth/rbac"
@@ -160,13 +160,15 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
             : Promise.resolve(null),
         ])
 
-      // Presence + deep-link restore before active-org membership reauth.
+      // Presence + deep-link restore before final publish reauth.
       // Only restore when focusedDraft matched the active-org matterWhere —
       // restoreDraft uses any-org matterAccessWhere, so restoring by raw draft
       // id would publish bodies from another org after that org's membership
       // is revoked while the active-org reauth still passes.
-      // Body-bearing restores re-check draft liveness after membership
-      // (below) before SSR publish — membership alone is not enough.
+      // Body-bearing restores re-check draft liveness under the SAME final
+      // txn as active-org membership — no await may remain between that proof
+      // and serialize (concurrent workspace switch must not ship stale lists
+      // or old-org bodies after a post-membership body check).
       const presence = await draftDocumentPresenceByIds([
         ...draftRows.map((draft) => draft.id),
         ...(focusedDraft ? [focusedDraft.id] : []),
@@ -175,115 +177,35 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
         ? await restoreDraft(focusedDraft.id)
         : null
 
-      const finalMembership = await requireActiveOrganizationReadMembership(
-        user.id,
-        activeOrg?.id
-      )
-      if (!finalMembership.ok) {
-        matters = []
-        recentDrafts = []
-        canWrite = false
-        initialResults = null
-      } else {
-        const finalOrgCanWrite = finalMembership.role
-          ? roleHasPermission(finalMembership.role, "write")
-          : true
-        const finalOrgCanDelete = finalMembership.role
-          ? roleHasPermission(finalMembership.role, "delete")
-          : true
-
-        const mappedMatters = matterRows.map((matter) => ({
-          id: matter.id,
-          title: matter.title,
-          canWrite: canWriteListedMatter(matter, user.id, finalOrgCanWrite),
-          canDelete: canDeleteListedMatter(matter, user.id, finalOrgCanDelete),
-          _count: matter._count,
-        }))
-        if (
-          focusedMatter &&
-          !mappedMatters.some((matter) => matter.id === focusedMatter.id)
-        ) {
-          mappedMatters.unshift({
-            id: focusedMatter.id,
-            title: focusedMatter.title,
-            canWrite: canWriteListedMatter(focusedMatter, user.id, finalOrgCanWrite),
-            canDelete: canDeleteListedMatter(focusedMatter, user.id, finalOrgCanDelete),
-            _count: focusedMatter._count,
-          })
-        }
-        matters = mappedMatters
-        canWrite =
-          finalOrgCanWrite || mappedMatters.some((matter) => matter.canWrite)
-
-        const mapDraft = (draft: (typeof draftRows)[number]) => {
-          const matterCanWrite = canWriteListedMatter(
-            draft.matter,
-            user.id,
-            finalOrgCanWrite
-          )
-          const matterCanDelete = canDeleteListedMatter(
-            draft.matter,
-            user.id,
-            finalOrgCanDelete
-          )
-          const flags = presence.get(draft.id)
-          return {
-            id: draft.id,
-            draftType: draft.draftType,
-            // Never ship saved instructions/titles/bodies in list props —
-            // titles embed instruction excerpts; restore under lock.
-            hasContent: flags?.hasBody ?? false,
-            chunkCount: flags?.chunkCount ?? 0,
-            createdAt: draft.createdAt,
-            matterId: draft.matterId,
-            matterTitle: draft.matter.title,
-            canDelete: canDeleteWorkProduct({
-              actorUserId: user.id,
-              createdByUserId: draft.userId,
-              matterCanWrite,
-              matterCanDelete,
-            }),
-          }
-        }
-
-        const mapped = draftRows.map(mapDraft)
-        if (
+      const needsBodyPublish = Boolean(
+        pendingRestore &&
           focusedDraft &&
-          !mapped.some((draft) => draft.id === focusedDraft.id)
-        ) {
-          mapped.unshift(mapDraft(focusedDraft))
-        }
-        recentDrafts = mapped
-
-        // Deep-link body publish: membership alone is insufficient after
-        // restore returns — re-check draft liveness + refresh matter title
-        // under lock (parity with restoreDraft / workstation).
-        // Error payloads have no bodies and may ship after membership alone.
-        if (pendingRestore && focusedDraft && pendingRestore.error) {
-          initialResults = pendingRestore
-        } else if (
-          pendingRestore &&
-          focusedDraft &&
+          !pendingRestore.error &&
           pendingRestore.matterId === focusedDraft.matterId
-        ) {
-          try {
-            const publishAllowed = await prisma.$transaction(async (tx) => {
-              const permission = await requireMatterPermissionLocked(
-                tx,
-                user.id,
-                focusedDraft.matterId,
-                "read"
-              )
-              if (!permission.ok) {
-                return decideDeepLinkRestorePagePublish({
-                  membershipOk: true,
-                  focusedMatterId: focusedDraft.matterId,
-                  pendingMatterId: pendingRestore.matterId,
-                  pendingHasError: false,
-                  workProductPresent: false,
-                  lockedTitle: null,
-                })
-              }
+      )
+      const needsErrorPublish = Boolean(
+        pendingRestore && focusedDraft && pendingRestore.error
+      )
+
+      try {
+        const finalPublish = await prisma.$transaction(async (tx) => {
+          // Body path takes Matter locks before User (Org → Member → Matter →
+          // User) so lock order matches matter writers and avoids deadlocks.
+          let bodyDecision:
+            | { mode: "none" }
+            | { mode: "error" }
+            | { mode: "body"; title: string } = { mode: "none" }
+
+          if (needsBodyPublish && focusedDraft && pendingRestore) {
+            const permission = await requireMatterPermissionLocked(
+              tx,
+              user.id,
+              focusedDraft.matterId,
+              "read"
+            )
+            let workProductPresent = false
+            let lockedTitle: string | null = null
+            if (permission.ok) {
               const stillPresent = await tx.draftDocument.findFirst({
                 where: {
                   id: focusedDraft.id,
@@ -294,28 +216,145 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
                   matter: { select: { title: true } },
                 },
               })
-              return decideDeepLinkRestorePagePublish({
-                membershipOk: true,
-                focusedMatterId: focusedDraft.matterId,
-                pendingMatterId: pendingRestore.matterId,
-                pendingHasError: false,
-                workProductPresent: Boolean(stillPresent),
-                lockedTitle: stillPresent?.matter.title,
-              })
+              workProductPresent = Boolean(stillPresent)
+              lockedTitle = stillPresent?.matter.title ?? null
+            }
+            const decided = decideDeepLinkRestorePagePublish({
+              // Active-org membership is verified in this same txn below —
+              // fail closed if that check rejects after body probes.
+              membershipOk: true,
+              focusedMatterId: focusedDraft.matterId,
+              pendingMatterId: pendingRestore.matterId,
+              pendingHasError: false,
+              workProductPresent,
+              lockedTitle,
             })
-            initialResults =
-              publishAllowed.ok && publishAllowed.mode === "body"
-                ? {
-                    ...pendingRestore,
-                    matterTitle: publishAllowed.title,
-                  }
-                : null
-          } catch {
+            bodyDecision =
+              decided.ok && decided.mode === "body"
+                ? { mode: "body", title: decided.title }
+                : { mode: "none" }
+          }
+
+          const membership = await requireActiveOrganizationReadMembershipInTx(
+            tx,
+            user.id,
+            activeOrg?.id
+          )
+          if (!membership.ok) {
+            return { ok: false as const }
+          }
+
+          if (needsErrorPublish) {
+            bodyDecision = { mode: "error" }
+          }
+
+          return {
+            ok: true as const,
+            role: membership.role,
+            body: bodyDecision,
+          }
+        })
+
+        if (!finalPublish.ok) {
+          matters = []
+          recentDrafts = []
+          canWrite = false
+          initialResults = null
+        } else {
+          const finalOrgCanWrite = finalPublish.role
+            ? roleHasPermission(finalPublish.role, "write")
+            : true
+          const finalOrgCanDelete = finalPublish.role
+            ? roleHasPermission(finalPublish.role, "delete")
+            : true
+
+          const mappedMatters = matterRows.map((matter) => ({
+            id: matter.id,
+            title: matter.title,
+            canWrite: canWriteListedMatter(matter, user.id, finalOrgCanWrite),
+            canDelete: canDeleteListedMatter(matter, user.id, finalOrgCanDelete),
+            _count: matter._count,
+          }))
+          if (
+            focusedMatter &&
+            !mappedMatters.some((matter) => matter.id === focusedMatter.id)
+          ) {
+            mappedMatters.unshift({
+              id: focusedMatter.id,
+              title: focusedMatter.title,
+              canWrite: canWriteListedMatter(
+                focusedMatter,
+                user.id,
+                finalOrgCanWrite
+              ),
+              canDelete: canDeleteListedMatter(
+                focusedMatter,
+                user.id,
+                finalOrgCanDelete
+              ),
+              _count: focusedMatter._count,
+            })
+          }
+          matters = mappedMatters
+          canWrite =
+            finalOrgCanWrite || mappedMatters.some((matter) => matter.canWrite)
+
+          const mapDraft = (draft: (typeof draftRows)[number]) => {
+            const matterCanWrite = canWriteListedMatter(
+              draft.matter,
+              user.id,
+              finalOrgCanWrite
+            )
+            const matterCanDelete = canDeleteListedMatter(
+              draft.matter,
+              user.id,
+              finalOrgCanDelete
+            )
+            const flags = presence.get(draft.id)
+            return {
+              id: draft.id,
+              draftType: draft.draftType,
+              // Never ship saved instructions/titles/bodies in list props —
+              // titles embed instruction excerpts; restore under lock.
+              hasContent: flags?.hasBody ?? false,
+              chunkCount: flags?.chunkCount ?? 0,
+              createdAt: draft.createdAt,
+              matterId: draft.matterId,
+              matterTitle: draft.matter.title,
+              canDelete: canDeleteWorkProduct({
+                actorUserId: user.id,
+                createdByUserId: draft.userId,
+                matterCanWrite,
+                matterCanDelete,
+              }),
+            }
+          }
+
+          const mapped = draftRows.map(mapDraft)
+          if (
+            focusedDraft &&
+            !mapped.some((draft) => draft.id === focusedDraft.id)
+          ) {
+            mapped.unshift(mapDraft(focusedDraft))
+          }
+          recentDrafts = mapped
+
+          if (finalPublish.body.mode === "error" && pendingRestore) {
+            initialResults = pendingRestore
+          } else if (finalPublish.body.mode === "body" && pendingRestore) {
+            initialResults = {
+              ...pendingRestore,
+              matterTitle: finalPublish.body.title,
+            }
+          } else {
             initialResults = null
           }
-        } else {
-          initialResults = null
         }
+      } catch {
+        matters = []
+        recentDrafts = []
+        canWrite = false
+        initialResults = null
       }
     }
   } catch {
