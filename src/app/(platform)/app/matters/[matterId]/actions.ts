@@ -3,6 +3,10 @@
 import { revalidatePath } from "next/cache"
 
 import { recordAuditEvent } from "@/lib/audit"
+import {
+  resolveDocumentDeleteAuditLabels,
+  resolveDocumentReindexAuditLabels,
+} from "@/lib/auth/document-audit-labels"
 import { requireClerkId } from "@/lib/auth/require-actor"
 import { matterAccessWhere, requireMatterPermission, requireMatterPermissionLocked } from "@/lib/auth/rbac"
 import { prisma } from "@/lib/prisma"
@@ -117,7 +121,6 @@ export async function reindexDocument(
   const { clerkId } = clerk
 
   let ownerUserId: string
-  let fileName: string
   let claim: IndexingClaim
 
   try {
@@ -143,6 +146,8 @@ export async function reindexDocument(
     // concurrent membership revoke/demotion cannot start a reindex after the
     // unlocked check. Do not reset indexingStatus outside the claim — that
     // would defeat the atomic guard for concurrent in-progress runs.
+    // Pre-claim fileName is a probe only — audit labels are re-read under lock
+    // after the long indexing pipeline completes.
     const authorized = await prisma.$transaction(async (tx) => {
       const locked = await requireMatterPermissionLocked(
         tx,
@@ -162,7 +167,6 @@ export async function reindexDocument(
         },
         select: {
           id: true,
-          fileName: true,
           storagePath: true,
           mimeType: true,
         },
@@ -179,11 +183,10 @@ export async function reindexDocument(
         throw new Error("INDEXING_IN_PROGRESS")
       }
 
-      return { claim: claimed, fileName: document.fileName }
+      return { claim: claimed }
     })
 
     ownerUserId = user.id
-    fileName = authorized.fileName
     claim = authorized.claim
   } catch (error) {
     if (error instanceof Error && error.message === "MATTER_FORBIDDEN") {
@@ -206,6 +209,36 @@ export async function reindexDocument(
 
   const result = await triggerIndexing(documentId, claim)
 
+  // Re-read fileName under Matter FOR UPDATE after the long indexing pipeline
+  // so rename-stale / deleted-row probes from the claim txn never reach audit.
+  let auditFileName: string | null = null
+  try {
+    auditFileName = await prisma.$transaction(async (tx) => {
+      const locked = await requireMatterPermissionLocked(
+        tx,
+        ownerUserId,
+        matterId,
+        "write"
+      )
+      if (!locked.ok) return null
+
+      const document = await tx.document.findFirst({
+        where: {
+          id: documentId,
+          matterId,
+          matter: matterAccessWhere(ownerUserId),
+        },
+        select: { fileName: true },
+      })
+      const labels = resolveDocumentReindexAuditLabels({
+        lockedFileName: document?.fileName,
+      })
+      return labels?.fileName ?? null
+    })
+  } catch {
+    auditFileName = null
+  }
+
   await recordAuditEvent({
     userId: ownerUserId,
     action: "document.reindex",
@@ -213,11 +246,16 @@ export async function reindexDocument(
     entityId: documentId,
     matterId,
     summary: result.error
-      ? `Requested reindex for “${fileName}” (failed)`
-      : `Reindexed document “${fileName}”`,
+      ? auditFileName
+        ? `Requested reindex for “${auditFileName}” (failed)`
+        : "Requested document reindex (failed)"
+      : auditFileName
+        ? `Reindexed document “${auditFileName}”`
+        : "Reindexed document",
     metadata: {
       success: !result.error,
       error: result.error ?? null,
+      fileNamePresent: Boolean(auditFileName),
     },
   })
 
@@ -258,21 +296,22 @@ export async function deleteDocument(
     const permission = await requireMatterPermission(user.id, matterId, "delete")
     if (!permission.ok) return { error: permission.error }
 
+    // Presence probe before opening the destructive transaction. Labels from
+    // this probe must not reach the audit trail — they are re-read under lock.
     const document = await prisma.document.findFirst({
       where: {
         id: documentId,
         matterId,
         matter: matterAccessWhere(user.id),
       },
-      select: { id: true, storagePath: true, fileName: true },
+      select: { id: true },
     })
     if (!document) return { error: "Document not found or access denied." }
 
-    storagePath = document.storagePath
-
-    // Re-check delete permission under a matter lock so a revoked actor cannot
-    // finish a destructive delete after the initial authorization check.
-    await prisma.$transaction(async (tx) => {
+    // Re-check delete permission under a matter lock, capture audit labels from
+    // the locked document row, then delete so rename-stale file names never
+    // reach the org audit trail (parity with matter-delete label freshness).
+    const deleted = await prisma.$transaction(async (tx) => {
       const locked = await requireMatterPermissionLocked(
         tx,
         user.id,
@@ -283,28 +322,35 @@ export async function deleteDocument(
         throw new Error("MATTER_FORBIDDEN")
       }
 
-      const stillPresent = await tx.document.findFirst({
+      const lockedDocument = await tx.document.findFirst({
         where: {
           id: document.id,
           matterId,
           matter: matterAccessWhere(user.id),
         },
-        select: { id: true },
+        select: { id: true, fileName: true, storagePath: true },
       })
-      if (!stillPresent) {
+      const auditLabels = resolveDocumentDeleteAuditLabels({
+        lockedFileName: lockedDocument?.fileName,
+        lockedStoragePath: lockedDocument?.storagePath,
+      })
+      if (!lockedDocument || !auditLabels) {
         throw new Error("MATTER_FORBIDDEN")
       }
 
-      await tx.document.delete({ where: { id: document.id } })
+      await tx.document.delete({ where: { id: lockedDocument.id } })
+      return { auditLabels, documentId: lockedDocument.id }
     })
+
+    storagePath = deleted.auditLabels.storagePath
 
     await recordAuditEvent({
       userId: user.id,
       action: "document.delete",
       entityType: "document",
-      entityId: document.id,
+      entityId: deleted.documentId,
       matterId,
-      summary: `Deleted document “${document.fileName}”`,
+      summary: `Deleted document “${deleted.auditLabels.fileName}”`,
     })
   } catch (error) {
     if (error instanceof Error && error.message === "MATTER_FORBIDDEN") {
