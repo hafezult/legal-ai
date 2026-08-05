@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { decideDocumentWorkstationPublish } from "./document-workstation-publish.ts"
+import {
+  decideDocumentWorkstationPublish,
+  selectLiveWorkstationResearchSessions,
+} from "./document-workstation-publish.ts"
 
 describe("decideDocumentWorkstationPublish", () => {
   it("publishes locked matter labels when permission and document are live", () => {
@@ -75,5 +78,52 @@ describe("decideDocumentWorkstationPublish", () => {
       }),
       { ok: false }
     )
+  })
+})
+
+describe("selectLiveWorkstationResearchSessions", () => {
+  const locked = [
+    { id: "s1", query: "indemnity cap" },
+    { id: "s2", query: "force majeure" },
+  ]
+
+  it("publishes sessions re-confirmed under the final matter lock", () => {
+    assert.deepEqual(
+      selectLiveWorkstationResearchSessions({
+        documentPresent: true,
+        lockedSessions: locked,
+      }),
+      locked
+    )
+  })
+
+  it("omits research queries when the document was deleted after the probe", () => {
+    assert.deepEqual(
+      selectLiveWorkstationResearchSessions({
+        documentPresent: false,
+        lockedSessions: locked,
+      }),
+      []
+    )
+  })
+
+  it("omits tombstoned sessions by returning only locked rows", () => {
+    // Caller re-reads under lock; deleted s2 is absent from lockedSessions.
+    assert.deepEqual(
+      selectLiveWorkstationResearchSessions({
+        documentPresent: true,
+        lockedSessions: [{ id: "s1", query: "indemnity cap" }],
+      }),
+      [{ id: "s1", query: "indemnity cap" }]
+    )
+  })
+
+  it("returns a shallow copy so callers cannot mutate the locked snapshot", () => {
+    const published = selectLiveWorkstationResearchSessions({
+      documentPresent: true,
+      lockedSessions: locked,
+    })
+    published.pop()
+    assert.equal(locked.length, 2)
   })
 })

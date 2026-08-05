@@ -3,7 +3,10 @@ import { notFound } from "next/navigation"
 
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
-import { decideDocumentWorkstationPublish } from "@/lib/auth/document-workstation-publish"
+import {
+  decideDocumentWorkstationPublish,
+  selectLiveWorkstationResearchSessions,
+} from "@/lib/auth/document-workstation-publish"
 import {
   matterAccessWhere,
   requireMatterPermissionLocked,
@@ -266,12 +269,21 @@ export default async function DocumentViewerPage({
           // Final locked reauth after post-lock embedding probes so a concurrent
           // removal cannot receive bodies or a content URL after revoke.
           // Membership alone is insufficient — require the document row still
-          // present (parity with the content proxy) and refresh matter labels
-          // under the same lock before serialize.
+          // present (parity with the content proxy), refresh matter labels, and
+          // re-confirm research sessions under the same lock before serialize
+          // so deleteResearchSession in the unlocked-probe window cannot leave
+          // query/citation excerpts shipping from the first-lock snapshot.
           let publishAllowed: {
             role: OrgRole
             matterTitle: string
             matterClient: string | null
+            liveSessions: {
+              id: string
+              query: string
+              chunkIds: string[]
+              citationSnapshot: string | null
+              createdAt: Date
+            }[]
           } | null = null
           try {
             publishAllowed = await prisma.$transaction(async (tx) => {
@@ -303,10 +315,43 @@ export default async function DocumentViewerPage({
               })
               if (!decided.ok) return null
 
+              // Re-read probed session ids under the final matter lock. Preserve
+              // first-lock order; omit tombstones; refresh query/snapshot bodies.
+              let lockedSessions: {
+                id: string
+                query: string
+                chunkIds: string[]
+                citationSnapshot: string | null
+                createdAt: Date
+              }[] = []
+              if (rawSessions.length > 0) {
+                const rows = await tx.researchSession.findMany({
+                  where: {
+                    id: { in: rawSessions.map((s) => s.id) },
+                    matterId,
+                  },
+                  select: {
+                    id: true,
+                    query: true,
+                    chunkIds: true,
+                    citationSnapshot: true,
+                    createdAt: true,
+                  },
+                })
+                const byId = new Map(rows.map((row) => [row.id, row]))
+                lockedSessions = rawSessions
+                  .map((probed) => byId.get(probed.id))
+                  .filter((row): row is NonNullable<typeof row> => Boolean(row))
+              }
+
               return {
                 role: permission.access.role,
                 matterTitle: decided.matterTitle,
                 matterClient: decided.matterClient,
+                liveSessions: selectLiveWorkstationResearchSessions({
+                  documentPresent: true,
+                  lockedSessions,
+                }),
               }
             })
           } catch {
@@ -355,7 +400,7 @@ export default async function DocumentViewerPage({
                 hasEmbedding: embeddedIds.has(c.id),
                 createdAt: c.createdAt.toISOString(),
               })),
-              sessions: rawSessions.map((s) => ({
+              sessions: publishAllowed.liveSessions.map((s) => ({
                 id: s.id,
                 query: s.query,
                 chunkIds: s.chunkIds,
