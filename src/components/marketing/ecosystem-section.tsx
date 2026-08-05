@@ -276,9 +276,10 @@ export function EnterpriseEcosystemSection() {
   return (
     <Section id="ecosystem" className="border-t border-white/[0.06]">
       <span className="sr-only">
-        Diagram: enterprise systems such as Microsoft 365, iManage, NetDocuments,
-        SharePoint, compliance, document stores, matters, and internal knowledge connect
-        into Aether Core as the central orchestration layer.
+        Diagram: illustrative enterprise topology around Aether Core. Matter
+        repositories and document stores ground today&apos;s workspace; connectors
+        such as Microsoft 365, iManage, NetDocuments, and SharePoint remain a
+        deployment roadmap, not live integrations in this build.
       </span>
       <Container>
         <div className="grid gap-14 lg:grid-cols-12 lg:items-center lg:gap-16">
@@ -290,22 +291,23 @@ export function EnterpriseEcosystemSection() {
               Intelligence embedded across the systems your firm already trusts.
             </h2>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-white/[0.62]">
-              Aether does not replace your firm&apos;s infrastructure. It connects what
-              you already operate—governed workflows, controlled routing, and a single
-              legal operating layer across the organization.
+              Aether is designed to sit alongside the systems firms already trust.
+              Today&apos;s workspace focuses on matter-scoped ingestion, retrieval,
+              research, and drafting — with a clear path for governed connectors as
+              deployments mature.
             </p>
             <ul className="mt-10 max-w-lg space-y-4 text-sm leading-relaxed text-white/[0.58]">
               <li className="border-l border-white/[0.12] pl-4">
-                Policy-aware orchestration across tools, repositories, and matter
-                surfaces.
+                Matter repositories and document stores as the primary source of truth
+                for grounded answers.
               </li>
               <li className="border-l border-white/[0.12] pl-4">
-                Intelligence routed with lineage—auditable paths from source systems to
-                outcomes.
+                Auditable paths from uploaded sources to research and draft outcomes
+                inside the workspace.
               </li>
               <li className="border-l border-white/[0.12] pl-4">
-                Mission-critical posture: stable integrations, least-noise operation, and
-                operational clarity for partners and IT.
+                Integration topology (Microsoft 365, iManage, NetDocuments, and more)
+                is a deployment roadmap — not a claim of live connectors in this build.
               </li>
             </ul>
           </div>
