@@ -1,5 +1,4 @@
 import { ClerkProvider } from "@clerk/nextjs"
-import { dark } from "@clerk/themes"
 import type { Metadata } from "next"
 import { Inter, JetBrains_Mono } from "next/font/google"
 
@@ -21,7 +20,7 @@ export const metadata: Metadata = {
     template: "%s · Aether",
   },
   description:
-    "Workflow orchestration, AI legal reasoning, and enterprise document intelligence for modern law firms.",
+    "Matter-scoped legal research, grounded drafting, and document intelligence for modern law firms.",
 }
 
 export default function RootLayout({
@@ -35,17 +34,7 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} dark h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-black text-white">
-        <ClerkProvider
-          appearance={{
-            baseTheme: dark,
-            variables: {
-              colorBackground: "#000000",
-              colorInputBackground: "#0a0a0a",
-            },
-          }}
-        >
-          {children}
-        </ClerkProvider>
+        <ClerkProvider>{children}</ClerkProvider>
       </body>
     </html>
   )
