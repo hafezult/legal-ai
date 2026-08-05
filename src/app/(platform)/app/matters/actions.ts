@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
 
 import { recordAuditEvent } from "@/lib/audit"
+import { decideMatterCreateActiveOrg } from "@/lib/auth/matter-create-active-org"
+import { resolveMatterDeleteAuditLabels } from "@/lib/auth/matter-delete-audit"
 import { requireClerkId } from "@/lib/auth/require-actor"
 import {
   ensurePersonalOrganization,
@@ -216,9 +218,11 @@ export async function createMatter(
     }
     organizationId = organization.id
     // Lock Organization before membership so lock order matches org delete /
-    // ownership mutations (org → member) and avoids deadlocks. Then lock
-    // membership before insert so a concurrent demotion cannot create matters
-    // after write permission was revoked.
+    // ownership mutations (org → member → user) and avoids deadlocks. Then
+    // lock membership before insert so a concurrent demotion cannot create
+    // matters after write permission was revoked. Finally lock User and
+    // require the active pointer still matches — membership alone must not
+    // create into a workspace the actor already switched away from.
     matter = await prisma.$transaction(async (tx) => {
       const lockedOrgs = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT id FROM "Organization" WHERE id = ${organizationId} FOR UPDATE
@@ -234,12 +238,28 @@ export async function createMatter(
         FOR UPDATE
       `
       const membershipRole = lockedMembers[0]?.role
-      if (
-        !membershipRole ||
-        !isOrgRole(membershipRole) ||
-        !roleHasPermission(membershipRole, "write")
-      ) {
+      const membershipWriteOk = Boolean(
+        membershipRole &&
+          isOrgRole(membershipRole) &&
+          roleHasPermission(membershipRole, "write")
+      )
+      if (!membershipWriteOk) {
         throw new Error("INSUFFICIENT_ROLE")
+      }
+
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`
+      const lockedUser = await tx.user.findUnique({
+        where: { id: user.id },
+        select: { activeOrganizationId: true },
+      })
+      if (
+        !decideMatterCreateActiveOrg({
+          targetOrganizationId: organizationId,
+          lockedActiveOrganizationId: lockedUser?.activeOrganizationId,
+          membershipWriteOk,
+        })
+      ) {
+        throw new Error("ACTIVE_ORG_CHANGED")
       }
 
       return tx.matter.create({
@@ -263,6 +283,12 @@ export async function createMatter(
       return {
         error:
           "Your organization role is read-only. Ask an admin to grant write access before creating matters.",
+      }
+    }
+    if (error instanceof Error && error.message === "ACTIVE_ORG_CHANGED") {
+      return {
+        error:
+          "Your active organization changed while creating this matter. Confirm your workspace and retry.",
       }
     }
     if (
@@ -496,7 +522,6 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
   if (!matterId) return { error: "Matter id is required." }
 
   let storagePaths: string[] = []
-  let deletedTitle = "matter"
 
   try {
     const user = await prisma.user.findUnique({
@@ -520,20 +545,17 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
       where: { id: matterId },
       select: {
         id: true,
-        title: true,
-        _count: { select: { documents: true } },
       },
     })
     if (!matter) return { error: "Matter not found or access denied." }
 
-    deletedTitle = matter.title
-    const organizationId = permission.access.organizationId
-
-    // Lock the matter, re-check delete permission, mark deleting, page paths,
-    // then cascade-delete inside one transaction so concurrent uploads cannot
-    // register after the path scan and revoked actors cannot finish deletes.
+    // Lock the matter, re-check delete permission, capture audit labels under
+    // that lock, mark deleting, page paths, then cascade-delete inside one
+    // transaction so concurrent uploads cannot register after the path scan,
+    // revoked actors cannot finish deletes, and rename-stale titles never
+    // reach the org audit trail.
     const PATH_PAGE = 200
-    await prisma.$transaction(async (tx) => {
+    const deleted = await prisma.$transaction(async (tx) => {
       const locked = await requireMatterPermissionLocked(
         tx,
         user.id,
@@ -541,6 +563,24 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
         "delete"
       )
       if (!locked.ok) {
+        throw new Error("MATTER_FORBIDDEN")
+      }
+
+      const lockedMatter = await tx.matter.findUnique({
+        where: { id: matter.id },
+        select: {
+          id: true,
+          title: true,
+          organizationId: true,
+          _count: { select: { documents: true } },
+        },
+      })
+      const auditLabels = resolveMatterDeleteAuditLabels({
+        lockedTitle: lockedMatter?.title,
+        lockedDocumentCount: lockedMatter?._count.documents,
+        lockedOrganizationId: lockedMatter?.organizationId,
+      })
+      if (!auditLabels) {
         throw new Error("MATTER_FORBIDDEN")
       }
 
@@ -577,6 +617,11 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
       // Delete first, then audit without matterId FK (SetNull would still fail
       // if we pointed at the deleted row). Keep organizationId for org trails.
       await tx.matter.delete({ where: { id: matter.id } })
+
+      return {
+        auditLabels,
+        role: locked.access.role,
+      }
     })
 
     await recordAuditEvent({
@@ -585,11 +630,11 @@ export async function deleteMatter(matterId: string): Promise<MatterDeleteState>
       entityType: "matter",
       entityId: matter.id,
       matterId: null,
-      organizationId,
-      summary: `Deleted matter “${deletedTitle}”`,
+      organizationId: deleted.auditLabels.organizationId,
+      summary: `Deleted matter “${deleted.auditLabels.title}”`,
       metadata: {
-        documentCount: matter._count.documents,
-        role: permission.access.role,
+        documentCount: deleted.auditLabels.documentCount,
+        role: deleted.role,
         deletedMatterId: matter.id,
       },
     })
