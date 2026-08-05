@@ -1,14 +1,50 @@
-import { auth } from "@clerk/nextjs/server"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 
+import { DocumentRetryButton } from "@/components/documents/document-retry-button"
 import { DocumentStatusPill } from "@/components/documents/document-status-pill"
 import { DocumentUploadZone } from "@/components/documents/document-upload-zone"
+import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
+import { MatterConversationsPanel } from "@/components/matters/matter-conversations-panel"
+import { MatterDeleteControls } from "@/components/matters/matter-delete-controls"
+import { MatterDraftsPanel } from "@/components/matters/matter-drafts-panel"
+import { MatterEditControls } from "@/components/matters/matter-edit-controls"
+import { MatterResearchPanel } from "@/components/matters/matter-research-panel"
+import { MatterStatusControls } from "@/components/matters/matter-status-controls"
 import { MatterStatusPill } from "@/components/matters/matter-status-pill"
+import {
+  canDeleteWorkProduct,
+  matterAccessWhere,
+  requireMatterPermissionLocked,
+  roleHasPermission,
+  type OrgRole,
+} from "@/lib/auth/rbac"
+import {
+  documentCorpusIndexedWhere,
+  documentNeedsRetry,
+  documentRetrievalReadyWhere,
+  documentRetryOr,
+  STALE_INDEXING_MS,
+} from "@/lib/documents/status"
+import { researchSessionPresenceByIds } from "@/lib/documents/work-product-presence"
 import { prisma } from "@/lib/prisma"
-import { uploadDocument } from "./actions"
+import {
+  createConversation,
+  createConversationMessage,
+  deleteConversation,
+  deleteMatter,
+  restoreConversationMessages,
+  updateMatter,
+  updateMatterStatus,
+} from "../actions"
 
 export const dynamic = "force-dynamic"
+/** Upload/reindex run the indexing pipeline in-process on this segment. */
+export const maxDuration = 300
+
+/** Newest sources rendered in the matter source registry. */
+const MATTER_DOCUMENTS_LIMIT = 100
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -69,15 +105,6 @@ const riskStyle: Record<string, string> = {
   critical: "text-red-400/65",
 }
 
-const systemLayers = [
-  { label: "Authentication layer",  status: "operational" },
-  { label: "Matter context",        status: "active" },
-  { label: "Retrieval system",      status: "pending" },
-  { label: "Embedding index",       status: "awaiting" },
-  { label: "Orchestration layer",   status: "operational" },
-  { label: "Drafting surface",      status: "available" },
-]
-
 const sysStyle: Record<string, string> = {
   operational: "border-white/[0.12] bg-white/[0.03] text-white/58",
   active:      "border-white/[0.16] bg-white/[0.05] text-white/75",
@@ -91,10 +118,22 @@ const sysStyle: Record<string, string> = {
 export default async function MatterDetailPage({
   params,
 }: {
-  params: { matterId: string }
+  params: Promise<{ matterId: string }>
 }) {
-  const { userId: clerkId } = auth()
-  if (!clerkId) return null
+  const session = await resolvePlatformClerkId()
+  if (session.status === "unauthenticated") return null
+  if (session.status === "unavailable") {
+    return (
+      <WorkspaceLoadError
+        title="Identity service unavailable"
+        description={session.error}
+        homeHref="/app/matters"
+      />
+    )
+  }
+  const { clerkId } = session
+
+  const { matterId } = await params
 
   type Doc = {
     id: string
@@ -103,8 +142,31 @@ export default async function MatterDetailPage({
     fileSize: number | null
     indexingStatus: string
     retrievalStatus: string
+    publishedRunId: string | null
     uploadStatus: string
     uploadedAt: Date
+    updatedAt: Date
+  }
+
+  type ResearchSessionRow = {
+    id: string
+    hasResponse: boolean
+    chunkCount: number
+    createdAt: Date
+    canDelete: boolean
+  }
+
+  type DraftRow = {
+    id: string
+    draftType: string
+    createdAt: Date
+  }
+
+  type ConversationRow = {
+    id: string
+    createdAt: Date
+    _count: { messages: number }
+    canDelete: boolean
   }
 
   type MatterData = {
@@ -120,62 +182,289 @@ export default async function MatterDetailPage({
     createdAt: Date
     updatedAt: Date
     documents: Doc[]
-    _count: { documents: number; conversations: number }
+    researchSessions: ResearchSessionRow[]
+    draftDocuments: DraftRow[]
+    conversations: ConversationRow[]
+    _count: {
+      documents: number
+      researchSessions: number
+      conversations: number
+      draftDocuments: number
+    }
   }
 
   let matter: MatterData | null = null
+  let canWrite = false
+  let canDelete = false
+  let loadFailed = false
+  let permissionLoadFailed = false
+  let indexedDocuments = 0
+  let retrievalReadyDocuments = 0
+  let failedDocuments = 0
 
   try {
     const user = await prisma.user.findUnique({ where: { clerkId } })
-    if (user) {
-      matter = await prisma.matter.findFirst({
-        where: { id: params.matterId, userId: user.id },
-        select: {
-          id: true,
-          title: true,
-          description: true,
-          clientName: true,
-          practiceArea: true,
-          jurisdiction: true,
-          riskLevel: true,
-          billingCode: true,
-          status: true,
-          createdAt: true,
-          updatedAt: true,
-          documents: {
-            orderBy: { uploadedAt: "desc" },
+    if (!user) {
+      // Authenticated Clerk session without a provisioned app user is a
+      // sync/data-plane failure — not a missing matter.
+      loadFailed = true
+    } else {
+      // Load matter metadata, work-product titles/queries, and corpus counts
+      // under the final matter lock so a concurrent removal cannot race the
+      // unlocked pre-read + post-lock publish window.
+      try {
+        const locked = await prisma.$transaction(async (tx) => {
+          const stillAllowed = await requireMatterPermissionLocked(
+            tx,
+            user.id,
+            matterId,
+            "read"
+          )
+          if (!stillAllowed.ok || !stillAllowed.access.role) {
+            return { status: "denied" as const }
+          }
+
+          const row = await tx.matter.findFirst({
+            where: { id: matterId, ...matterAccessWhere(user.id) },
             select: {
               id: true,
-              fileName: true,
-              mimeType: true,
-              fileSize: true,
-              indexingStatus: true,
-              retrievalStatus: true,
-              uploadStatus: true,
-              uploadedAt: true,
+              title: true,
+              description: true,
+              clientName: true,
+              practiceArea: true,
+              jurisdiction: true,
+              riskLevel: true,
+              billingCode: true,
+              status: true,
+              createdAt: true,
+              updatedAt: true,
+              documents: {
+                orderBy: { uploadedAt: "desc" },
+                take: MATTER_DOCUMENTS_LIMIT,
+                select: {
+                  id: true,
+                  fileName: true,
+                  mimeType: true,
+                  fileSize: true,
+                  indexingStatus: true,
+                  retrievalStatus: true,
+                  publishedRunId: true,
+                  uploadStatus: true,
+                  uploadedAt: true,
+                  updatedAt: true,
+                },
+              },
+              researchSessions: {
+                orderBy: { createdAt: "desc" },
+                take: 5,
+                select: {
+                  id: true,
+                  // Metadata only — queries/bodies restore under lock
+                  // (parity with /app/research list props).
+                  createdAt: true,
+                  userId: true,
+                },
+              },
+              draftDocuments: {
+                orderBy: { createdAt: "desc" },
+                take: 5,
+                select: {
+                  id: true,
+                  // draftType/metadata only — titles embed instruction
+                  // excerpts; restore under lock (parity with /app/drafting).
+                  draftType: true,
+                  createdAt: true,
+                },
+              },
+              conversations: {
+                orderBy: { createdAt: "desc" },
+                take: 8,
+                select: {
+                  id: true,
+                  // Omit title — research-spawned threads embed the query;
+                  // restore title + bodies under lock on expand.
+                  createdAt: true,
+                  createdByUserId: true,
+                  _count: { select: { messages: true } },
+                },
+              },
+              _count: {
+                select: {
+                  documents: true,
+                  researchSessions: true,
+                  conversations: true,
+                  draftDocuments: true,
+                },
+              },
             },
-          },
-          _count: { select: { documents: true, conversations: true } },
-        },
-      })
+          })
+          if (!row) {
+            return { status: "denied" as const }
+          }
+
+          const staleBefore = new Date(
+            new Date().getTime() - STALE_INDEXING_MS
+          )
+          const documentWhere = { matterId: row.id }
+          const [indexed, retrievalReady, failed, sessionPresence] =
+            await Promise.all([
+              tx.document.count({
+                where: { ...documentWhere, ...documentCorpusIndexedWhere() },
+              }),
+              tx.document.count({
+                where: { ...documentWhere, ...documentRetrievalReadyWhere() },
+              }),
+              tx.document.count({
+                where: {
+                  ...documentWhere,
+                  OR: documentRetryOr(staleBefore),
+                },
+              }),
+              researchSessionPresenceByIds(
+                row.researchSessions.map((session) => session.id),
+                tx
+              ),
+            ])
+
+          return {
+            status: "ok" as const,
+            role: stillAllowed.access.role as OrgRole,
+            row,
+            indexed,
+            retrievalReady,
+            failed,
+            sessionPresence,
+          }
+        })
+
+        if (locked.status === "ok") {
+          const role = locked.role
+          canWrite = roleHasPermission(role, "write")
+          canDelete = roleHasPermission(role, "delete")
+          indexedDocuments = locked.indexed
+          retrievalReadyDocuments = locked.retrievalReady
+          failedDocuments = locked.failed
+          const row = locked.row
+          // Saved work-product descriptors omitted from list props
+          // (hasResponse / message counts / draftType only); restore actions
+          // re-check under lock before query/title/body content.
+          const sessionPresence = locked.sessionPresence
+          matter = {
+            id: row.id,
+            title: row.title,
+            description: row.description,
+            clientName: row.clientName,
+            practiceArea: row.practiceArea,
+            jurisdiction: row.jurisdiction,
+            riskLevel: row.riskLevel,
+            billingCode: row.billingCode,
+            status: row.status,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+            documents: row.documents,
+            draftDocuments: row.draftDocuments,
+            _count: row._count,
+            researchSessions: row.researchSessions.map((session) => {
+              const flags = sessionPresence.get(session.id)
+              return {
+                id: session.id,
+                hasResponse: flags?.hasBody ?? false,
+                chunkCount: flags?.chunkCount ?? 0,
+                createdAt: session.createdAt,
+                canDelete: canDeleteWorkProduct({
+                  actorUserId: user.id,
+                  createdByUserId: session.userId,
+                  matterCanWrite: canWrite,
+                  matterCanDelete: canDelete,
+                }),
+              }
+            }),
+            conversations: row.conversations.map((conversation) => ({
+              id: conversation.id,
+              createdAt: conversation.createdAt,
+              _count: conversation._count,
+              canDelete: canDeleteWorkProduct({
+                actorUserId: user.id,
+                createdByUserId: conversation.createdByUserId,
+                matterCanWrite: canWrite,
+                matterCanDelete: canDelete,
+              }),
+            })),
+          }
+        }
+      } catch {
+        permissionLoadFailed = true
+      }
     }
   } catch {
-    /* DB unavailable */
+    loadFailed = true
+  }
+
+  if (loadFailed) {
+    return (
+      <WorkspaceLoadError
+        title="Matter workspace unavailable"
+        description="Aether could not load this matter from the data plane. Retry shortly, or verify Settings readiness if the outage continues."
+        homeHref="/app/matters"
+      />
+    )
+  }
+
+  if (permissionLoadFailed) {
+    return (
+      <WorkspaceLoadError
+        title="Matter permissions unavailable"
+        description="Aether could not verify read access for this matter. Retry shortly, or verify Settings readiness if the outage continues."
+        homeHref="/app/matters"
+      />
+    )
   }
 
   if (!matter) notFound()
 
-  // Bind server action — safe to pass to client component
-  const boundUpload = uploadDocument.bind(null, matter.id)
+  const boundStatusUpdate = updateMatterStatus.bind(null, matter.id)
+  const boundMatterUpdate = updateMatter.bind(null, matter.id)
+  const boundDeleteMatter = deleteMatter.bind(null, matter.id)
+  const boundCreateConversation = createConversation.bind(null, matter.id)
+  const boundDeleteConversation = deleteConversation
+  const boundCreateConversationMessage = createConversationMessage
+  const boundRestoreConversationMessages = restoreConversationMessages
 
-  const hasDocuments = matter.documents.length > 0
+  const hasDocuments = matter._count.documents > 0
+  const allDocumentsIndexed =
+    hasDocuments && indexedDocuments === matter._count.documents
+  const hasIndexedDocuments = indexedDocuments > 0
+  const hasRetrievalReady = retrievalReadyDocuments > 0
+  const hasResearchSessions = matter._count.researchSessions > 0
+  const hasDrafts = matter._count.draftDocuments > 0
+  const documentsTruncated = matter._count.documents > matter.documents.length
+
+  const sourceIngestionNote = !hasDocuments
+    ? "Awaiting first document"
+    : failedDocuments > 0
+      ? `${failedDocuments} document${failedDocuments !== 1 ? "s" : ""} failed indexing`
+      : allDocumentsIndexed
+        ? `${indexedDocuments} document${indexedDocuments !== 1 ? "s" : ""} indexed`
+        : `${indexedDocuments} of ${matter._count.documents} documents indexed`
 
   const timelineEvents = [
     { label: "Matter initialized",     note: fmtDate(matter.createdAt),       state: "complete"   as const },
     { label: "Workspace provisioned",  note: fmtDate(matter.createdAt),       state: "complete"   as const },
-    { label: "Source ingestion",       note: hasDocuments ? `${matter._count.documents} document${matter._count.documents !== 1 ? "s" : ""} indexed` : "Awaiting first document", state: hasDocuments ? "complete" as const : "pending" as const },
-    { label: "Retrieval layer",        note: "Pending index completion",        state: "pending"    as const },
-    { label: "Authority analysis",     note: "Awaiting retrieval layer",        state: "pending"    as const },
+    { label: "Source ingestion",       note: sourceIngestionNote,              state: allDocumentsIndexed ? "complete" as const : "pending" as const },
+    { label: "Retrieval layer",        note: hasRetrievalReady ? `${retrievalReadyDocuments} document${retrievalReadyDocuments !== 1 ? "s" : ""} retrieval-ready` : "Pending index completion", state: hasRetrievalReady ? "complete" as const : "pending" as const },
+    { label: "Authority analysis",     note: hasResearchSessions ? `${matter._count.researchSessions} research session${matter._count.researchSessions !== 1 ? "s" : ""} logged` : "Awaiting research activity", state: hasResearchSessions ? "complete" as const : "pending" as const },
+    { label: "Grounded drafting",      note: hasDrafts ? `${matter._count.draftDocuments} draft${matter._count.draftDocuments !== 1 ? "s" : ""} prepared` : "Awaiting draft generation", state: hasDrafts ? "complete" as const : "pending" as const },
+  ]
+
+  const systemLayers = [
+    // Decorative status only — never claim Auth is operational without a
+    // successful Clerk probe (Mission Control owns that signal).
+    { label: "Authentication layer",  status: "pending" },
+    { label: "Matter context",        status: "active" },
+    { label: "Retrieval system",      status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
+    { label: "Embedding index",       status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+    { label: "Orchestration layer",   status: "operational" },
+    { label: "Drafting surface",      status: hasDrafts ? "active" : "available" },
   ]
 
   return (
@@ -192,7 +481,35 @@ export default async function MatterDetailPage({
               {matter.title}
             </h1>
           </div>
-          <MatterStatusPill status={matter.status} className="mt-1 shrink-0" />
+          <div className="flex shrink-0 flex-col items-end gap-3">
+            <MatterStatusPill status={matter.status} className="mt-1" />
+            {canWrite ? (
+              <MatterStatusControls
+                currentStatus={matter.status}
+                updateAction={boundStatusUpdate}
+              />
+            ) : null}
+            {canWrite ? (
+              <MatterEditControls
+                matter={{
+                  title: matter.title,
+                  clientName: matter.clientName,
+                  practiceArea: matter.practiceArea,
+                  jurisdiction: matter.jurisdiction,
+                  riskLevel: matter.riskLevel,
+                  billingCode: matter.billingCode,
+                  description: matter.description,
+                }}
+                updateAction={boundMatterUpdate}
+              />
+            ) : null}
+            {canDelete ? (
+              <MatterDeleteControls
+                matterTitle={matter.title}
+                deleteAction={boundDeleteMatter}
+              />
+            ) : null}
+          </div>
         </div>
 
         <div className="mt-5 flex flex-wrap gap-x-8 gap-y-4 border-t border-white/[0.05] pt-5">
@@ -237,13 +554,16 @@ export default async function MatterDetailPage({
         </div>
 
         {/* Upload zone — client component; action bound server-side */}
-        <DocumentUploadZone uploadAction={boundUpload} />
+        {canWrite ? <DocumentUploadZone matterId={matter.id} /> : null}
 
         {/* Document registry */}
         {hasDocuments ? (
           <div className="mt-6">
             <p className="mb-3 text-[10px] uppercase tracking-[0.16em] text-white/32">
               Source registry
+              {documentsTruncated
+                ? ` · showing ${matter.documents.length} of ${matter._count.documents}`
+                : ""}
             </p>
 
             <div className="overflow-hidden rounded-lg border border-white/[0.06]">
@@ -267,18 +587,25 @@ export default async function MatterDetailPage({
                 <span className="hidden w-32 shrink-0 text-right text-[10px] uppercase tracking-[0.14em] text-white/28 lg:block">
                   Ingested
                 </span>
+                {canWrite ? (
+                  <span className="w-16 shrink-0 text-right text-[10px] uppercase tracking-[0.14em] text-white/28">
+                    Actions
+                  </span>
+                ) : null}
               </div>
 
               {/* Rows */}
               {matter.documents.map((doc) => (
-                <Link
+                <div
                   key={doc.id}
-                  href={`/app/matters/${matter.id}/documents/${doc.id}`}
                   className="flex items-center gap-4 border-t border-white/[0.04] px-4 py-3 transition-colors first:border-t-0 hover:bg-white/[0.02]"
                 >
-                  <div className="min-w-0 flex-1">
+                  <Link
+                    href={`/app/matters/${matter.id}/documents/${doc.id}`}
+                    className="min-w-0 flex-1"
+                  >
                     <p className="truncate text-[13px] text-white/75">{doc.fileName}</p>
-                  </div>
+                  </Link>
                   <span className="hidden w-12 shrink-0 text-xs text-white/38 sm:block">
                     {mimeLabel(doc.mimeType)}
                   </span>
@@ -294,7 +621,17 @@ export default async function MatterDetailPage({
                   <span className="hidden w-32 shrink-0 text-right text-xs text-white/25 lg:block">
                     {fmtShortDate(doc.uploadedAt)}
                   </span>
-                </Link>
+                  {canWrite ? (
+                    <div className="w-16 shrink-0 text-right">
+                      {documentNeedsRetry(doc) ? (
+                        <DocumentRetryButton
+                          matterId={matter.id}
+                          documentId={doc.id}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               ))}
             </div>
           </div>
@@ -320,79 +657,79 @@ export default async function MatterDetailPage({
         )}
       </div>
 
-      {/* ── Section C — Research Ops / Intelligence Readiness ─────── */}
+      {/* ── Section C — Research Ops / Conversations ─────── */}
       <div className="grid gap-5 lg:grid-cols-2">
+        <MatterResearchPanel
+          matterId={matter.id}
+          matterTitle={matter.title}
+          sessions={matter.researchSessions}
+          totalCount={matter._count.researchSessions}
+          canWrite={canWrite}
+        />
 
-        {/* AI Research Operations */}
-        <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-black/20 p-6">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
-              AI research operations
-            </p>
-            <span className="rounded-full border border-white/[0.06] px-2.5 py-0.5 text-[10px] text-white/22">
-              Layer standing by
-            </span>
-          </div>
-          <p className="mt-4 font-serif text-[14px] text-white/42">
-            No active research sessions
-          </p>
-          <p className="mt-1.5 text-xs leading-relaxed text-white/25">
-            Citation-grade outputs initialize here after research queries are submitted
-            within this matter context.
-          </p>
-          <div className="mt-5 space-y-2">
-            {[
-              { label: "Authority chains",     note: "No chains indexed. Populate after source ingestion." },
-              { label: "Retrieval trace",       note: "No active sessions. Outputs surface after queries." },
-              { label: "Grounded excerpts",     note: "Available after document index is established." },
-              { label: "Jurisdiction analysis", note: "Activates with retrieval pipeline." },
-            ].map((r) => (
-              <div key={r.label} className="rounded-lg border border-white/[0.04] bg-white/[0.01] px-3.5 py-3">
-                <p className="text-[10px] uppercase tracking-[0.12em] text-white/28">{r.label}</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-white/18">{r.note}</p>
-              </div>
-            ))}
-          </div>
-        </div>
+        <MatterConversationsPanel
+          conversations={matter.conversations}
+          createAction={boundCreateConversation}
+          deleteAction={boundDeleteConversation}
+          createMessageAction={boundCreateConversationMessage}
+          restoreMessagesAction={boundRestoreConversationMessages}
+          readOnly={!canWrite}
+        />
+      </div>
 
-        {/* Intelligence Readiness Panel */}
-        <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-black/20 p-6">
-          <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
-            Intelligence readiness
-          </p>
-          <p className="mt-4 font-serif text-[14px] text-white/42">
-            Grounded intelligence pending
-          </p>
-          <p className="mt-1.5 text-xs leading-relaxed text-white/25">
-            Future intelligence surfaces including clause extraction, citation analysis,
-            authority linking, and semantic retrieval initialize here after source indexing.
-          </p>
+      <MatterDraftsPanel
+        matterId={matter.id}
+        drafts={matter.draftDocuments}
+        totalCount={matter._count.draftDocuments}
+        canWrite={canWrite}
+      />
 
-          <div className="mt-5 space-y-2">
-            {[
-              { label: "Clause extraction",    status: hasDocuments ? "pending" : "awaiting" },
-              { label: "Citation analysis",    status: "awaiting" },
-              { label: "Authority linking",    status: "awaiting" },
-              { label: "Semantic retrieval",   status: "awaiting" },
-              { label: "Reasoning traces",     status: "awaiting" },
-              { label: "Research sessions",    status: matter._count.conversations > 0 ? "active" : "pending" },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between border-t border-white/[0.04] py-2.5 first:border-t-0">
-                <p className="text-xs text-white/38">{item.label}</p>
-                <span className={`text-[10px] uppercase tracking-[0.1em] ${
-                  item.status === "active"   ? "text-white/65" :
-                  item.status === "pending"  ? "text-white/35" :
-                                               "text-white/20"
-                }`}>
-                  {item.status === "awaiting" ? "Awaiting" : item.status === "pending" ? "Pending" : "Active"}
-                </span>
-              </div>
-            ))}
-          </div>
+      {/* ── Section D — Intelligence Readiness ───────────────────── */}
+      <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-black/20 p-6">
+        <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
+          Intelligence readiness
+        </p>
+        <p className="mt-4 font-serif text-[14px] text-white/42">
+          {hasRetrievalReady ? "Grounded intelligence ready" : "Grounded intelligence pending"}
+        </p>
+        <p className="mt-1.5 text-xs leading-relaxed text-white/25">
+          {hasRetrievalReady
+            ? "Semantic retrieval and grounded research can now operate against indexed matter sources."
+            : "Parsing, chunking, retrieval, and grounded research readiness update here as matter sources move through indexing."}
+        </p>
+
+        <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {[
+            { label: "Source parsing", status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+            { label: "Chunk indexing", status: hasIndexedDocuments ? "active" : hasDocuments ? "pending" : "awaiting" },
+            { label: "Semantic retrieval", status: hasRetrievalReady ? "active" : hasDocuments ? "pending" : "awaiting" },
+            { label: "Grounded answers", status: hasResearchSessions ? "active" : hasRetrievalReady ? "pending" : "awaiting" },
+            { label: "Research sessions", status: hasResearchSessions ? "active" : hasRetrievalReady ? "pending" : "awaiting" },
+            {
+              label: "Conversations",
+              status:
+                matter._count.conversations > 0
+                  ? "active"
+                  : hasResearchSessions
+                    ? "pending"
+                    : "awaiting",
+            },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center justify-between border border-white/[0.04] rounded-lg bg-white/[0.01] px-3.5 py-3">
+              <p className="text-xs text-white/38">{item.label}</p>
+              <span className={`text-[10px] uppercase tracking-[0.1em] ${
+                item.status === "active"   ? "text-white/65" :
+                item.status === "pending"  ? "text-white/35" :
+                                             "text-white/20"
+              }`}>
+                {item.status === "awaiting" ? "Awaiting" : item.status === "pending" ? "Pending" : "Active"}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* ── Section D — Operational Timeline ─────────────────────── */}
+      {/* ── Section E — Operational Timeline ─────────────────────── */}
       <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.07] bg-white/[0.015] p-6">
         <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">
           Operational timeline
@@ -427,7 +764,7 @@ export default async function MatterDetailPage({
         </div>
       </div>
 
-      {/* ── Section E — System State ──────────────────────────────── */}
+      {/* ── Section F — System State ──────────────────────────────── */}
       <div className="rounded-[var(--aether-radius-panel)] border border-white/[0.06] bg-white/[0.01] p-6">
         <div className="flex items-center justify-between gap-4">
           <p className="text-[10px] uppercase tracking-[0.2em] text-white/40">System state</p>
