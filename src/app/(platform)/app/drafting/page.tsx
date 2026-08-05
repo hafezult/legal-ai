@@ -1,4 +1,5 @@
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { decideDeepLinkRestorePagePublish } from "@/lib/auth/deep-link-restore-page-publish"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   canDeleteListedMatter,
@@ -7,6 +8,7 @@ import {
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
   requireActiveOrganizationReadMembership,
+  requireMatterPermissionLocked,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { draftDocumentPresenceByIds } from "@/lib/documents/work-product-presence"
@@ -158,13 +160,13 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
             : Promise.resolve(null),
         ])
 
-      // Presence + deep-link restore before final membership reauth so the
-      // lock check stays immediately before list serialize (restore has its
-      // own matter lock; a concurrent remove must not keep matter titles).
+      // Presence + deep-link restore before active-org membership reauth.
       // Only restore when focusedDraft matched the active-org matterWhere —
       // restoreDraft uses any-org matterAccessWhere, so restoring by raw draft
       // id would publish bodies from another org after that org's membership
       // is revoked while the active-org reauth still passes.
+      // Body-bearing restores re-check draft liveness after membership
+      // (below) before SSR publish — membership alone is not enough.
       const presence = await draftDocumentPresenceByIds([
         ...draftRows.map((draft) => draft.id),
         ...(focusedDraft ? [focusedDraft.id] : []),
@@ -252,16 +254,68 @@ export default async function DraftingPage({ searchParams }: DraftingPageProps) 
           mapped.unshift(mapDraft(focusedDraft))
         }
         recentDrafts = mapped
-        // Publish restored bodies only when they still bind to the active-org
-        // focused draft row (no awaits after finalMembership above).
-        // Error payloads keep matterId null — still surface those to the client.
-        initialResults =
+
+        // Deep-link body publish: membership alone is insufficient after
+        // restore returns — re-check draft liveness + refresh matter title
+        // under lock (parity with restoreDraft / workstation).
+        // Error payloads have no bodies and may ship after membership alone.
+        if (pendingRestore && focusedDraft && pendingRestore.error) {
+          initialResults = pendingRestore
+        } else if (
           pendingRestore &&
           focusedDraft &&
-          (Boolean(pendingRestore.error) ||
-            pendingRestore.matterId === focusedDraft.matterId)
-            ? pendingRestore
-            : null
+          pendingRestore.matterId === focusedDraft.matterId
+        ) {
+          try {
+            const publishAllowed = await prisma.$transaction(async (tx) => {
+              const permission = await requireMatterPermissionLocked(
+                tx,
+                user.id,
+                focusedDraft.matterId,
+                "read"
+              )
+              if (!permission.ok) {
+                return decideDeepLinkRestorePagePublish({
+                  membershipOk: true,
+                  focusedMatterId: focusedDraft.matterId,
+                  pendingMatterId: pendingRestore.matterId,
+                  pendingHasError: false,
+                  workProductPresent: false,
+                  lockedTitle: null,
+                })
+              }
+              const stillPresent = await tx.draftDocument.findFirst({
+                where: {
+                  id: focusedDraft.id,
+                  matterId: focusedDraft.matterId,
+                },
+                select: {
+                  id: true,
+                  matter: { select: { title: true } },
+                },
+              })
+              return decideDeepLinkRestorePagePublish({
+                membershipOk: true,
+                focusedMatterId: focusedDraft.matterId,
+                pendingMatterId: pendingRestore.matterId,
+                pendingHasError: false,
+                workProductPresent: Boolean(stillPresent),
+                lockedTitle: stillPresent?.matter.title,
+              })
+            })
+            initialResults =
+              publishAllowed.ok && publishAllowed.mode === "body"
+                ? {
+                    ...pendingRestore,
+                    matterTitle: publishAllowed.title,
+                  }
+                : null
+          } catch {
+            initialResults = null
+          }
+        } else {
+          initialResults = null
+        }
       }
     }
   } catch {

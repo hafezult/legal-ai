@@ -1,4 +1,5 @@
 import { WorkspaceLoadError } from "@/components/platform/workspace-load-error"
+import { decideDeepLinkRestorePagePublish } from "@/lib/auth/deep-link-restore-page-publish"
 import { resolvePlatformClerkId } from "@/lib/auth/require-actor"
 import {
   canDeleteListedMatter,
@@ -7,6 +8,7 @@ import {
   getActiveOrganization,
   matterAccessWhereForActiveOrg,
   requireActiveOrganizationReadMembership,
+  requireMatterPermissionLocked,
   roleHasPermission,
 } from "@/lib/auth/rbac"
 import { researchSessionPresenceByIds } from "@/lib/documents/work-product-presence"
@@ -155,13 +157,13 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
             : Promise.resolve(null),
         ])
 
-      // Presence + deep-link restore before final membership reauth so the
-      // lock check stays immediately before list serialize (restore has its
-      // own matter lock; a concurrent remove must not keep matter titles).
+      // Presence + deep-link restore before active-org membership reauth.
       // Only restore when focusedSession matched the active-org matterWhere —
       // restoreResearchSession uses any-org matterAccessWhere, so restoring by
       // raw session id would publish bodies from another org after that org's
       // membership is revoked while the active-org reauth still passes.
+      // Body-bearing restores re-check session liveness after membership
+      // (below) before SSR publish — membership alone is not enough.
       const presence = await researchSessionPresenceByIds([
         ...sessionRows.map((session) => session.id),
         ...(focusedSession ? [focusedSession.id] : []),
@@ -247,16 +249,68 @@ export default async function ResearchPage({ searchParams }: ResearchPageProps) 
           mapped.unshift(mapSession(focusedSession))
         }
         recentSessions = mapped
-        // Publish restored bodies only when they still bind to the active-org
-        // focused session row (no awaits after finalMembership above).
-        // Error payloads keep matterId null — still surface those to the client.
-        initialResults =
+
+        // Deep-link body publish: membership alone is insufficient after
+        // restore returns — re-check session liveness + refresh matter title
+        // under lock (parity with restoreResearchSession / workstation).
+        // Error payloads have no bodies and may ship after membership alone.
+        if (pendingRestore && focusedSession && pendingRestore.error) {
+          initialResults = pendingRestore
+        } else if (
           pendingRestore &&
           focusedSession &&
-          (Boolean(pendingRestore.error) ||
-            pendingRestore.matterId === focusedSession.matterId)
-            ? pendingRestore
-            : null
+          pendingRestore.matterId === focusedSession.matterId
+        ) {
+          try {
+            const publishAllowed = await prisma.$transaction(async (tx) => {
+              const permission = await requireMatterPermissionLocked(
+                tx,
+                user.id,
+                focusedSession.matterId,
+                "read"
+              )
+              if (!permission.ok) {
+                return decideDeepLinkRestorePagePublish({
+                  membershipOk: true,
+                  focusedMatterId: focusedSession.matterId,
+                  pendingMatterId: pendingRestore.matterId,
+                  pendingHasError: false,
+                  workProductPresent: false,
+                  lockedTitle: null,
+                })
+              }
+              const stillPresent = await tx.researchSession.findFirst({
+                where: {
+                  id: focusedSession.id,
+                  matterId: focusedSession.matterId,
+                },
+                select: {
+                  id: true,
+                  matter: { select: { title: true } },
+                },
+              })
+              return decideDeepLinkRestorePagePublish({
+                membershipOk: true,
+                focusedMatterId: focusedSession.matterId,
+                pendingMatterId: pendingRestore.matterId,
+                pendingHasError: false,
+                workProductPresent: Boolean(stillPresent),
+                lockedTitle: stillPresent?.matter.title,
+              })
+            })
+            initialResults =
+              publishAllowed.ok && publishAllowed.mode === "body"
+                ? {
+                    ...pendingRestore,
+                    matterTitle: publishAllowed.title,
+                  }
+                : null
+          } catch {
+            initialResults = null
+          }
+        } else {
+          initialResults = null
+        }
       }
     }
   } catch {
