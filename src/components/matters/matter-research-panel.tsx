@@ -11,7 +11,6 @@ import { downloadMarkdown } from "@/lib/download"
 
 export type MatterResearchSession = {
   id: string
-  query: string
   hasResponse: boolean
   chunkCount: number
   createdAt: Date | string
@@ -91,7 +90,8 @@ export function MatterResearchPanel({
             `research-${matterTitle.slice(0, 40)}-${stamp}.md`,
             sessionMarkdown({
               matterTitle: output.matterTitle || matterTitle,
-              query: output.query || session.query,
+              // Query comes only from locked restore — never from SSR props.
+              query: output.query,
               answer: output.answer,
               chunkCount: output.chunks.length || session.chunkCount,
             })
@@ -190,7 +190,8 @@ export function MatterResearchPanel({
                   </p>
                 </div>
                 <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/42">
-                  {session.query}
+                  Research session
+                  {session.hasResponse ? " with saved response" : ""}
                 </p>
                 <div className="mt-2.5 flex flex-wrap gap-2">
                   <a

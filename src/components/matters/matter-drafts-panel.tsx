@@ -2,7 +2,6 @@ import Link from "next/link"
 
 export type MatterDraftPreview = {
   id: string
-  title: string
   draftType: string
   createdAt: Date
 }
@@ -72,7 +71,7 @@ export function MatterDraftsPanel({
                 <p className="text-[10px] text-white/22">{fmtShortDate(draft.createdAt)}</p>
               </div>
               <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/42">
-                {draft.title}
+                Draft prepared — open to restore under lock
               </p>
             </Link>
           ))}

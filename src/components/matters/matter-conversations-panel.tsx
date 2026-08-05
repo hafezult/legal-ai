@@ -12,7 +12,6 @@ type ConversationMessageRow = {
 
 type ConversationRow = {
   id: string
-  title: string
   createdAt: Date | string
   _count: { messages: number }
   canDelete?: boolean
@@ -38,6 +37,7 @@ type ConversationMessageCreateAction = (
 
 type ConversationMessagesRestoreAction = (conversationId: string) => Promise<{
   error?: string
+  title?: string
   messages?: ConversationMessageRow[]
 }>
 
@@ -80,6 +80,8 @@ export function MatterConversationsPanel({
   const [messagesById, setMessagesById] = useState<
     Record<string, ConversationMessageRow[]>
   >({})
+  // Titles (incl. research-spawned query text) arrive only via locked restore.
+  const [titleById, setTitleById] = useState<Record<string, string>>({})
   const [requestedMessageIds, setRequestedMessageIds] = useState<Set<string>>(
     () => new Set()
   )
@@ -109,6 +111,12 @@ export function MatterConversationsPanel({
           if (result.error) {
             setMessage({ type: "error", text: result.error })
             return
+          }
+          if (result.title) {
+            setTitleById((prev) => ({
+              ...prev,
+              [conversationId]: result.title as string,
+            }))
           }
           setMessagesById((prev) => ({
             ...prev,
@@ -333,6 +341,7 @@ export function MatterConversationsPanel({
             const isExpanded = expandedId === conversation.id
             const draft = draftById[conversation.id] ?? ""
             const messages = messagesById[conversation.id]
+            const restoredTitle = titleById[conversation.id]
             const isLoadingMessages =
               loadingMessagesId === conversation.id && !messages
 
@@ -350,7 +359,9 @@ export function MatterConversationsPanel({
                     onClick={() => toggleConversation(conversation.id)}
                     className="min-w-0 flex-1 text-left"
                   >
-                    <p className="truncate text-sm text-white/70">{conversation.title}</p>
+                    <p className="truncate text-sm text-white/70">
+                      {restoredTitle || "Conversation thread"}
+                    </p>
                     <p className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-white/28">
                       {fmtShortDate(conversation.createdAt)}
                       {" · "}
@@ -453,7 +464,7 @@ export function MatterConversationsPanel({
                           maxLength={8000}
                           disabled={isPending}
                           placeholder="Add a working note to this thread…"
-                          aria-label={`Add note to ${conversation.title}`}
+                          aria-label={`Add note to ${restoredTitle || "conversation thread"}`}
                           className="w-full resize-y rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-sm text-white/80 placeholder:text-white/22 focus:border-white/[0.16] focus:outline-none disabled:opacity-50"
                         />
                         <div className="flex justify-end">

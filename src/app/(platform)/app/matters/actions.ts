@@ -965,6 +965,8 @@ export async function createConversationMessage(
 
 export type RestoreConversationMessagesResult = {
   error?: string
+  /** Locked title — research-spawned threads embed the query; never SSR this. */
+  title?: string
   messages?: Array<{
     id: string
     role: string
@@ -974,8 +976,9 @@ export type RestoreConversationMessagesResult = {
 }
 
 /**
- * Load conversation message bodies under a final locked matter read so list
- * pages can omit saved AI/note content from initial props.
+ * Load conversation title + message bodies under a final locked matter read so
+ * list pages can omit saved AI/note content (and query-bearing titles) from
+ * initial props.
  */
 export async function restoreConversationMessages(
   conversationId: string
@@ -1014,7 +1017,7 @@ export async function restoreConversationMessages(
       return { error: "Conversation not found or access denied." }
     }
 
-    const messages = await prisma.$transaction(async (tx) => {
+    const restored = await prisma.$transaction(async (tx) => {
       const permission = await requireMatterPermissionLocked(
         tx,
         user.id,
@@ -1030,13 +1033,13 @@ export async function restoreConversationMessages(
           id: conversation.id,
           matterId: conversation.matterId,
         },
-        select: { id: true },
+        select: { id: true, title: true },
       })
       if (!stillThere) {
         throw new Error("PERMISSION:Conversation not found or access denied.")
       }
 
-      return tx.conversationMessage.findMany({
+      const messages = await tx.conversationMessage.findMany({
         where: { conversationId: conversation.id },
         orderBy: { createdAt: "asc" },
         take: 40,
@@ -1047,9 +1050,10 @@ export async function restoreConversationMessages(
           createdAt: true,
         },
       })
+      return { title: stillThere.title, messages }
     })
 
-    return { messages }
+    return restored
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("PERMISSION:")) {
       return { error: error.message.slice("PERMISSION:".length) }

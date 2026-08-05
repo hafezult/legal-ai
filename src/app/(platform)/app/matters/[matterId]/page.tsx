@@ -150,7 +150,6 @@ export default async function MatterDetailPage({
 
   type ResearchSessionRow = {
     id: string
-    query: string
     hasResponse: boolean
     chunkCount: number
     createdAt: Date
@@ -159,14 +158,12 @@ export default async function MatterDetailPage({
 
   type DraftRow = {
     id: string
-    title: string
     draftType: string
     createdAt: Date
   }
 
   type ConversationRow = {
     id: string
-    title: string
     createdAt: Date
     _count: { messages: number }
     canDelete: boolean
@@ -262,8 +259,8 @@ export default async function MatterDetailPage({
                 take: 5,
                 select: {
                   id: true,
-                  query: true,
-                  // Body/chunk presence via SQL flags — do not select response text.
+                  // Metadata only — queries/bodies restore under lock
+                  // (parity with /app/research list props).
                   createdAt: true,
                   userId: true,
                 },
@@ -273,7 +270,8 @@ export default async function MatterDetailPage({
                 take: 5,
                 select: {
                   id: true,
-                  title: true,
+                  // draftType/metadata only — titles embed instruction
+                  // excerpts; restore under lock (parity with /app/drafting).
                   draftType: true,
                   createdAt: true,
                 },
@@ -283,7 +281,8 @@ export default async function MatterDetailPage({
                 take: 8,
                 select: {
                   id: true,
-                  title: true,
+                  // Omit title — research-spawned threads embed the query;
+                  // restore title + bodies under lock on expand.
                   createdAt: true,
                   createdByUserId: true,
                   _count: { select: { messages: true } },
@@ -346,8 +345,9 @@ export default async function MatterDetailPage({
           retrievalReadyDocuments = locked.retrievalReady
           failedDocuments = locked.failed
           const row = locked.row
-          // Saved AI bodies omitted from list props (hasResponse / message
-          // counts only); restore actions re-check under lock before content.
+          // Saved work-product descriptors omitted from list props
+          // (hasResponse / message counts / draftType only); restore actions
+          // re-check under lock before query/title/body content.
           const sessionPresence = locked.sessionPresence
           matter = {
             id: row.id,
@@ -368,7 +368,6 @@ export default async function MatterDetailPage({
               const flags = sessionPresence.get(session.id)
               return {
                 id: session.id,
-                query: session.query,
                 hasResponse: flags?.hasBody ?? false,
                 chunkCount: flags?.chunkCount ?? 0,
                 createdAt: session.createdAt,
@@ -382,7 +381,6 @@ export default async function MatterDetailPage({
             }),
             conversations: row.conversations.map((conversation) => ({
               id: conversation.id,
-              title: conversation.title,
               createdAt: conversation.createdAt,
               _count: conversation._count,
               canDelete: canDeleteWorkProduct({
