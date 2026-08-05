@@ -1,7 +1,21 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type CSSProperties,
+} from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+
+import {
+  documentIndexingBusy,
+  isDocumentRetrievalReady,
+} from "@/lib/documents/status"
 
 // ── Serialised types (passed from RSC) ────────────────────────────────────
 
@@ -16,6 +30,7 @@ export type WorkstationDoc = {
   uploadStatus: string
   indexingStatus: string
   retrievalStatus: string
+  publishedRunId: string | null
   parseStatus: string
   parsedText: string | null
   uploadedAt: string
@@ -41,6 +56,13 @@ export type WorkstationSession = {
   query: string
   chunkIds: string[]
   createdAt: string
+  /** Immutable excerpts when live chunk ids were rotated by reindex. */
+  snapshotExcerpts: Array<{
+    id: string
+    content: string
+    pageRef: number | null
+    headingPath: string | null
+  }>
 }
 
 export type WorkstationAuthority = {
@@ -53,10 +75,28 @@ export type WorkstationData = {
   doc: WorkstationDoc
   chunks: WorkstationChunk[]
   sessions: WorkstationSession[]
+  /** True when research-session lookup failed (do not treat as empty). */
+  sessionsLoadFailed?: boolean
+  /** True when embedding presence lookup failed (do not treat as zero). */
+  embeddingsLoadFailed?: boolean
   authorities: WorkstationAuthority[]
   embeddedCount: number
-  signedUrl: string | null
+  /** Same-origin authenticated content proxy — re-checks matter read per request. */
+  contentUrl: string | null
+  parsedTextTruncated: boolean
 }
+
+export type DocumentIndexAction = () => Promise<{
+  error?: string
+  success?: boolean
+  warning?: string
+}>
+
+export type DocumentDeleteAction = () => Promise<{
+  error?: string
+  success?: boolean
+  warning?: string
+}>
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -106,14 +146,94 @@ type Tab = "overview" | "chunks" | "authorities" | "parsed" | "retrieval" | "tim
 
 // ── Source document viewer (left panel) ───────────────────────────────────
 
+function PdfPreview({
+  contentUrl,
+  fileName,
+}: {
+  contentUrl: string
+  fileName: string
+}) {
+  const [pdfObjectUrl, setPdfObjectUrl] = useState<string | null>(null)
+  const [pdfLoadFailed, setPdfLoadFailed] = useState(false)
+  const pdfObjectUrlRef = useRef<string | null>(null)
+
+  // Fetch PDF bytes through the authenticated proxy, then hand a blob URL to
+  // the sandboxed iframe (cookies are not sent under sandbox without
+  // allow-same-origin). Each fetch re-checks matter permission server-side.
+  // Remount via key={contentUrl} on the parent so state resets without
+  // synchronous setState in the effect body.
+  useEffect(() => {
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const response = await fetch(contentUrl, {
+          credentials: "same-origin",
+          cache: "no-store",
+        })
+        if (!response.ok) throw new Error("content unavailable")
+        const blob = await response.blob()
+        if (cancelled) return
+        const objectUrl = URL.createObjectURL(blob)
+        pdfObjectUrlRef.current = objectUrl
+        setPdfObjectUrl(objectUrl)
+      } catch {
+        if (!cancelled) setPdfLoadFailed(true)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      if (pdfObjectUrlRef.current) {
+        URL.revokeObjectURL(pdfObjectUrlRef.current)
+        pdfObjectUrlRef.current = null
+      }
+    }
+  }, [contentUrl])
+
+  if (pdfLoadFailed) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="text-center">
+          <p className="text-sm text-white/38">PDF preview unavailable</p>
+          <p className="mt-1 text-xs text-white/22">
+            Retry shortly, or use Open to download the source.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!pdfObjectUrl) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-sm text-white/38">Loading PDF preview…</p>
+      </div>
+    )
+  }
+
+  return (
+    <iframe
+      src={pdfObjectUrl}
+      className="h-full w-full border-0"
+      title={fileName}
+      sandbox="allow-scripts"
+      referrerPolicy="no-referrer"
+    />
+  )
+}
+
 function DocViewer({
   doc,
-  signedUrl,
+  contentUrl,
 }: {
   doc: WorkstationDoc
-  signedUrl: string | null
+  contentUrl: string | null
 }) {
   const isPdf = doc.mimeType === "application/pdf"
+  const openHref = contentUrl
+    ? `${contentUrl}?download=1`
+    : null
 
   return (
     <div className="flex h-full flex-col">
@@ -128,9 +248,9 @@ function DocViewer({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          {signedUrl && (
+          {openHref && (
             <a
-              href={signedUrl}
+              href={openHref}
               target="_blank"
               rel="noopener noreferrer"
               className="text-[10px] text-white/30 transition-colors hover:text-white/60"
@@ -143,7 +263,7 @@ function DocViewer({
 
       {/* Document surface */}
       <div className="relative flex-1 overflow-hidden bg-zinc-900/60">
-        {!signedUrl ? (
+        {!contentUrl ? (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
               <p className="text-sm text-white/38">Source document unavailable</p>
@@ -153,10 +273,10 @@ function DocViewer({
             </div>
           </div>
         ) : isPdf ? (
-          <iframe
-            src={signedUrl}
-            className="h-full w-full border-0"
-            title={doc.fileName}
+          <PdfPreview
+            key={contentUrl}
+            contentUrl={contentUrl}
+            fileName={doc.fileName}
           />
         ) : (
           /* TXT / DOCX — render parsed text */
@@ -184,12 +304,17 @@ function TabOverview({
   embeddedCount,
   sessionCount,
   authorityCount,
+  sessionsLoadFailed = false,
+  embeddingsLoadFailed = false,
 }: {
   doc: WorkstationDoc
   embeddedCount: number
   sessionCount: number
   authorityCount: number
+  sessionsLoadFailed?: boolean
+  embeddingsLoadFailed?: boolean
 }) {
+  const retrievalReady = isDocumentRetrievalReady(doc)
   const pipeline = [
     {
       label: "Upload",
@@ -213,23 +338,47 @@ function TabOverview({
     },
     {
       label: "Embedding",
-      note: embeddedCount > 0 ? `${embeddedCount} / ${doc.chunkCount}` : doc.indexingStatus,
-      done: doc.indexingStatus === "retrieval-ready",
-      detail: embeddedCount > 0 ? "Vector representations stored" : "",
+      note: embeddingsLoadFailed
+        ? "Status unavailable"
+        : embeddedCount > 0
+          ? `${embeddedCount} / ${doc.chunkCount}`
+          : doc.indexingStatus === "failed" && retrievalReady
+            ? "Published index retained"
+            : doc.indexingStatus,
+      // Published embeddings stay usable mid-reindex / after a failed reindex.
+      done:
+        !embeddingsLoadFailed &&
+        (doc.indexingStatus === "retrieval-ready" ||
+          (retrievalReady && embeddedCount > 0)),
+      detail: embeddingsLoadFailed
+        ? "Embedding presence could not be verified"
+        : embeddedCount > 0
+          ? doc.indexingStatus !== "retrieval-ready" && retrievalReady
+            ? "Prior published vectors still live"
+            : "Vector representations stored"
+          : "",
     },
     {
       label: "Retrieval ready",
-      note: doc.retrievalStatus === "ready" ? "Active" : "Pending",
-      done: doc.retrievalStatus === "ready",
-      detail: doc.retrievalStatus === "ready" ? "Available for research queries" : "",
+      note: retrievalReady ? "Active" : "Pending",
+      done: retrievalReady,
+      detail: retrievalReady ? "Available for research queries" : "",
     },
   ]
 
   const metrics = [
     { label: "Chunks",       value: String(doc.chunkCount) },
-    { label: "Embedded",     value: `${embeddedCount} / ${doc.chunkCount}` },
+    {
+      label: "Embedded",
+      value: embeddingsLoadFailed
+        ? "Unavailable"
+        : `${embeddedCount} / ${doc.chunkCount}`,
+    },
     { label: "Authorities",  value: String(authorityCount) },
-    { label: "Research uses",value: String(sessionCount) },
+    {
+      label: "Research uses",
+      value: sessionsLoadFailed ? "—" : String(sessionCount),
+    },
     { label: "Pages",        value: doc.pageCount ? String(doc.pageCount) : "—" },
     { label: "File size",    value: fmtBytes(doc.fileSize) },
     { label: "Confidence",   value: doc.extractionConf != null ? `${Math.round(doc.extractionConf * 100)}%` : "—" },
@@ -319,7 +468,13 @@ function TabOverview({
 
 // ── Tab: Chunks ────────────────────────────────────────────────────────────
 
-function TabChunks({ chunks }: { chunks: WorkstationChunk[] }) {
+function TabChunks({
+  chunks,
+  embeddingsLoadFailed = false,
+}: {
+  chunks: WorkstationChunk[]
+  embeddingsLoadFailed?: boolean
+}) {
   const [search, setSearch] = useState("")
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
@@ -352,14 +507,17 @@ function TabChunks({ chunks }: { chunks: WorkstationChunk[] }) {
             Chunk explorer
           </p>
           <span className="text-[10px] text-white/28">
-            {embeddedCount}/{chunks.length} embedded
+            {embeddingsLoadFailed
+              ? "Embedding status unavailable"
+              : `${embeddedCount}/${chunks.length} embedded`}
           </span>
         </div>
         <input
-          type="text"
+          type="search"
           placeholder="Search chunks…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search chunks"
           className="w-full rounded border border-white/[0.07] bg-white/[0.02] px-3 py-1.5 text-[11px] text-white/72 placeholder:text-white/22 focus:border-white/[0.14] focus:outline-none"
         />
       </div>
@@ -410,12 +568,18 @@ function TabChunks({ chunks }: { chunks: WorkstationChunk[] }) {
                       {/* Embedding badge */}
                       <span
                         className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[9px] uppercase tracking-[0.1em] ${
-                          chunk.hasEmbedding
-                            ? "border border-white/[0.12] text-white/48"
-                            : "border border-white/[0.05] text-white/20"
+                          embeddingsLoadFailed
+                            ? "border border-amber-400/20 text-amber-200/45"
+                            : chunk.hasEmbedding
+                              ? "border border-white/[0.12] text-white/48"
+                              : "border border-white/[0.05] text-white/20"
                         }`}
                       >
-                        {chunk.hasEmbedding ? "Embedded" : "No vector"}
+                        {embeddingsLoadFailed
+                          ? "Unknown"
+                          : chunk.hasEmbedding
+                            ? "Embedded"
+                            : "No vector"}
                       </span>
                     </div>
 
@@ -529,7 +693,13 @@ function TabAuthorities({ authorities }: { authorities: WorkstationAuthority[] }
 
 // ── Tab: Parsed text ───────────────────────────────────────────────────────
 
-function TabParsed({ doc }: { doc: WorkstationDoc }) {
+function TabParsed({
+  doc,
+  truncated,
+}: {
+  doc: WorkstationDoc
+  truncated: boolean
+}) {
   if (!doc.parsedText) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center">
@@ -558,6 +728,12 @@ function TabParsed({ doc }: { doc: WorkstationDoc }) {
           Parser: {mimeLabel(doc.mimeType) === "PDF" ? "pdf-parse" : mimeLabel(doc.mimeType) === "DOCX" ? "mammoth" : "buffer"} ·{" "}
           {doc.extractionConf != null ? `${Math.round(doc.extractionConf * 100)}% confidence` : ""}
         </p>
+        {truncated ? (
+          <p className="mt-2 text-[10px] leading-relaxed text-amber-200/55">
+            Stored preview is capped for inspection. Full document text was still
+            chunked for retrieval; open the Chunks tab for the complete corpus.
+          </p>
+        ) : null}
       </div>
       <div className="flex-1 overflow-y-auto px-5 py-4">
         <div className="space-y-0.5">
@@ -596,17 +772,39 @@ function TabParsed({ doc }: { doc: WorkstationDoc }) {
 // ── Tab: Retrieval trace ───────────────────────────────────────────────────
 
 function TabRetrieval({
+  matterId,
   sessions,
   chunks,
+  sessionsLoadFailed = false,
 }: {
+  matterId: string
   sessions: WorkstationSession[]
   chunks: WorkstationChunk[]
+  sessionsLoadFailed?: boolean
 }) {
   const docChunkSet = useMemo(() => new Set(chunks.map((c) => c.id)), [chunks])
   const chunkByIndex = useMemo(
     () => new Map(chunks.map((c) => [c.id, c])),
     [chunks]
   )
+
+  if (sessionsLoadFailed) {
+    return (
+      <div
+        role="alert"
+        aria-live="polite"
+        className="flex h-full items-center justify-center p-6 text-center"
+      >
+        <div>
+          <p className="text-sm text-amber-100/70">Retrieval trail unavailable</p>
+          <p className="mt-1 text-xs text-white/35">
+            Aether could not load research sessions for this source. Retry the
+            workstation shortly — do not assume this document has never been cited.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   if (sessions.length === 0) {
     return (
@@ -654,7 +852,7 @@ function TabRetrieval({
                   <p className="mt-0.5 text-[10px] text-white/30">{fmtDate(session.createdAt)}</p>
                 </div>
                 <Link
-                  href="/app/research"
+                  href={`/app/research?matter=${matterId}&session=${session.id}`}
                   className="text-[10px] text-white/25 transition-colors hover:text-white/50"
                 >
                   Research ↗
@@ -670,8 +868,31 @@ function TabRetrieval({
 
               <div>
                 <p className="mb-2 text-[10px] uppercase tracking-[0.12em] text-white/28">
-                  Chunks used from this document ({usedFromDoc.length})
+                  {usedFromDoc.length > 0
+                    ? `Chunks used from this document (${usedFromDoc.length})`
+                    : session.snapshotExcerpts.length > 0
+                      ? `Citation excerpts retained after reindex (${session.snapshotExcerpts.length})`
+                      : "Chunks used from this document (0)"}
                 </p>
+                {usedFromDoc.length === 0 && session.snapshotExcerpts.length > 0 ? (
+                  <div className="mb-3 space-y-2">
+                    {session.snapshotExcerpts.map((excerpt) => (
+                      <p
+                        key={excerpt.id}
+                        className="rounded border border-white/[0.06] bg-white/[0.015] px-2.5 py-2 text-[10px] leading-relaxed text-white/45"
+                        title={excerpt.headingPath ?? undefined}
+                      >
+                        {excerpt.pageRef != null ? (
+                          <span className="mr-2 font-mono text-white/28">
+                            p.{excerpt.pageRef}
+                          </span>
+                        ) : null}
+                        {excerpt.content.slice(0, 280)}
+                        {excerpt.content.length > 280 ? "…" : ""}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap gap-1.5">
                   {usedFromDoc.map((c) => (
                     <span
@@ -696,6 +917,7 @@ function TabRetrieval({
 // ── Tab: Timeline ──────────────────────────────────────────────────────────
 
 function TabTimeline({ doc, chunkCount }: { doc: WorkstationDoc; chunkCount: number }) {
+  const retrievalReady = isDocumentRetrievalReady(doc)
   const events = [
     {
       label: "Document ingested",
@@ -732,8 +954,8 @@ function TabTimeline({ doc, chunkCount }: { doc: WorkstationDoc; chunkCount: num
     {
       label: "Retrieval ready",
       detail: "Available for semantic research queries",
-      time: doc.retrievalStatus === "ready" ? doc.updatedAt : null,
-      done: doc.retrievalStatus === "ready",
+      time: retrievalReady ? doc.updatedAt : null,
+      done: retrievalReady,
     },
   ]
 
@@ -788,8 +1010,31 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "timeline",    label: "Timeline" },
 ]
 
-export function DocumentWorkstation({ data }: { data: WorkstationData }) {
-  const { doc, chunks, sessions, authorities, embeddedCount, signedUrl } = data
+export function DocumentWorkstation({
+  data,
+  reindexAction,
+  deleteAction,
+  canWrite = false,
+  canDelete = false,
+}: {
+  data: WorkstationData
+  reindexAction: DocumentIndexAction
+  deleteAction: DocumentDeleteAction
+  canWrite?: boolean
+  canDelete?: boolean
+}) {
+  const {
+    doc,
+    chunks,
+    sessions,
+    sessionsLoadFailed = false,
+    embeddingsLoadFailed = false,
+    authorities,
+    embeddedCount,
+    contentUrl,
+    parsedTextTruncated,
+  } = data
+  const router = useRouter()
 
   // Split pane
   const [splitPos, setSplitPos] = useState(DEFAULT_SPLIT)
@@ -802,16 +1047,80 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
   // Mobile view toggle
   const [mobilePanel, setMobilePanel] = useState<"document" | "intelligence">("document")
 
+  const [isReindexing, startReindexTransition] = useTransition()
+  const [isDeleting, startDeleteTransition] = useTransition()
+  const [reindexMessage, setReindexMessage] = useState<{
+    type: "success" | "error"
+    text: string
+  } | null>(null)
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null)
+
+  const runReindex = useCallback(() => {
+    setReindexMessage(null)
+    setDeleteMessage(null)
+    startReindexTransition(async () => {
+      try {
+        const result = await reindexAction()
+        if (result.error) {
+          setReindexMessage({ type: "error", text: result.error })
+          router.refresh()
+          return
+        }
+
+        setReindexMessage({
+          type: "success",
+          text: result.warning ?? "Indexing completed.",
+        })
+        router.refresh()
+      } catch {
+        setReindexMessage({
+          type: "error",
+          text: "Unable to reindex this source. Please try again.",
+        })
+      }
+    })
+  }, [reindexAction, router])
+
+  const runDelete = useCallback(() => {
+    const confirmed = window.confirm(
+      `Remove "${doc.fileName}" from this matter? Indexed chunks will be deleted.`
+    )
+    if (!confirmed) return
+
+    setDeleteMessage(null)
+    setReindexMessage(null)
+    startDeleteTransition(async () => {
+      try {
+        const result = await deleteAction()
+        if (result.error) {
+          setDeleteMessage(result.error)
+          return
+        }
+        if (result.warning) {
+          window.alert(result.warning)
+        }
+        router.push(`/app/matters/${doc.matterId}`)
+        router.refresh()
+      } catch {
+        setDeleteMessage("Unable to remove this source. Please try again.")
+      }
+    })
+  }, [deleteAction, doc.fileName, doc.matterId, router])
+
   // Restore persisted preferences
   useEffect(() => {
-    try {
-      const s = localStorage.getItem(STORAGE_SPLIT)
-      if (s) setSplitPos(Math.max(20, Math.min(80, Number(s))))
-      const t = localStorage.getItem(STORAGE_TAB) as Tab | null
-      if (t && TABS.some((tab) => tab.id === t)) setActiveTab(t)
-    } catch {
-      /* ignore */
-    }
+    const timer = window.setTimeout(() => {
+      try {
+        const s = localStorage.getItem(STORAGE_SPLIT)
+        if (s) setSplitPos(Math.max(20, Math.min(80, Number(s))))
+        const t = localStorage.getItem(STORAGE_TAB) as Tab | null
+        if (t && TABS.some((tab) => tab.id === t)) setActiveTab(t)
+      } catch {
+        /* ignore */
+      }
+    }, 0)
+
+    return () => window.clearTimeout(timer)
   }, [])
 
   // Persist split position
@@ -829,6 +1138,41 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
     e.preventDefault()
     dragging.current = true
   }, [])
+
+  const nudgeSplit = useCallback((delta: number) => {
+    setSplitPos((prev) => Math.max(20, Math.min(80, prev + delta)))
+  }, [])
+
+  const onResizeKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const step = e.shiftKey ? 10 : 2
+      if (e.key === "ArrowLeft") {
+        e.preventDefault()
+        nudgeSplit(-step)
+        return
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault()
+        nudgeSplit(step)
+        return
+      }
+      if (e.key === "Home") {
+        e.preventDefault()
+        setSplitPos(20)
+        return
+      }
+      if (e.key === "End") {
+        e.preventDefault()
+        setSplitPos(80)
+        return
+      }
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault()
+        setSplitPos(DEFAULT_SPLIT)
+      }
+    },
+    [nudgeSplit]
+  )
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -862,33 +1206,73 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
             embeddedCount={embeddedCount}
             sessionCount={sessions.length}
             authorityCount={authorities.length}
+            sessionsLoadFailed={sessionsLoadFailed}
+            embeddingsLoadFailed={embeddingsLoadFailed}
           />
         )
       case "chunks":
-        return <TabChunks chunks={chunks} />
+        return (
+          <TabChunks
+            chunks={chunks}
+            embeddingsLoadFailed={embeddingsLoadFailed}
+          />
+        )
       case "authorities":
         return <TabAuthorities authorities={authorities} />
       case "parsed":
-        return <TabParsed doc={doc} />
+        return <TabParsed doc={doc} truncated={parsedTextTruncated} />
       case "retrieval":
-        return <TabRetrieval sessions={sessions} chunks={chunks} />
+        return (
+          <TabRetrieval
+            matterId={doc.matterId}
+            sessions={sessions}
+            chunks={chunks}
+            sessionsLoadFailed={sessionsLoadFailed}
+          />
+        )
       case "timeline":
         return <TabTimeline doc={doc} chunkCount={chunks.length} />
     }
-  }, [activeTab, doc, chunks, sessions, authorities, embeddedCount])
+  }, [
+    activeTab,
+    doc,
+    chunks,
+    sessions,
+    sessionsLoadFailed,
+    embeddingsLoadFailed,
+    authorities,
+    embeddedCount,
+    parsedTextTruncated,
+  ])
+
+  const indexingBusy = documentIndexingBusy(doc)
+  const retrievalReady = isDocumentRetrievalReady(doc)
+  const reindexLabel = indexingBusy
+    ? "Indexing in progress"
+    : doc.indexingStatus === "failed" || doc.retrievalStatus === "failed"
+      ? "Retry indexing"
+      : retrievalReady
+        ? "Re-index source"
+        : "Run indexing"
 
   return (
     <div
       className="-mx-4 -my-6 flex flex-col overflow-hidden sm:-mx-6 sm:-my-8"
       style={{ height: "calc(100vh - 3.25rem)" }}
     >
+      <h1 className="sr-only">{doc.fileName} · document workstation</h1>
       {/* Mobile panel toggle */}
-      <div className="flex shrink-0 border-b border-white/[0.06] bg-black/40 lg:hidden">
+      <div
+        className="flex shrink-0 border-b border-white/[0.06] bg-black/40 lg:hidden"
+        role="group"
+        aria-label="Workstation panel"
+      >
         {(["document", "intelligence"] as const).map((p) => (
           <button
             key={p}
             type="button"
             onClick={() => setMobilePanel(p)}
+            aria-pressed={mobilePanel === p}
             className={`flex-1 py-2 text-[11px] uppercase tracking-[0.14em] transition-colors ${
               mobilePanel === p
                 ? "text-white/75"
@@ -905,19 +1289,31 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
 
         {/* ── Left: Source document ─────────────────────────────────── */}
         <div
-          className={`flex flex-col overflow-hidden border-r border-white/[0.06] ${
+          className={`flex w-full flex-col overflow-hidden border-r border-white/[0.06] ${
             mobilePanel === "document" ? "flex" : "hidden"
-          } lg:flex`}
-          style={{ width: `${splitPos}%` }}
+          } lg:flex lg:w-[var(--ws-split)]`}
+          style={
+            {
+              ["--ws-split"]: `${splitPos}%`,
+            } as CSSProperties
+          }
         >
-          <DocViewer doc={doc} signedUrl={signedUrl} />
+          <DocViewer doc={doc} contentUrl={contentUrl} />
         </div>
 
-        {/* ── Drag handle ───────────────────────────────────────────── */}
+        {/* ── Drag / keyboard resize handle ─────────────────────────── */}
         <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize document and intelligence panels"
+          aria-valuemin={20}
+          aria-valuemax={80}
+          aria-valuenow={Math.round(splitPos)}
+          tabIndex={0}
           onMouseDown={startDrag}
-          className="hidden w-1 shrink-0 cursor-col-resize bg-white/[0.03] transition-colors hover:bg-white/[0.09] lg:block"
-          title="Drag to resize"
+          onKeyDown={onResizeKeyDown}
+          className="hidden w-1 shrink-0 cursor-col-resize bg-white/[0.03] transition-colors hover:bg-white/[0.09] focus-visible:bg-white/[0.14] focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-white/40 lg:block"
+          title="Drag or use arrow keys to resize"
         />
 
         {/* ── Right: Intelligence panel ─────────────────────────────── */}
@@ -928,34 +1324,107 @@ export function DocumentWorkstation({ data }: { data: WorkstationData }) {
         >
           {/* Back link + Tab bar */}
           <div className="shrink-0 border-b border-white/[0.06]">
-            <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-0">
+            <div className="flex items-center justify-between gap-3 px-4 pt-3 pb-0">
               <Link
                 href={`/app/matters/${doc.matterId}`}
                 className="text-[10px] text-white/25 transition-colors hover:text-white/52"
               >
                 ← {doc.matterTitle}
               </Link>
+              <div className="flex min-w-0 items-center gap-2">
+                {canWrite ? (
+                  <button
+                    type="button"
+                    onClick={runReindex}
+                    disabled={isReindexing || isDeleting || indexingBusy}
+                    className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.02] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-white/35 transition-colors hover:border-white/[0.16] hover:text-white/64 disabled:pointer-events-none disabled:opacity-45"
+                  >
+                    {isReindexing || indexingBusy ? "Indexing..." : reindexLabel}
+                  </button>
+                ) : null}
+                {canDelete ? (
+                  <button
+                    type="button"
+                    onClick={runDelete}
+                    disabled={isDeleting || isReindexing}
+                    className="shrink-0 rounded-full border border-red-400/15 bg-red-400/[0.04] px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-red-200/45 transition-colors hover:border-red-400/28 hover:text-red-200/70 disabled:pointer-events-none disabled:opacity-45"
+                  >
+                    {isDeleting ? "Removing..." : "Remove"}
+                  </button>
+                ) : null}
+              </div>
             </div>
-            <div className="flex gap-0 overflow-x-auto px-3 pt-2">
-              {TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`shrink-0 border-b-2 px-3 pb-2.5 pt-1.5 text-[10px] uppercase tracking-[0.12em] transition-colors ${
-                    activeTab === tab.id
-                      ? "border-white/40 text-white/75"
-                      : "border-transparent text-white/28 hover:text-white/52"
-                  }`}
-                >
-                  {tabLabel(tab)}
-                </button>
-              ))}
+            {(isReindexing ||
+              isDeleting ||
+              reindexMessage ||
+              deleteMessage) && (
+              <p
+                role="status"
+                aria-live="polite"
+                className={`px-4 pb-2 text-[10px] leading-relaxed ${
+                  deleteMessage || reindexMessage?.type === "error"
+                    ? "text-red-300/70"
+                    : "text-white/40"
+                }`}
+              >
+                {isDeleting
+                  ? "Removing source…"
+                  : isReindexing
+                    ? "Indexing…"
+                    : (deleteMessage ?? reindexMessage?.text)}
+              </p>
+            )}
+            <div
+              className="flex gap-0 overflow-x-auto px-3 pt-2"
+              role="tablist"
+              aria-label="Document intelligence"
+            >
+              {TABS.map((tab) => {
+                const selected = activeTab === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    id={`ws-tab-${tab.id}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    aria-controls={`ws-tabpanel-${tab.id}`}
+                    tabIndex={selected ? 0 : -1}
+                    onClick={() => setActiveTab(tab.id)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") {
+                        return
+                      }
+                      event.preventDefault()
+                      const index = TABS.findIndex((entry) => entry.id === activeTab)
+                      if (index < 0) return
+                      const delta = event.key === "ArrowRight" ? 1 : -1
+                      const next = TABS[(index + delta + TABS.length) % TABS.length]
+                      setActiveTab(next.id)
+                      window.requestAnimationFrame(() => {
+                        document.getElementById(`ws-tab-${next.id}`)?.focus()
+                      })
+                    }}
+                    className={`shrink-0 border-b-2 px-3 pb-2.5 pt-1.5 text-[10px] uppercase tracking-[0.12em] transition-colors ${
+                      selected
+                        ? "border-white/40 text-white/75"
+                        : "border-transparent text-white/28 hover:text-white/52"
+                    }`}
+                  >
+                    {tabLabel(tab)}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
           {/* Tab content */}
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div
+            id={`ws-tabpanel-${activeTab}`}
+            role="tabpanel"
+            aria-labelledby={`ws-tab-${activeTab}`}
+            className="min-h-0 flex-1 overflow-hidden"
+          >
             {tabContent}
           </div>
         </div>
